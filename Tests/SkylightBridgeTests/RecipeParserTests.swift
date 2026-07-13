@@ -1,0 +1,33 @@
+import Testing
+@testable import SkylightBridge
+
+struct RecipeParserTests {
+    @Test("A structured Apple Note becomes a recipe draft")
+    func parsesStructuredRecipe() throws {
+        let note = """
+        Chicken Parmesan
+
+        Serves: 4
+        Prep: 20 minutes
+        Cook: 35 minutes
+
+        Ingredients
+        - 2 chicken breasts
+        - 1 cup breadcrumbs
+        - Tomato sauce
+
+        Instructions
+        1. Prepare the chicken.
+        2. Bake until cooked.
+        """
+
+        let recipe = try RecipeParser.parse(note)
+
+        #expect(recipe.title == "Chicken Parmesan")
+        #expect(recipe.servings == "4")
+        #expect(recipe.preparationTime == "20 minutes")
+        #expect(recipe.cookingTime == "35 minutes")
+        #expect(recipe.ingredients == ["2 chicken breasts", "1 cup breadcrumbs", "Tomato sauce"])
+        #expect(recipe.instructions == ["Prepare the chicken.", "Bake until cooked."])
+    }
+}
