@@ -6,7 +6,7 @@
 
 **Verification**: 61 tests pass normally, under AddressSanitizer, and under ThreadSanitizer, including new coverage for field-level merge (disjoint edits, same-field conflict, preserved additions) and both cleanup paths. Bumped to 1.2.0 (3).
 
-**Left off at**: 1.2.0 pending the verified build, screenshot of the photo-selection fix, and notarized release.
+**Left off at**: 1.2.0 (3) published at https://github.com/oliverames/skylight-bridge/releases/tag/v1.2.0 with the notarized DMG and SHA-256 checksum. The tag points at `fff269a`. The notarized app and DMG both pass Gatekeeper assessment and the published checksum matches the local digest.
 
 **Open questions**: None.
 
