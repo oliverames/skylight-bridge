@@ -150,8 +150,41 @@ struct AppConfiguration: Codable, Sendable, Hashable {
     var syncIntervalMinutes = 15
     var dryRun = true
     var launchAtLogin = false
+    // Absent in configuration files written before the Dock preference existed.
+    var hideDockIcon = false
 
     static let empty = AppConfiguration()
+
+    init() {}
+
+    // Synthesized Codable requires every key regardless of property defaults.
+    // Decode each field as optional so configurations written by older builds
+    // keep loading (and are not silently replaced with .empty) after new
+    // fields are added.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        account = try container.decodeIfPresent(
+            SkylightAccountConfiguration.self, forKey: .account
+        ) ?? SkylightAccountConfiguration()
+        photoMappings = try container.decodeIfPresent(
+            [PhotoMapping].self, forKey: .photoMappings
+        ) ?? []
+        reminderMappings = try container.decodeIfPresent(
+            [ReminderListMapping].self, forKey: .reminderMappings
+        ) ?? []
+        recipeSelection = try container.decodeIfPresent(
+            NotesSelection.self, forKey: .recipeSelection
+        ) ?? NotesSelection(kind: .recipes)
+        mealSelection = try container.decodeIfPresent(
+            NotesSelection.self, forKey: .mealSelection
+        ) ?? NotesSelection(kind: .meals)
+        syncIntervalMinutes = try container.decodeIfPresent(
+            Int.self, forKey: .syncIntervalMinutes
+        ) ?? 15
+        dryRun = try container.decodeIfPresent(Bool.self, forKey: .dryRun) ?? true
+        launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? false
+        hideDockIcon = try container.decodeIfPresent(Bool.self, forKey: .hideDockIcon) ?? false
+    }
 
     var hasEnabledSync: Bool {
         photoMappings.contains(where: \.enabled) ||

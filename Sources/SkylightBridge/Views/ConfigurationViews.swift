@@ -123,6 +123,15 @@ struct SyncSettingsView: View {
                     step: 5
                 )
                 Toggle("Launch at login", isOn: $store.configuration.launchAtLogin)
+                Toggle("Hide Dock icon", isOn: $store.configuration.hideDockIcon)
+                if store.configuration.hideDockIcon {
+                    Label(
+                        "Skylight Bridge stays in the menu bar. Reopen this window from the menu bar icon.",
+                        systemImage: "menubar.arrow.up.rectangle"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
             }
 
             Section("Safety") {

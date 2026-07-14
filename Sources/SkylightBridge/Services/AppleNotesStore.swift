@@ -1,3 +1,4 @@
+import ApplicationServices
 @preconcurrency import Foundation
 
 enum AppleNotesStoreError: Error, LocalizedError, Sendable {
@@ -23,7 +24,38 @@ enum AppleNotesStoreError: Error, LocalizedError, Sendable {
     }
 }
 
+enum AppleNotesAuthorizationStatus: Sendable {
+    case granted
+    case denied
+    case notDetermined
+    /// The permission could not be checked, e.g. because Notes is not running.
+    case unknown
+}
+
 actor AppleNotesStore {
+    /// Queries the Automation (Apple Events) permission for Notes without
+    /// prompting. Returns `.unknown` when Notes is not running, because the
+    /// permission check needs a live target process to resolve against.
+    nonisolated static func authorizationStatus() -> AppleNotesAuthorizationStatus {
+        let target = NSAppleEventDescriptor(bundleIdentifier: "com.apple.Notes")
+        let status = AEDeterminePermissionToAutomateTarget(
+            target.aeDesc,
+            typeWildCard,
+            typeWildCard,
+            false
+        )
+        switch status {
+        case noErr:
+            return .granted
+        case OSStatus(errAEEventWouldRequireUserConsent):
+            return .notDetermined
+        case OSStatus(errAEEventNotPermitted):
+            return .denied
+        default:
+            return .unknown
+        }
+    }
+
     func accounts() throws -> [AppleNotesAccountSnapshot] {
         let descriptor = try execute(
             """

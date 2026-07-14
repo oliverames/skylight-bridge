@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 
@@ -50,6 +51,7 @@ final class AppStore {
     func start() async {
         guard !hasStarted else { return }
         hasStarted = true
+        applyDockIconPreference()
         async let sources: Void = refreshSources()
         async let account: Void = restoreAccountConnection()
         _ = await (sources, account)
@@ -60,6 +62,7 @@ final class AppStore {
             try persistence.saveConfiguration(configuration)
             configureScheduler()
             try applyLaunchAtLoginPreference()
+            applyDockIconPreference()
             statusMessage = "Configuration saved."
         } catch {
             appendActivity(.init(
@@ -90,6 +93,7 @@ final class AppStore {
 
         photosAuthorizationStatus = photoLibrary.authorizationStatus()
         remindersAuthorizationStatus = remindersStore.authorizationStatus()
+        refreshNotesAccessStatus()
 
         if photosAuthorizationStatus == .fullAccess {
             do {
@@ -162,10 +166,28 @@ final class AppStore {
         return list
     }
 
+    /// Reads the Automation permission for Notes from TCC so the status rows
+    /// reflect reality across launches instead of only after an in-session
+    /// request. When the check is indeterminate (Notes not running), fall back
+    /// to whether a request has ever succeeded on this Mac.
+    private func refreshNotesAccessStatus() {
+        switch AppleNotesStore.authorizationStatus() {
+        case .granted:
+            notesAccessGranted = true
+        case .denied, .notDetermined:
+            notesAccessGranted = false
+        case .unknown:
+            notesAccessGranted = UserDefaults.standard.bool(forKey: Self.notesAccessEverGrantedKey)
+        }
+    }
+
+    private static let notesAccessEverGrantedKey = "notesAccessEverGranted"
+
     func requestNotesAccess() async {
         do {
             notesFolders = try await notesStore.folders()
             notesAccessGranted = true
+            UserDefaults.standard.set(true, forKey: Self.notesAccessEverGrantedKey)
             let configuredFolderIDs = Set([
                 configuration.recipeSelection.folderID,
                 configuration.mealSelection.folderID
@@ -482,6 +504,20 @@ final class AppStore {
         }
         if changed {
             try? persistence.saveConfiguration(configuration)
+        }
+    }
+
+    /// Hiding the Dock icon switches the app to the accessory activation
+    /// policy: menu bar extra and windows keep working, but the app leaves the
+    /// Dock and the Command-Tab switcher.
+    private func applyDockIconPreference() {
+        // Mirror for AppDelegate, which needs the value before config loads.
+        UserDefaults.standard.set(configuration.hideDockIcon, forKey: "hideDockIcon")
+        let policy: NSApplication.ActivationPolicy = configuration.hideDockIcon ? .accessory : .regular
+        guard NSApp.activationPolicy() != policy else { return }
+        NSApp.setActivationPolicy(policy)
+        if policy == .regular {
+            NSApp.activate(ignoringOtherApps: true)
         }
     }
 

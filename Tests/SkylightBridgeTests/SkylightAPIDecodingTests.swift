@@ -100,3 +100,31 @@ struct SyncStateDecodingTests {
         #expect(state.photoAlbums.isEmpty)
     }
 }
+
+struct AppConfigurationDecodingTests {
+    @Test("Configuration files written before hideDockIcon still decode")
+    func decodesLegacyConfigurationWithoutHideDockIcon() throws {
+        let json = #"{"syncIntervalMinutes":30,"dryRun":false,"launchAtLogin":true}"#
+
+        let configuration = try JSONDecoder().decode(AppConfiguration.self, from: Data(json.utf8))
+
+        #expect(configuration.syncIntervalMinutes == 30)
+        #expect(configuration.dryRun == false)
+        #expect(configuration.launchAtLogin == true)
+        #expect(configuration.hideDockIcon == false)
+    }
+
+    @Test("Configuration round-trips through Codable")
+    func roundTripsConfiguration() throws {
+        var configuration = AppConfiguration()
+        configuration.hideDockIcon = true
+        configuration.syncIntervalMinutes = 45
+
+        let decoded = try JSONDecoder().decode(
+            AppConfiguration.self,
+            from: JSONEncoder().encode(configuration)
+        )
+
+        #expect(decoded == configuration)
+    }
+}

@@ -3,8 +3,14 @@ import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
+        // Mirrored from AppConfiguration.hideDockIcon at save time so the
+        // policy can be applied before the configuration file is loaded,
+        // avoiding a Dock icon flash on launch.
+        let hideDockIcon = UserDefaults.standard.bool(forKey: "hideDockIcon")
+        NSApp.setActivationPolicy(hideDockIcon ? .accessory : .regular)
+        if !hideDockIcon {
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 }
 
