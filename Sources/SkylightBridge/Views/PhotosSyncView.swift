@@ -16,7 +16,7 @@ struct PhotosSyncView: View {
                 AccessRow(
                     title: "Photos access",
                     detail: isAuthorized
-                        ? "\(store.photoCollections.count) albums, folders, and smart albums are available."
+                        ? "\(store.photoCollections.count) albums, folders, shared albums, and smart albums are available."
                         : "Skylight Bridge needs read access only to the sources you select.",
                     isAuthorized: isAuthorized,
                     deniedPane: "Privacy_Photos",
@@ -146,7 +146,9 @@ private struct PhotoMappingEditor: View {
     }
 
     private var albums: [ApplePhotoCollectionSnapshot] {
-        collections.filter { $0.kind == .album || $0.kind == .folder || $0.kind == .smartAlbum }
+        collections.filter {
+            $0.kind == .album || $0.kind == .folder || $0.kind == .smartAlbum || $0.kind == .sharedAlbum
+        }
     }
 
     var body: some View {
@@ -239,7 +241,8 @@ private struct PhotoMappingEditor: View {
             Picker("Album or folder", selection: sourceCollectionBinding) {
                 Text("Choose an album").tag("")
                 ForEach(albums) { album in
-                    Text(album.title).tag(album.id)
+                    Text(album.kind == .sharedAlbum ? "\(album.title) (Shared)" : album.title)
+                        .tag(album.id)
                 }
             }
             if albums.isEmpty {

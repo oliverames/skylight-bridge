@@ -122,6 +122,11 @@ struct NoteSyncRecord: Identifiable, Codable, Sendable, Hashable {
     // Two-way recipe fields; absent in state files written by 1.0.
     var lastAppleModifiedAt: Date?
     var lastSkylightUpdatedAt: String?
+    // Category and title emoji the on-device classifier chose while the
+    // mapping is set to Automatic; nil means not classified yet. The emoji is
+    // cached so note-driven pushes re-apply it without re-running the model.
+    var autoCategoryID: String?
+    var autoEmoji: String?
 
     init(
         kind: NotesContentKind,
@@ -131,7 +136,9 @@ struct NoteSyncRecord: Identifiable, Codable, Sendable, Hashable {
         skylightID: String,
         lastSyncedAt: Date,
         lastAppleModifiedAt: Date? = nil,
-        lastSkylightUpdatedAt: String? = nil
+        lastSkylightUpdatedAt: String? = nil,
+        autoCategoryID: String? = nil,
+        autoEmoji: String? = nil
     ) {
         self.kind = kind
         self.frameID = frameID
@@ -141,6 +148,8 @@ struct NoteSyncRecord: Identifiable, Codable, Sendable, Hashable {
         self.lastSyncedAt = lastSyncedAt
         self.lastAppleModifiedAt = lastAppleModifiedAt
         self.lastSkylightUpdatedAt = lastSkylightUpdatedAt
+        self.autoCategoryID = autoCategoryID
+        self.autoEmoji = autoEmoji
     }
 
     // Persisted struct: decode per field so future additions never strand old
@@ -155,6 +164,8 @@ struct NoteSyncRecord: Identifiable, Codable, Sendable, Hashable {
         lastSyncedAt = try container.decodeIfPresent(Date.self, forKey: .lastSyncedAt) ?? .distantPast
         lastAppleModifiedAt = try container.decodeIfPresent(Date.self, forKey: .lastAppleModifiedAt)
         lastSkylightUpdatedAt = try container.decodeIfPresent(String.self, forKey: .lastSkylightUpdatedAt)
+        autoCategoryID = try container.decodeIfPresent(String.self, forKey: .autoCategoryID)
+        autoEmoji = try container.decodeIfPresent(String.self, forKey: .autoEmoji)
     }
 }
 

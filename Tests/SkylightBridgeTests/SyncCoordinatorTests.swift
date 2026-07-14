@@ -582,7 +582,8 @@ struct SyncCoordinatorTests {
         imageConverter: CoordinatorImageConverter = CoordinatorImageConverter(),
         state: CoordinatorStateStore = CoordinatorStateStore(),
         notesSource: CoordinatorNotesSource = CoordinatorNotesSource(),
-        reminderSource: CoordinatorReminderSource? = nil
+        reminderSource: CoordinatorReminderSource? = nil,
+        recipeClassifier: (any RecipeClassifying)? = nil
     ) -> SyncCoordinator {
         SyncCoordinator(
             photoSource: photoSource,
@@ -590,7 +591,8 @@ struct SyncCoordinatorTests {
             notesSource: notesSource,
             imageConverter: imageConverter,
             api: api,
-            stateStore: state
+            stateStore: state,
+            recipeClassifier: recipeClassifier
         )
     }
 
@@ -646,6 +648,120 @@ struct SyncCoordinatorTests {
             )
         ]
         return configuration
+    }
+
+    @Test("Automatic mode classifies a new recipe and decorates its title")
+    func automaticModeClassifiesNewRecipe() async throws {
+        let plaintext = "Tacos\n\nIngredients\n- Shells\n\nInstructions\n1. Fill"
+        let note = recipeNote(id: "note-1", plaintext: plaintext)
+        let api = CoordinatorAPIStub()
+        await api.configureRecipes([])
+        await api.configureMealCategories(breakfastAndDinnerCategories)
+        let notesSource = CoordinatorNotesSource(notes: [note])
+        let state = CoordinatorStateStore()
+        let classifier = StubRecipeClassifier(
+            result: RecipeClassification(categoryLabel: "Dinner", emoji: "🌮")
+        )
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            state: state,
+            notesSource: notesSource,
+            recipeClassifier: classifier
+        )
+
+        let summary = try await coordinator.sync(configuration: configuredRecipes())
+        let requests = await api.recipeRequests
+        let persisted = try await state.loadSyncState()
+
+        #expect(summary.recipes.applied == 1)
+        #expect(requests.first?.summary == "🌮 Tacos")
+        #expect(requests.first?.mealCategoryID == "category-dinner")
+        #expect(persisted.notes.first?.autoCategoryID == "category-dinner")
+        #expect(persisted.notes.first?.autoEmoji == "🌮")
+    }
+
+    @Test("An unchanged recipe gets a one-time classification retrofit")
+    func unchangedRecipeGetsClassificationRetrofit() async throws {
+        let plaintext = "Tacos\n\nIngredients\n- Shells\n\nInstructions\n1. Fill"
+        let note = recipeNote(id: "note-1", plaintext: plaintext)
+        var initial = SyncState()
+        initial.notes = [recipeSyncRecord(
+            noteID: "note-1",
+            contentHash: sha(plaintext),
+            skylightID: "recipe-1",
+            remoteRevision: "rev-1"
+        )]
+        let api = CoordinatorAPIStub()
+        await api.configureRecipes([
+            remoteRecipe(id: "recipe-1", title: "Tacos", description: "", updatedAt: "rev-1")
+        ])
+        await api.configureMealCategories(breakfastAndDinnerCategories)
+        let notesSource = CoordinatorNotesSource(notes: [note])
+        let state = CoordinatorStateStore(state: initial)
+        let classifier = StubRecipeClassifier(
+            result: RecipeClassification(categoryLabel: "Dinner", emoji: "🌮")
+        )
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            state: state,
+            notesSource: notesSource,
+            recipeClassifier: classifier
+        )
+
+        let first = try await coordinator.sync(configuration: configuredRecipes())
+        let requests = await api.recipeRequests
+        let persisted = try await state.loadSyncState()
+
+        #expect(first.recipes.applied == 1)
+        #expect(requests.last?.summary == "🌮 Tacos")
+        #expect(requests.last?.mealCategoryID == "category-dinner")
+        #expect(persisted.notes.first?.autoCategoryID == "category-dinner")
+
+        // The retrofit is one-time: a second sync plans nothing.
+        let second = try await coordinator.sync(configuration: configuredRecipes())
+        #expect(second.recipes.planned == 0)
+    }
+
+    @Test("A classified recipe title that already has an emoji is left alone")
+    func emojiTitlesAreNotDoubleDecorated() async throws {
+        let plaintext = "🌮 Tacos\n\nIngredients\n- Shells\n\nInstructions\n1. Fill"
+        let note = recipeNote(id: "note-1", plaintext: plaintext)
+        let api = CoordinatorAPIStub()
+        await api.configureRecipes([])
+        await api.configureMealCategories(breakfastAndDinnerCategories)
+        let notesSource = CoordinatorNotesSource(notes: [note])
+        let state = CoordinatorStateStore()
+        let classifier = StubRecipeClassifier(
+            result: RecipeClassification(categoryLabel: "Dinner", emoji: "🥑")
+        )
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            state: state,
+            notesSource: notesSource,
+            recipeClassifier: classifier
+        )
+
+        _ = try await coordinator.sync(configuration: configuredRecipes())
+        let requests = await api.recipeRequests
+
+        #expect(requests.first?.summary == "🌮 Tacos")
+        #expect(requests.first?.mealCategoryID == "category-dinner")
+    }
+
+    private var breakfastAndDinnerCategories: [SkylightResource<SkylightMealCategoryAttributes>] {
+        [
+            SkylightResource(
+                id: "category-breakfast",
+                attributes: SkylightMealCategoryAttributes(label: "Breakfast", color: nil)
+            ),
+            SkylightResource(
+                id: "category-dinner",
+                attributes: SkylightMealCategoryAttributes(label: "Dinner", color: nil)
+            )
+        ]
     }
 
     private func configuredRecipes(dryRun: Bool = false) -> AppConfiguration {
@@ -981,6 +1097,7 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
     private var mealCategories: [SkylightResource<SkylightMealCategoryAttributes>] = []
     private(set) var updatedRecipeIDs: [String] = []
     private(set) var deletedRecipeIDs: [String] = []
+    private(set) var recipeRequests: [SkylightRecipeRequest] = []
 
     func snapshot() -> CoordinatorAPICalls { calls }
 
@@ -1083,6 +1200,7 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
     func listMessages(frameID: String, page: Int?, syncToken: String?, pageToken: String?) async throws -> SkylightPhotoMessagesResponse { throw CoordinatorStubError.unexpectedCall }
     func createRecipe(frameID: String, request: SkylightRecipeRequest) async throws -> SkylightResource<SkylightRecipeAttributes> {
         calls.createdRecipes += 1
+        recipeRequests.append(request)
         return recipeResource(
             id: "recipe-created-\(calls.createdRecipes)",
             request: request,
@@ -1092,11 +1210,17 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
     func updateRecipe(frameID: String, recipeID: String, request: SkylightRecipeRequest) async throws -> SkylightResource<SkylightRecipeAttributes> {
         calls.updatedRecipes += 1
         updatedRecipeIDs.append(recipeID)
-        return recipeResource(
+        recipeRequests.append(request)
+        let updated = recipeResource(
             id: recipeID,
             request: request,
             revision: "rev-update-\(calls.updatedRecipes)"
         )
+        // Mirror the live API: later listRecipes calls return the new revision.
+        if let index = recipes.firstIndex(where: { $0.id == recipeID }) {
+            recipes[index] = updated
+        }
+        return updated
     }
     func listRecipes(frameID: String) async throws -> [SkylightResource<SkylightRecipeAttributes>] {
         calls.recipeCollections += 1
@@ -1130,4 +1254,17 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
     func createMealSitting(frameID: String, request: SkylightMealSittingRequest) async throws -> SkylightResource<SkylightMealSittingAttributes> { throw CoordinatorStubError.unexpectedCall }
     func updateMealInstance(frameID: String, mealID: String, instanceISO: String, request: SkylightMealInstanceUpdateRequest) async throws -> SkylightResource<SkylightMealSittingAttributes> { throw CoordinatorStubError.unexpectedCall }
     func deleteMealInstance(frameID: String, mealID: String, instanceISO: String, applyTo: String?) async throws { throw CoordinatorStubError.unexpectedCall }
+}
+
+private struct StubRecipeClassifier: RecipeClassifying {
+    let result: RecipeClassification?
+    var isAvailable: Bool { true }
+
+    func classify(
+        title: String,
+        ingredients: [String],
+        categoryLabels: [String]
+    ) async -> RecipeClassification? {
+        result
+    }
 }

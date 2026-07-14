@@ -6,6 +6,7 @@ enum ApplePhotoCollectionKind: String, Sendable, Codable {
     case favorites
     case folder
     case smartAlbum
+    case sharedAlbum
 }
 
 enum ApplePhotosAuthorizationStatus: String, Sendable, Codable {

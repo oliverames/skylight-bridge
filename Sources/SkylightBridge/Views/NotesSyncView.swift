@@ -196,11 +196,7 @@ private struct NotesSelectionEditor: View {
         NavigationStack {
             Form {
                 sourceSection
-                // The meal-category picker only affects meal sync; recipes
-                // always land in the Skylight recipe box.
-                if draft.kind == .meals {
-                    destinationSection
-                }
+                destinationSection
                 behaviorSection
             }
             .formStyle(.grouped)
@@ -278,9 +274,17 @@ private struct NotesSelectionEditor: View {
         } header: {
             SectionHeader(title: "Skylight")
         } footer: {
-            Text("Automatic uses the first available Skylight meal category.")
+            Text(destinationFooter)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private var destinationFooter: String {
+        if draft.kind == .recipes {
+            "Automatic sorts each recipe into a meal category on this Mac using Apple Intelligence, and adds a title emoji to recipes that have none. Picking a category files every recipe there instead. If Apple Intelligence is unavailable, Automatic falls back to the first category."
+        } else {
+            "Automatic uses the first available Skylight meal category."
         }
     }
 

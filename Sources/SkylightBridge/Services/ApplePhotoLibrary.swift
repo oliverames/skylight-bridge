@@ -102,6 +102,28 @@ final class ApplePhotoLibrary: NSObject, PHPhotoLibraryChangeObserver {
             )
         }
 
+        // iCloud Shared Albums are not top-level user collections, so they
+        // need their own fetch to appear in the album picker.
+        let sharedAlbums = PHAssetCollection.fetchAssetCollections(
+            with: .album,
+            subtype: .albumCloudShared,
+            options: nil
+        )
+        for index in 0 ..< sharedAlbums.count {
+            let collection = sharedAlbums.object(at: index)
+            guard seenIdentifiers.insert(collection.localIdentifier).inserted else {
+                continue
+            }
+            results.append(
+                ApplePhotoCollectionSnapshot(
+                    id: collection.localIdentifier,
+                    title: collection.localizedTitle ?? "Untitled Shared Album",
+                    kind: .sharedAlbum,
+                    parentID: nil
+                )
+            )
+        }
+
         return results.sorted {
             if $0.kind == $1.kind {
                 $0.title.localizedStandardCompare($1.title) == .orderedAscending

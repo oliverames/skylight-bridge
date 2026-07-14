@@ -379,6 +379,7 @@ actor SyncCoordinator {
     private let api: any SkylightSyncAPI
     private let stateStore: any SyncStatePersisting
     private let mealDateResolver: any MealDateResolving
+    private let recipeClassifier: (any RecipeClassifying)?
     private let now: @Sendable () -> Date
 
     init(
@@ -389,6 +390,7 @@ actor SyncCoordinator {
         api: any SkylightSyncAPI,
         stateStore: any SyncStatePersisting,
         mealDateResolver: any MealDateResolving = DefaultMealDateResolver(),
+        recipeClassifier: (any RecipeClassifying)? = nil,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.photoSource = photoSource
@@ -398,6 +400,7 @@ actor SyncCoordinator {
         self.api = api
         self.stateStore = stateStore
         self.mealDateResolver = mealDateResolver
+        self.recipeClassifier = recipeClassifier
         self.now = now
     }
 
@@ -412,7 +415,8 @@ actor SyncCoordinator {
             notesSource: AppleNotesStore(),
             imageConverter: ImageConversionService(),
             api: apiClient,
-            stateStore: stateStore
+            stateStore: stateStore,
+            recipeClassifier: RecipeIntelligence()
         )
     }
 
@@ -1172,7 +1176,7 @@ actor SyncCoordinator {
         let noteSummaries = try await selectedNoteSummaries(for: selection)
             .filter { !$0.isPasswordProtected }
             .sorted { $0.id < $1.id }
-        let mealCategoryID = try await resolveMealCategoryID(
+        let categoryContext = try await resolveRecipeCategoryContext(
             selection: selection,
             frameID: frameID,
             needed: !noteSummaries.isEmpty
@@ -1211,7 +1215,7 @@ actor SyncCoordinator {
                 conflictPolicy: selection.conflictPolicy,
                 frameID: frameID,
                 folderID: folderID,
-                mealCategoryID: mealCategoryID,
+                categoryContext: categoryContext,
                 formattedNotes: selection.formattedNotes,
                 dryRun: dryRun,
                 adoptedNoteIDs: &adoptedNoteIDs,
@@ -1229,7 +1233,7 @@ actor SyncCoordinator {
             conflictPolicy: selection.conflictPolicy,
             frameID: frameID,
             folderID: folderID,
-            mealCategoryID: mealCategoryID,
+            categoryContext: categoryContext,
             formattedNotes: selection.formattedNotes,
             dryRun: dryRun,
             trashedNoteIDs: &trashedNoteIDs,
@@ -1260,9 +1264,19 @@ actor SyncCoordinator {
             }
             summary.planned += 1
             guard !dryRun else { continue }
+            let classification = await classifyRecipePush(
+                draft: parsed.draft,
+                context: categoryContext,
+                cachedCategoryID: nil,
+                cachedEmoji: nil
+            )
             let remote = try await api.createRecipe(
                 frameID: frameID,
-                request: recipeRequest(for: parsed.draft, categoryID: mealCategoryID)
+                request: recipeRequest(
+                    for: parsed.draft,
+                    categoryID: classification.categoryID,
+                    summary: classification.summary
+                )
             )
             upsertNoteRecord(
                 makeRecipeRecord(
@@ -1271,7 +1285,9 @@ actor SyncCoordinator {
                     contentHash: parsed.contentHash,
                     skylightID: remote.id,
                     noteModifiedAt: parsed.note.modificationDate,
-                    remoteUpdatedAt: remote.attributes.updatedAt
+                    remoteUpdatedAt: remote.attributes.updatedAt,
+                    autoCategoryID: classification.autoCategoryID,
+                    autoEmoji: classification.autoEmoji
                 ),
                 in: &state
             )
@@ -1314,7 +1330,7 @@ actor SyncCoordinator {
         conflictPolicy: SyncConflictPolicy,
         frameID: String,
         folderID: String,
-        mealCategoryID: String?,
+        categoryContext: RecipeCategoryContext,
         formattedNotes: Bool,
         dryRun: Bool,
         adoptedNoteIDs: inout Set<String>,
@@ -1331,9 +1347,11 @@ actor SyncCoordinator {
 
         for parsed in parsedNotes
         where recipeRecord(forNote: parsed.note.id, frameID: frameID, in: state) == nil {
-            let key = parsed.draft.title.trimmed.lowercased()
+            // Emoji-insensitive: an auto-decorated Skylight title ("🥯 Bagels")
+            // still adopts the plain note ("Bagels").
+            let key = recipeTitleKey(parsed.draft.title)
             guard let index = candidates.firstIndex(where: {
-                ($0.attributes.summary ?? "").trimmed.lowercased() == key
+                recipeTitleKey($0.attributes.summary ?? "") == key
             }) else { continue }
             let remote = candidates.remove(at: index)
             adoptedNoteIDs.insert(parsed.note.id)
@@ -1369,7 +1387,8 @@ actor SyncCoordinator {
                     parsed: parsed,
                     recipeID: remote.id,
                     frameID: frameID,
-                    mealCategoryID: mealCategoryID,
+                    categoryContext: categoryContext,
+                    existingRecord: nil,
                     state: &state
                 )
             } else {
@@ -1393,7 +1412,7 @@ actor SyncCoordinator {
         conflictPolicy: SyncConflictPolicy,
         frameID: String,
         folderID: String,
-        mealCategoryID: String?,
+        categoryContext: RecipeCategoryContext,
         formattedNotes: Bool,
         dryRun: Bool,
         trashedNoteIDs: inout Set<String>,
@@ -1442,7 +1461,25 @@ actor SyncCoordinator {
 
             switch (appleChanged, remoteChanged, remote) {
             case (false, false, _):
-                continue
+                // One-time retrofit: recipes that predate on-device
+                // classification get their category and title emoji on the
+                // next sync even though their content is unchanged.
+                guard await needsClassificationRetrofit(
+                    record: record,
+                    draft: parsed.draft,
+                    context: categoryContext
+                ) else { continue }
+                summary.planned += 1
+                guard !dryRun else { continue }
+                try await pushRecipeUpdate(
+                    parsed: parsed,
+                    recipeID: record.skylightID,
+                    frameID: frameID,
+                    categoryContext: categoryContext,
+                    existingRecord: record,
+                    state: &state
+                )
+                summary.applied += 1
             case (true, false, _):
                 summary.planned += 1
                 guard !dryRun else { continue }
@@ -1450,7 +1487,8 @@ actor SyncCoordinator {
                     parsed: parsed,
                     recipeID: record.skylightID,
                     frameID: frameID,
-                    mealCategoryID: mealCategoryID,
+                    categoryContext: categoryContext,
+                    existingRecord: record,
                     state: &state
                 )
                 summary.applied += 1
@@ -1489,7 +1527,8 @@ actor SyncCoordinator {
                         parsed: parsed,
                         recipeID: record.skylightID,
                         frameID: frameID,
-                        mealCategoryID: mealCategoryID,
+                        categoryContext: categoryContext,
+                        existingRecord: record,
                         state: &state
                     )
                 } else {
@@ -1556,13 +1595,24 @@ actor SyncCoordinator {
         parsed: ParsedRecipeNote,
         recipeID: String,
         frameID: String,
-        mealCategoryID: String?,
+        categoryContext: RecipeCategoryContext,
+        existingRecord: NoteSyncRecord?,
         state: inout SyncState
     ) async throws {
+        let classification = await classifyRecipePush(
+            draft: parsed.draft,
+            context: categoryContext,
+            cachedCategoryID: existingRecord?.autoCategoryID,
+            cachedEmoji: existingRecord?.autoEmoji
+        )
         let remote = try await api.updateRecipe(
             frameID: frameID,
             recipeID: recipeID,
-            request: recipeRequest(for: parsed.draft, categoryID: mealCategoryID)
+            request: recipeRequest(
+                for: parsed.draft,
+                categoryID: classification.categoryID,
+                summary: classification.summary
+            )
         )
         upsertNoteRecord(
             makeRecipeRecord(
@@ -1571,7 +1621,9 @@ actor SyncCoordinator {
                 contentHash: parsed.contentHash,
                 skylightID: remote.id,
                 noteModifiedAt: parsed.note.modificationDate,
-                remoteUpdatedAt: remote.attributes.updatedAt
+                remoteUpdatedAt: remote.attributes.updatedAt,
+                autoCategoryID: classification.autoCategoryID,
+                autoEmoji: classification.autoEmoji
             ),
             in: &state
         )
@@ -1623,7 +1675,9 @@ actor SyncCoordinator {
         contentHash: String,
         skylightID: String,
         noteModifiedAt: Date?,
-        remoteUpdatedAt: String?
+        remoteUpdatedAt: String?,
+        autoCategoryID: String? = nil,
+        autoEmoji: String? = nil
     ) -> NoteSyncRecord {
         NoteSyncRecord(
             kind: .recipes,
@@ -1633,7 +1687,9 @@ actor SyncCoordinator {
             skylightID: skylightID,
             lastSyncedAt: now(),
             lastAppleModifiedAt: noteModifiedAt,
-            lastSkylightUpdatedAt: remoteUpdatedAt
+            lastSkylightUpdatedAt: remoteUpdatedAt,
+            autoCategoryID: autoCategoryID,
+            autoEmoji: autoEmoji
         )
     }
 
@@ -1680,10 +1736,13 @@ actor SyncCoordinator {
             frameID: frameID,
             needed: !notes.isEmpty
         )
+        // Keyed emoji-insensitively so a meal line like "Tacos" still matches
+        // the auto-decorated recipe "🌮 Tacos".
         let recipesByTitle = try await api.listRecipes(frameID: frameID).reduce(into: [String: String]()) {
             result, recipe in
-            guard let title = recipe.attributes.summary?.trimmed, !title.isEmpty else { return }
-            result[title.lowercased()] = recipe.id
+            let key = recipeTitleKey(recipe.attributes.summary ?? "")
+            guard !key.isEmpty else { return }
+            result[key] = recipe.id
         }
         var summary = SyncDomainSummary()
 
@@ -1699,7 +1758,7 @@ actor SyncCoordinator {
                     $0.kind == .meals && $0.frameID == frameID && $0.appleNoteID == slot
                 }
                 guard existing?.contentHash != contentHash else { continue }
-                let matchedRecipeID = recipesByTitle[meal.recipeTitle.trimmed.lowercased()]
+                let matchedRecipeID = recipesByTitle[recipeTitleKey(meal.recipeTitle)]
 
                 let createRequest = SkylightMealSittingRequest(
                     date: date,
@@ -1878,6 +1937,114 @@ actor SyncCoordinator {
         return categoryID
     }
 
+    struct MealCategoryOption: Equatable, Sendable {
+        let id: String
+        let label: String
+    }
+
+    /// How recipe pushes choose their meal category. A configured category
+    /// pins everything; Automatic classifies each recipe on device, falling
+    /// back to the frame's first category when the model is unavailable.
+    struct RecipeCategoryContext: Sendable {
+        var fixedCategoryID: String?
+        var fallbackCategoryID: String?
+        var options: [MealCategoryOption] = []
+        var isAutomatic: Bool { fixedCategoryID == nil }
+    }
+
+    private func resolveRecipeCategoryContext(
+        selection: NotesSelection,
+        frameID: String,
+        needed: Bool
+    ) async throws -> RecipeCategoryContext {
+        guard needed else {
+            return RecipeCategoryContext(fixedCategoryID: selection.destinationCategoryID)
+        }
+        let categories = try await api.listMealCategories(frameID: frameID)
+        let options = categories.map {
+            MealCategoryOption(id: $0.id, label: $0.attributes.label ?? "")
+        }
+        if let configured = selection.destinationCategoryID?.trimmed, !configured.isEmpty {
+            guard categories.contains(where: { $0.id == configured }) else {
+                throw SyncCoordinatorError.invalidMealCategory(selection.kind)
+            }
+            return RecipeCategoryContext(fixedCategoryID: configured, options: options)
+        }
+        guard let first = categories.first?.id else {
+            throw SyncCoordinatorError.missingMealCategory(selection.kind)
+        }
+        return RecipeCategoryContext(fallbackCategoryID: first, options: options)
+    }
+
+    /// The category ID and Skylight summary for one recipe push, with the
+    /// values to cache on its record. Classification runs at most once per
+    /// recipe; cached results are reused on every later push.
+    private struct RecipePushClassification {
+        var categoryID: String?
+        var summary: String
+        var autoCategoryID: String?
+        var autoEmoji: String?
+    }
+
+    private func classifyRecipePush(
+        draft: RecipeDraft,
+        context: RecipeCategoryContext,
+        cachedCategoryID: String?,
+        cachedEmoji: String?
+    ) async -> RecipePushClassification {
+        var categoryID = context.fixedCategoryID ?? cachedCategoryID
+        var emoji = cachedEmoji
+        let needsCategory = context.isAutomatic && categoryID == nil
+        let needsEmoji = !draft.title.hasLeadingEmoji && emoji == nil
+
+        if needsCategory || needsEmoji,
+           let recipeClassifier,
+           !context.options.isEmpty,
+           await recipeClassifier.isAvailable,
+           let result = await recipeClassifier.classify(
+               title: draft.title,
+               ingredients: draft.ingredients,
+               categoryLabels: context.options.map(\.label)
+           ) {
+            if needsCategory {
+                categoryID = context.options.first { $0.label == result.categoryLabel }?.id
+            }
+            if needsEmoji {
+                emoji = result.emoji
+            }
+        }
+        if context.isAutomatic, categoryID == nil {
+            categoryID = context.fallbackCategoryID
+        }
+
+        let summary: String = if draft.title.hasLeadingEmoji || emoji == nil {
+            draft.title
+        } else {
+            "\(emoji ?? "") \(draft.title)"
+        }
+        return RecipePushClassification(
+            categoryID: categoryID,
+            summary: summary,
+            autoCategoryID: context.isAutomatic ? categoryID : cachedCategoryID,
+            autoEmoji: emoji
+        )
+    }
+
+    /// True when this record still needs its one-time automatic classification
+    /// (category or title emoji) even though the note content is unchanged.
+    private func needsClassificationRetrofit(
+        record: NoteSyncRecord,
+        draft: RecipeDraft,
+        context: RecipeCategoryContext
+    ) async -> Bool {
+        guard context.isAutomatic, !context.options.isEmpty else { return false }
+        let missingCategory = record.autoCategoryID == nil
+        let missingEmoji = !draft.title.hasLeadingEmoji && record.autoEmoji == nil
+        guard missingCategory || missingEmoji else { return false }
+        guard let recipeClassifier else { return false }
+        return await recipeClassifier.isAvailable
+    }
+
     private func selectedNoteSummaries(
         for selection: NotesSelection
     ) async throws -> [AppleNoteSummarySnapshot] {
@@ -1892,17 +2059,28 @@ actor SyncCoordinator {
 
     private func recipeRequest(
         for draft: RecipeDraft,
-        categoryID: String?
+        categoryID: String?,
+        summary: String? = nil
     ) -> SkylightRecipeRequest {
         // The description uses the same grammar the note formatter writes and the
         // parser reads, so pulled recipes round-trip without spurious changes.
         SkylightRecipeRequest(
             mealCategoryID: categoryID,
-            summary: draft.title,
+            summary: summary ?? draft.title,
             description: RecipeNoteFormatter.skylightDescription(for: draft),
             ingredients: draft.ingredients,
             url: draft.sourceURL
         )
+    }
+
+    /// Title key that ignores a leading emoji and case, so decorated Skylight
+    /// summaries still match their plain Apple-side titles.
+    private func recipeTitleKey(_ title: String) -> String {
+        var stripped = title.trimmed
+        while let first = stripped.first, first.isRecipeEmoji || first.isWhitespace {
+            stripped.removeFirst()
+        }
+        return stripped.trimmed.lowercased()
     }
 
     private func listItemRequest(for reminder: AppleReminderSnapshot) -> SkylightListItemRequest {

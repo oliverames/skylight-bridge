@@ -31,6 +31,7 @@ final class AppStore {
     /// True after a sync attempt fails, until the next attempt succeeds. Drives
     /// the menu bar's error state so background failures aren't invisible.
     var lastSyncFailed = false
+    private var hasLoggedClassifierUnavailable = false
     var statusMessage = "Choose sources to begin."
     private var hasStarted = false
 
@@ -337,6 +338,18 @@ final class AppStore {
                 message: "Nothing to sync. Add and enable at least one source mapping."
             ))
             return
+        }
+
+        if configuration.recipeSelection.enabled,
+           (configuration.recipeSelection.destinationCategoryID ?? "").trimmed.isEmpty,
+           !hasLoggedClassifierUnavailable,
+           let reason = RecipeIntelligence.unavailabilityReason {
+            hasLoggedClassifierUnavailable = true
+            appendActivity(.init(
+                level: .info,
+                area: .recipes,
+                message: "Automatic recipe categories fall back to the first Skylight category because \(reason)."
+            ))
         }
 
         do {
