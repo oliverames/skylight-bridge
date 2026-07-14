@@ -317,6 +317,14 @@ final class AppStore {
                 message: statusMessage,
                 isDryRun: summary.dryRun
             ))
+        } catch let error as DecodingError {
+            statusMessage = "Sync failed: could not decode local data (\(error.fieldLevelDescription))."
+            appendActivity(.init(
+                level: .error,
+                area: .system,
+                message: statusMessage,
+                isDryRun: configuration.dryRun
+            ))
         } catch {
             statusMessage = "Sync failed: \(error.localizedDescription)"
             appendActivity(.init(

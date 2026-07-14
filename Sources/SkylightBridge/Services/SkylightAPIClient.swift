@@ -296,7 +296,14 @@ extension SkylightAPIClient {
         guard !data.isEmpty else {
             throw SkylightAPIError.missingResponseBody
         }
-        return try JSONDecoder().decode(Response.self, from: data)
+        do {
+            return try JSONDecoder().decode(Response.self, from: data)
+        } catch let error as DecodingError {
+            throw SkylightAPIError.decodingFailed(
+                endpoint: request.url?.path ?? "unknown endpoint",
+                detail: error.fieldLevelDescription
+            )
+        }
     }
 
     private func executeWithoutDecoding(_ request: URLRequest) async throws {

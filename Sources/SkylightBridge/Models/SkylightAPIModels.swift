@@ -91,6 +91,7 @@ enum SkylightAPIError: Error, Equatable, Sendable {
     case invalidUploadDestination
     case httpStatus(code: Int, body: String)
     case missingResponseBody
+    case decodingFailed(endpoint: String, detail: String)
 }
 
 enum SkylightOAuthError: Error, Equatable, Sendable {
@@ -112,6 +113,31 @@ extension SkylightAPIError: LocalizedError {
             "Skylight returned HTTP \(code)."
         case .missingResponseBody:
             "Skylight returned an empty response where data was expected."
+        case let .decodingFailed(endpoint, detail):
+            "Skylight response for \(endpoint) could not be decoded: \(detail)"
+        }
+    }
+}
+
+extension DecodingError {
+    /// A human-readable summary naming the failed key and its coding path,
+    /// since `localizedDescription` collapses every case to a generic sentence.
+    var fieldLevelDescription: String {
+        func path(_ context: Context) -> String {
+            let joined = context.codingPath.map(\.stringValue).joined(separator: ".")
+            return joined.isEmpty ? "(root)" : joined
+        }
+        switch self {
+        case let .keyNotFound(key, context):
+            return "missing key '\(key.stringValue)' at \(path(context))"
+        case let .valueNotFound(type, context):
+            return "null instead of \(type) at \(path(context))"
+        case let .typeMismatch(type, context):
+            return "expected \(type) at \(path(context)): \(context.debugDescription)"
+        case let .dataCorrupted(context):
+            return "corrupted data at \(path(context)): \(context.debugDescription)"
+        @unknown default:
+            return String(describing: self)
         }
     }
 }

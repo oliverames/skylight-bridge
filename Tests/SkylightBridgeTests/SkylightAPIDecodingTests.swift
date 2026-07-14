@@ -79,3 +79,24 @@ struct SkylightAPIDecodingTests {
         #expect(uniqueSignatures.count == endpoints.count)
     }
 }
+
+struct SyncStateDecodingTests {
+    @Test("Sync state files written before album tracking still decode")
+    func decodesLegacyStateWithoutPhotoAlbums() throws {
+        let json = #"{"photos":[],"reminders":[],"notes":[]}"#
+
+        let state = try JSONDecoder().decode(SyncState.self, from: Data(json.utf8))
+
+        #expect(state.photoAlbums.isEmpty)
+    }
+
+    @Test("Sync state decoding tolerates missing sections entirely")
+    func decodesEmptyObject() throws {
+        let state = try JSONDecoder().decode(SyncState.self, from: Data("{}".utf8))
+
+        #expect(state.photos.isEmpty)
+        #expect(state.reminders.isEmpty)
+        #expect(state.notes.isEmpty)
+        #expect(state.photoAlbums.isEmpty)
+    }
+}

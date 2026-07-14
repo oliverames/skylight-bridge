@@ -59,4 +59,16 @@ struct SyncState: Codable, Sendable {
     var notes: [NoteSyncRecord] = []
     // Absent in state files written before album tracking existed.
     var photoAlbums: [PhotoAlbumRecord] = []
+
+    init() {}
+
+    // Synthesized Codable requires every key regardless of property defaults,
+    // so decode each section as optional to keep older state files loadable.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        photos = try container.decodeIfPresent([PhotoSyncRecord].self, forKey: .photos) ?? []
+        reminders = try container.decodeIfPresent([ReminderSyncRecord].self, forKey: .reminders) ?? []
+        notes = try container.decodeIfPresent([NoteSyncRecord].self, forKey: .notes) ?? []
+        photoAlbums = try container.decodeIfPresent([PhotoAlbumRecord].self, forKey: .photoAlbums) ?? []
+    }
 }
