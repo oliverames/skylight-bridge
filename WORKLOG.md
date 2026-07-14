@@ -8,7 +8,7 @@
 
 **Verification**: 65 tests pass (added parser tests for bullet-split, attachment stripping, URL capture; album-delete tests for empty-delete and non-empty-keep). Rebuilt and relaunched. Bumped to 1.2.3 (6).
 
-**Left off at**: 1.2.3 pending the notarized release.
+**Left off at**: 1.2.3 (6) published (private) at https://github.com/oliverames/skylight-bridge/releases/tag/v1.2.3; notarized DMG and SHA-256 checksum, Gatekeeper accepts both, published checksum matches local. Tag points at `aeebb93`.
 
 **Open questions**: The "Family ⇄ To-Do List" mapping shows 0 items on Skylight — worth confirming the Apple Family list has reminders. The Food recipe folder mixes quick meal names with real recipes and has duplicates on Skylight; the user may want to curate the folder or use "Selected notes".
 
