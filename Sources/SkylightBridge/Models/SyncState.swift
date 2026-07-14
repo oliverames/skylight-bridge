@@ -43,8 +43,20 @@ struct NoteSyncRecord: Identifiable, Codable, Sendable, Hashable {
     var lastSkylightUpdatedAt: String?
 }
 
+/// A Skylight album that the bridge created for a mapping. Only bridge-created
+/// albums are recorded, so mapping deletion never removes an album the user
+/// pointed the mapping at.
+struct PhotoAlbumRecord: Identifiable, Codable, Sendable, Hashable {
+    var id: String { "\(mappingID.uuidString):\(albumID)" }
+    let mappingID: UUID
+    var frameID = ""
+    let albumID: String
+}
+
 struct SyncState: Codable, Sendable {
     var photos: [PhotoSyncRecord] = []
     var reminders: [ReminderSyncRecord] = []
     var notes: [NoteSyncRecord] = []
+    // Absent in state files written before album tracking existed.
+    var photoAlbums: [PhotoAlbumRecord] = []
 }

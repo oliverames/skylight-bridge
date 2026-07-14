@@ -138,7 +138,7 @@ struct NotesSyncView: View {
         switch kind {
         case .recipes:
             selection.direction == .twoWay
-                ? "Two-way with the Skylight recipe box · Conflicts: \(selection.conflictPolicy.label.lowercased())"
+                ? "Two-way with the Skylight recipe box · \(selection.conflictPolicy.label.lowercased()) on a clash"
                 : "Apple → Skylight"
         case .meals:
             "Apple → Skylight · Dated meal lines match synchronized recipes when possible."

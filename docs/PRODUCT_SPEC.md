@@ -18,7 +18,7 @@ A mapping can use one of three sources:
 2. The built-in Favorites smart album
 3. An explicit set of images chosen with the system photo picker
 
-Each mapping targets one Skylight album. The bridge records the Apple asset identifier, render fingerprint, output hash, Skylight message identifier, and album membership. It never deletes a Skylight photo that it did not create. Deleting a photo mapping removes the copies it created from Skylight; because Apple Photos is never modified, the Skylight album is the only place those copies live.
+Each mapping targets one Skylight album. The bridge records the Apple asset identifier, render fingerprint, output hash, Skylight message identifier, album membership, and the identifier of any album it creates. It never deletes a Skylight photo that it did not create. Deleting a photo mapping removes the copies it created from Skylight; because Apple Photos is never modified, the Skylight album is the only place those copies live. If the bridge created the destination album, that album is also deleted once it is empty, so a bridge-created album with photos the user added on Skylight is left in place.
 
 RAW and ProRAW sources are rendered to a displayable image by PhotoKit and then encoded as sRGB JPEG, so nothing RAW is ever uploaded.
 
@@ -70,7 +70,7 @@ Recipe sync is push-only by default. Two-way sync adds, with a per-selection con
 
 The bridge writes notes in the same grammar its parser reads, so a pulled recipe produces no push on the following cycle. By default it writes rich Apple Notes HTML: an `h1` title, `h2` section headings flowing directly into native bullet and numbered lists, a spacer line after every list and between sections, escaped entities, and bare source URLs because Notes strips anchor tags on update. A per-selection toggle falls back to plain single-style text. Notes that contain attachments are never rewritten, because updating a note body through automation can wipe its attachments; those notes stay Apple-authoritative and remote edits to them are acknowledged without being applied.
 
-The safe Skylight representation uses the recipe summary and freeform description. Structured ingredient fields are provisional because their private API behavior is less stable.
+The safe Skylight representation uses the recipe summary and freeform description. The recipe body (ingredients as a bulleted list, instructions as a numbered list, plus servings, timing, tags, and a plain source name) travels in the description because a July 2026 backend check confirmed Skylight does not persist the structured ingredient array the API accepts; sending it is harmless but it is not what displays. Real source URLs go in the url field, while a plain source name such as "AllRecipes" stays in the description. Bullet-packed metadata lines like "Source: X • Servings: Y" are split into their fields, and Apple Notes attachment placeholder characters are stripped so they never become ingredient or instruction lines.
 
 ### Meals
 

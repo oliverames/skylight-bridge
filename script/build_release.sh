@@ -3,8 +3,8 @@ set -euo pipefail
 
 APP_NAME="SkylightBridge"
 DISPLAY_NAME="Skylight Bridge"
-VERSION="${VERSION:-1.2.2}"
-BUILD_NUMBER="${BUILD_NUMBER:-5}"
+VERSION="${VERSION:-1.2.3}"
+BUILD_NUMBER="${BUILD_NUMBER:-6}"
 SIGN_IDENTITY="${SIGN_IDENTITY:-Developer ID Application: Oliver Ames (PV3W52NDZ3)}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

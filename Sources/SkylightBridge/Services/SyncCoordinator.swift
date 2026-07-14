@@ -137,6 +137,8 @@ protocol SkylightSyncAPI: Sendable {
         frameID: String,
         title: String
     ) async throws -> SkylightResource<SkylightAlbumAttributes>
+    func deleteAlbum(frameID: String, albumID: String) async throws
+    func listAllAlbumMessageIDs(frameID: String, albumID: String) async throws -> [String]
     func requestUploadURL(
         ext: String,
         frameIDs: [String],
@@ -457,16 +459,25 @@ actor SyncCoordinator {
         return summary
     }
 
-    /// Removes every bridge-managed Skylight photo for a mapping and forgets its
+    struct PhotoMappingPurge: Sendable {
+        var photos = 0
+        var albums = 0
+    }
+
+    /// Removes every bridge-managed Skylight photo for a mapping, then deletes any
+    /// album the bridge created for it once that album is empty, and forgets its
     /// records. Apple Photos is never touched, so this is the only place the
-    /// bridge's copies live. Best-effort per item: an already-deleted remote
-    /// photo does not abort the rest of the cleanup.
-    func purgePhotoMapping(mappingID: UUID, frameID: String) async throws -> Int {
+    /// bridge's copies live. A bridge-created album that still holds photos the
+    /// user added on Skylight is left in place. Best-effort per item: an
+    /// already-deleted remote object does not abort the rest of the cleanup.
+    @discardableResult
+    func purgePhotoMapping(mappingID: UUID, frameID: String) async throws -> PhotoMappingPurge {
         var state = try await stateStore.loadSyncState()
+        var result = PhotoMappingPurge()
+
         let records = state.photos
             .filter { $0.mappingID == mappingID && $0.frameID == frameID }
             .sorted { $0.appleAssetID < $1.appleAssetID }
-        var removed = 0
         for record in records {
             if !record.skylightAlbumIDs.isEmpty {
                 try? await api.removeMessages(
@@ -478,9 +489,26 @@ actor SyncCoordinator {
             try? await api.deleteMessage(frameID: frameID, messageID: record.skylightMessageID)
             state.photos.removeAll { $0.id == record.id }
             try await stateStore.saveSyncState(state)
-            removed += 1
+            result.photos += 1
         }
-        return removed
+
+        let albumRecords = state.photoAlbums
+            .filter { $0.mappingID == mappingID && $0.frameID == frameID }
+            .sorted { $0.albumID < $1.albumID }
+        for albumRecord in albumRecords {
+            let remaining = (try? await api.listAllAlbumMessageIDs(
+                frameID: frameID,
+                albumID: albumRecord.albumID
+            )) ?? []
+            if remaining.isEmpty {
+                try? await api.deleteAlbum(frameID: frameID, albumID: albumRecord.albumID)
+                result.albums += 1
+            }
+            state.photoAlbums.removeAll { $0.id == albumRecord.id }
+            try await stateStore.saveSyncState(state)
+        }
+
+        return result
     }
 
     /// Removes the linked items for a reminder mapping from the chosen side, then
@@ -551,6 +579,15 @@ actor SyncCoordinator {
                 summary.planned += 1
                 if !dryRun {
                     summary.applied += 1
+                    if let albumID = destination.id {
+                        recordManagedAlbum(
+                            mappingID: mapping.id,
+                            frameID: frameID,
+                            albumID: albumID,
+                            in: &state
+                        )
+                        try await checkpoint(state, dryRun: dryRun)
+                    }
                 }
             }
 
@@ -1941,6 +1978,17 @@ actor SyncCoordinator {
     private func upsertPhotoRecord(_ record: PhotoSyncRecord, in state: inout SyncState) {
         state.photos.removeAll { $0.id == record.id }
         state.photos.append(record)
+    }
+
+    private func recordManagedAlbum(
+        mappingID: UUID,
+        frameID: String,
+        albumID: String,
+        in state: inout SyncState
+    ) {
+        let record = PhotoAlbumRecord(mappingID: mappingID, frameID: frameID, albumID: albumID)
+        state.photoAlbums.removeAll { $0.id == record.id }
+        state.photoAlbums.append(record)
     }
 
     private func upsertReminderRecord(_ record: ReminderSyncRecord, in state: inout SyncState) {

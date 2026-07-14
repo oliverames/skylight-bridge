@@ -352,15 +352,19 @@ final class AppStore {
             do {
                 let client = try await sessionManager.client(configuration: configuration.account)
                 let coordinator = SyncCoordinator.live(apiClient: client)
-                let removed = try await coordinator.purgePhotoMapping(
+                let purge = try await coordinator.purgePhotoMapping(
                     mappingID: mapping.id,
                     frameID: frameID
                 )
-                if removed > 0 {
+                if purge.photos > 0 || purge.albums > 0 {
+                    var parts = [countDescription(purge.photos, singular: "photo")]
+                    if purge.albums > 0 {
+                        parts.append(countDescription(purge.albums, singular: "album"))
+                    }
                     appendActivity(.init(
                         level: .success,
                         area: .photos,
-                        message: "Removed \(countDescription(removed, singular: "photo")) from Skylight for “\(mapping.name)”."
+                        message: "Removed \(parts.joined(separator: " and ")) from Skylight for “\(mapping.name)”."
                     ))
                 }
             } catch {

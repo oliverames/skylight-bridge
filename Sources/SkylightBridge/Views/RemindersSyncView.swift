@@ -141,9 +141,9 @@ struct RemindersSyncView: View {
         case .appleToSkylight:
             "Apple → Skylight"
         case .skylightToApple:
-            "Skylight → Apple · Conflicts: \(mapping.conflictPolicy.label.lowercased())"
+            "Skylight → Apple"
         case .twoWay:
-            "Two-way · Conflicts: \(mapping.conflictPolicy.label.lowercased())"
+            "Two-way · merges edits, \(mapping.conflictPolicy.label.lowercased()) on a clash"
         }
     }
 }
@@ -315,12 +315,18 @@ private struct ReminderMappingEditor: View {
                 Text("Two-way").tag(ReminderSyncDirection.twoWay)
             }
 
-            if draft.direction != .appleToSkylight {
+            if draft.direction == .twoWay {
                 Picker("Conflicts", selection: $draft.conflictPolicy) {
                     ForEach(SyncConflictPolicy.allCases, id: \.self) { policy in
                         Text(policy.label).tag(policy)
                     }
                 }
+                Text("Both sides keep their own new reminders. When the same reminder changes on both sides, its title and completion merge independently; this rule only decides a field when both sides changed that same field.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if draft.direction != .appleToSkylight {
                 Label("This direction can change Apple Reminders.", systemImage: "exclamationmark.triangle")
                     .font(.caption)
                     .foregroundStyle(.orange)
@@ -330,7 +336,7 @@ private struct ReminderMappingEditor: View {
         } header: {
             SectionHeader(title: "Sync behavior")
         } footer: {
-            TipFooter(text: "On the first sync into an existing list, items with the same title and completion state are linked instead of duplicated.")
+            TipFooter(text: "On the first sync into an existing list, reminders that already match by title and completion state are linked instead of duplicated. Deletions and completions then flow both ways.")
         }
     }
 

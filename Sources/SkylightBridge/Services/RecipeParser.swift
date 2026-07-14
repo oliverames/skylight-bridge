@@ -31,7 +31,10 @@ enum RecipeParser {
         var section = RecipeSection.summary
 
         for rawLine in lines {
-            let line = rawLine.trimmed
+            // Strip object-replacement characters (U+FFFC) that Apple Notes
+            // leaves where inline images and other attachments sit, so they
+            // never become bogus ingredient or instruction lines.
+            let line = rawLine.replacingOccurrences(of: "\u{FFFC}", with: "").trimmed
             guard !line.isEmpty else { continue }
 
             if let heading = RecipeSection(heading: line) {
@@ -84,7 +87,39 @@ private struct RecipeBuilder {
     var tags: [String] = []
     var sourceURL: String?
 
+    private static let recognizedFieldKeys: Set<String> = [
+        "serves", "servings", "yield",
+        "prep", "preparation", "preparation time", "prep time",
+        "cook", "cooking", "cooking time", "cook time",
+        "tags", "categories",
+        "source", "source url", "url"
+    ]
+
     mutating func consumeSummary(_ line: String) {
+        // A single note line can pack several labeled fields separated by
+        // bullets, e.g. "Source: AllRecipes • Servings: 8". Split only when
+        // every segment is a recognized field, so bulleted prose stays intact.
+        if line.contains("•") {
+            let segments = line
+                .split(separator: "•")
+                .map { String($0).trimmed }
+                .filter { !$0.isEmpty }
+            if segments.count > 1, segments.allSatisfy(Self.isRecognizedField) {
+                for segment in segments {
+                    consumeField(segment)
+                }
+                return
+            }
+        }
+        consumeField(line)
+    }
+
+    private static func isRecognizedField(_ segment: String) -> Bool {
+        guard let field = segment.keyValuePair else { return false }
+        return recognizedFieldKeys.contains(field.key.lowercased())
+    }
+
+    private mutating func consumeField(_ line: String) {
         guard let field = line.keyValuePair else {
             descriptionLines.append(line)
             return
@@ -103,10 +138,24 @@ private struct RecipeBuilder {
                 .map { String($0).trimmed }
                 .filter { !$0.isEmpty }
         case "source", "source url", "url":
-            sourceURL = field.value
+            // Skylight's url field expects a real link; keep a plain source name
+            // (like "AllRecipes") in the description instead of the url field.
+            if Self.looksLikeURL(field.value) {
+                sourceURL = field.value
+            } else {
+                descriptionLines.append(line)
+            }
         default:
             descriptionLines.append(line)
         }
+    }
+
+    private static func looksLikeURL(_ value: String) -> Bool {
+        let value = value.trimmed
+        if value.contains("://") || value.hasPrefix("www.") {
+            return true
+        }
+        return !value.contains(" ") && value.contains(".")
     }
 
     var recipe: RecipeDraft {

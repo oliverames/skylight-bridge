@@ -430,7 +430,7 @@ struct SyncCoordinatorTests {
         #expect(persisted.notes[0].skylightID == "recipe-1")
     }
 
-    @Test("Deleting a photo mapping purges its Skylight copies")
+    @Test("Deleting a photo mapping purges its photos and its now-empty bridge album")
     func purgePhotoMappingRemovesManagedPhotos() async throws {
         let mappingID = UUID()
         var initial = SyncState()
@@ -438,19 +438,51 @@ struct SyncCoordinatorTests {
             photoRecord(mappingID: mappingID, appleAssetID: "a1", messageID: "m1"),
             photoRecord(mappingID: mappingID, appleAssetID: "a2", messageID: "m2")
         ]
+        initial.photoAlbums = [
+            PhotoAlbumRecord(mappingID: mappingID, frameID: "frame-1", albumID: "album-1")
+        ]
         let api = CoordinatorAPIStub()
+        await api.configureAlbumMessages(["album-1": []])
         let state = CoordinatorStateStore(state: initial)
         let coordinator = makeCoordinator(api: api, reminders: [], state: state)
 
-        let removed = try await coordinator.purgePhotoMapping(mappingID: mappingID, frameID: "frame-1")
+        let purge = try await coordinator.purgePhotoMapping(mappingID: mappingID, frameID: "frame-1")
         let deleted = await api.deletedMessageIDs
         let removedFromAlbums = await api.removedFromAlbumMessageIDs
+        let deletedAlbums = await api.deletedAlbumIDs
         let persisted = try await state.loadSyncState()
 
-        #expect(removed == 2)
+        #expect(purge.photos == 2)
+        #expect(purge.albums == 1)
         #expect(Set(deleted) == ["m1", "m2"])
         #expect(Set(removedFromAlbums) == ["m1", "m2"])
+        #expect(deletedAlbums == ["album-1"])
         #expect(persisted.photos.isEmpty)
+        #expect(persisted.photoAlbums.isEmpty)
+    }
+
+    @Test("A bridge album that still holds photos is kept when the mapping is deleted")
+    func purgePhotoMappingKeepsNonEmptyAlbum() async throws {
+        let mappingID = UUID()
+        var initial = SyncState()
+        initial.photos = [photoRecord(mappingID: mappingID, appleAssetID: "a1", messageID: "m1")]
+        initial.photoAlbums = [
+            PhotoAlbumRecord(mappingID: mappingID, frameID: "frame-1", albumID: "album-1")
+        ]
+        let api = CoordinatorAPIStub()
+        // The user added a photo to this album on Skylight, so it is not empty.
+        await api.configureAlbumMessages(["album-1": ["user-added-message"]])
+        let state = CoordinatorStateStore(state: initial)
+        let coordinator = makeCoordinator(api: api, reminders: [], state: state)
+
+        let purge = try await coordinator.purgePhotoMapping(mappingID: mappingID, frameID: "frame-1")
+        let deletedAlbums = await api.deletedAlbumIDs
+        let persisted = try await state.loadSyncState()
+
+        #expect(purge.photos == 1)
+        #expect(purge.albums == 0)
+        #expect(deletedAlbums.isEmpty)
+        #expect(persisted.photoAlbums.isEmpty)
     }
 
     @Test("Deleting a reminder mapping can clear the Skylight side")
@@ -1028,6 +1060,15 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
     func createAlbum(frameID: String, title: String) async throws -> SkylightResource<SkylightAlbumAttributes> {
         calls.createdAlbums += 1
         throw CoordinatorStubError.unexpectedCall
+    }
+    private(set) var deletedAlbumIDs: [String] = []
+    private var albumMessageIDsByAlbum: [String: [String]] = [:]
+    func configureAlbumMessages(_ map: [String: [String]]) { albumMessageIDsByAlbum = map }
+    func deleteAlbum(frameID: String, albumID: String) async throws {
+        deletedAlbumIDs.append(albumID)
+    }
+    func listAllAlbumMessageIDs(frameID: String, albumID: String) async throws -> [String] {
+        albumMessageIDsByAlbum[albumID] ?? []
     }
     func requestUploadURL(ext: String, frameIDs: [String], caption: String?) async throws -> SkylightUploadURLAttributes { throw CoordinatorStubError.unexpectedCall }
     func upload(data: Data, to presignedURL: URL, contentType: String) async throws { throw CoordinatorStubError.unexpectedCall }

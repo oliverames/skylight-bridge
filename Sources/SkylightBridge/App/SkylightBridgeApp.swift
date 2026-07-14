@@ -24,8 +24,13 @@ struct SkylightBridgeApp: App {
             AppCommands(store: store)
         }
 
-        MenuBarExtra("Skylight Bridge", systemImage: "rectangle.2.swap") {
+        MenuBarExtra {
             MenuBarView(store: store)
+        } label: {
+            // Pulse the menu bar icon while a sync is running.
+            Image(systemName: "rectangle.2.swap")
+                .symbolEffect(.pulse, options: .repeating, isActive: store.isSyncing)
+                .accessibilityLabel(store.isSyncing ? "Skylight Bridge, syncing" : "Skylight Bridge")
         }
     }
 }

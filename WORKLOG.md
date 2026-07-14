@@ -1,3 +1,19 @@
+## 2026-07-14 - Skylight Bridge 1.2.3: album cleanup, recipe-parse fixes, menu bar pulse, backend verification
+
+**What changed**: Six items from live testing. (1) Deleting a photo mapping now also deletes the Skylight album the bridge created for it, once that album is empty — tracked via a new `PhotoAlbumRecord` in SyncState, recorded only for bridge-created albums, and gated on `listAllAlbumMessageIDs` being empty so a bridge album holding user-added photos is left alone. (2) The RecipeParser now splits bullet-packed metadata lines ("Source: AllRecipes • Servings: 8" → Servings captured, source kept as text since it is not a URL), strips U+FFFC attachment placeholders that were becoming bogus steps, and only routes a value into the Skylight url field when it looks like a URL. (3) Two-way verbiage updated across Reminders and Recipes rows/editors to describe field-level merge accurately ("merges edits, newest change wins on a clash") instead of implying whole-record newest-wins, and the reminder conflict picker now shows only for two-way (not one-way Skylight→Apple). (4) The menu bar icon pulses via `.symbolEffect(.pulse, isActive: store.isSyncing)` while syncing. (5) Read-only backend check against the live Skylight API (temporary opt-in test, not committed).
+
+**Backend verification (read-only, live API)**: Frame ames-family-5173. "Selected Photos" album = 11 photos (confirms the selected-photos fix landed end to end). Reminder lists: "Grocery List" 5 items, "Dad's To-dos" 28 items (16 completed) — both new mappings synced. "To-Do List" showed 0 items, so the Family mapping pushed nothing (the Apple Family list is likely empty or that sync had not run). 52 recipes exist (the Food folder mixes meal names and real recipes, with some duplicates); every recipe reports 0 structured ingredients while the description carries the full recipe, confirming Skylight does not persist the structured ingredient array.
+
+**Decisions made**: Album deletion is bridge-created + empty only, never a pre-existing or user-populated album. Kept sending the structured ingredients field (harmless) but rely on the description for display since the backend ignores it. Did not add heuristic sub-header detection for ingredient groups (e.g. "Dry Mix") to avoid round-trip risk; the description already reads as a recipe.
+
+**Verification**: 65 tests pass (added parser tests for bullet-split, attachment stripping, URL capture; album-delete tests for empty-delete and non-empty-keep). Rebuilt and relaunched. Bumped to 1.2.3 (6).
+
+**Left off at**: 1.2.3 pending the notarized release.
+
+**Open questions**: The "Family ⇄ To-Do List" mapping shows 0 items on Skylight — worth confirming the Apple Family list has reminders. The Food recipe folder mixes quick meal names with real recipes and has duplicates on Skylight; the user may want to curate the folder or use "Selected notes".
+
+---
+
 ## 2026-07-14 - Skylight Bridge 1.2.2: fix unclickable inline Edit button
 
 **What changed**: The Edit button on mapping rows stopped responding after the 1.1.0 grouped-settings redesign. Root cause: an inline SwiftUI `Button` sharing a `Form`/`List` row with other controls needs an explicit button style, or macOS routes the click to the row and the button never fires; the pre-redesign rows had `.buttonStyle(.glass)` and the rewrite dropped it. Added `.buttonStyle(.bordered)` to the Edit button in the shared `MappingRow` (Photos, Reminders) and to the Notes selection row. The Toggle and overflow Menu were unaffected because they install their own gesture recognizers.
