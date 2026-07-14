@@ -97,6 +97,7 @@ struct NotesSyncView: View {
             )
 
             Button("Edit") { editedSelection = selection }
+                .buttonStyle(.bordered)
 
             Toggle(
                 "Enabled",

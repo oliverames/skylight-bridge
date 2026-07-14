@@ -157,7 +157,10 @@ struct MappingRow: View {
                 tone: isEnabled ? .positive : .neutral
             )
 
+            // An inline Button in a Form/List row needs an explicit style, or
+            // macOS routes the click to the row and the button never fires.
             Button("Edit", action: onEdit)
+                .buttonStyle(.bordered)
 
             Toggle("Enabled", isOn: $isEnabled)
                 .labelsHidden()

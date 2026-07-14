@@ -1,3 +1,17 @@
+## 2026-07-14 - Skylight Bridge 1.2.2: fix unclickable inline Edit button
+
+**What changed**: The Edit button on mapping rows stopped responding after the 1.1.0 grouped-settings redesign. Root cause: an inline SwiftUI `Button` sharing a `Form`/`List` row with other controls needs an explicit button style, or macOS routes the click to the row and the button never fires; the pre-redesign rows had `.buttonStyle(.glass)` and the rewrite dropped it. Added `.buttonStyle(.bordered)` to the Edit button in the shared `MappingRow` (Photos, Reminders) and to the Notes selection row. The Toggle and overflow Menu were unaffected because they install their own gesture recognizers.
+
+**Decisions made**: Used `.bordered` (not `.borderless`) so the button keeps its visible pill; any explicit style restores independent hit-testing. Fix is centralized in `MappingRow` so it covers Photos and Reminders at once.
+
+**Verification**: 61 tests pass (UI-only change). Rebuilt and relaunched; a mapping editor sheet opened in the running build. Separately confirmed the selected-photos fix end to end: the Activity log shows "Photos: 12 changes applied" (11 selected photos + first-time Skylight album creation) inside "Sync complete: 15 changes applied", and earlier entries confirm cleanup-on-delete ("Removed 2 photos from Skylight for 'Our House'", "Removed 2 items from Skylight for 'Money'"). Bumped to 1.2.2 (5).
+
+**Left off at**: 1.2.2 pending the notarized release.
+
+**Open questions**: None.
+
+---
+
 ## 2026-07-14 - Skylight Bridge 1.2.1: settings consolidated into the main window
 
 **What changed**: Sign-in was hard to find because Account, Sync, and Diagnostics lived in a separate Settings/Preferences scene. Since Skylight Bridge is a menu-bar-first app, those three now live in the main window's sidebar under a "Configuration" group, and the separate `Settings` scene is gone. `AccountView`/`SyncSettingsView`/`DiagnosticsView` were extracted from the old `SettingsView` into `ConfigurationViews.swift`. The standard Settings shortcut (⌘,), the menu bar "Account & Settings…" item, and the Overview "Sign In…" button all navigate to the in-window Account section and bring the main window forward. The sign-in section leads with a clear header and a Sign In / Reconnect button.
