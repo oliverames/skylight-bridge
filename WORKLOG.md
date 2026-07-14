@@ -6,7 +6,7 @@
 
 **Verification**: 61 tests pass (UI-only change). Rebuilt and relaunched; a mapping editor sheet opened in the running build. Separately confirmed the selected-photos fix end to end: the Activity log shows "Photos: 12 changes applied" (11 selected photos + first-time Skylight album creation) inside "Sync complete: 15 changes applied", and earlier entries confirm cleanup-on-delete ("Removed 2 photos from Skylight for 'Our House'", "Removed 2 items from Skylight for 'Money'"). Bumped to 1.2.2 (5).
 
-**Left off at**: 1.2.2 pending the notarized release.
+**Left off at**: 1.2.2 (5) published (private) at https://github.com/oliverames/skylight-bridge/releases/tag/v1.2.2 with the notarized DMG and SHA-256 checksum; Gatekeeper accepts both and the published checksum matches local. Tag points at `db68dd6`.
 
 **Open questions**: None.
 
