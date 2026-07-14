@@ -6,7 +6,7 @@
 
 **Verification**: 61 tests pass normally, under AddressSanitizer, and under ThreadSanitizer (no logic changed, so coverage is unchanged). `./script/build_and_run.sh --verify` produced a signed bundle that launched cleanly; a screenshot confirmed the new "Configuration" sidebar group with Account, Sync, and Diagnostics. Bumped to 1.2.1 (4).
 
-**Left off at**: 1.2.1 pending the notarized release.
+**Left off at**: 1.2.1 (4) published at https://github.com/oliverames/skylight-bridge/releases/tag/v1.2.1 with the notarized DMG and SHA-256 checksum. The tag points at `6e8c0c4`. Gatekeeper accepts the app and DMG, and the published checksum matches the local digest.
 
 **Open questions**: None.
 
