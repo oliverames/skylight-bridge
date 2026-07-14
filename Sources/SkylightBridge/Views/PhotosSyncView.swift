@@ -159,7 +159,6 @@ private struct PhotoMappingEditor: View {
                             Text(kind.label).tag(kind)
                         }
                     }
-                    .pickerStyle(.segmented)
 
                     sourcePicker
                 } header: {

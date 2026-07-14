@@ -257,7 +257,6 @@ private struct ReminderMappingEditor: View {
                     Text("Entire list").tag(SourceSelectionMode.everything)
                     Text("Selected reminders").tag(SourceSelectionMode.selectedItems)
                 }
-                .pickerStyle(.segmented)
 
                 if draft.selectionMode == .selectedItems {
                     TextField("Filter reminders", text: $filter)

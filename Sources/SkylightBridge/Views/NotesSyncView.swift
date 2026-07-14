@@ -230,7 +230,6 @@ private struct NotesSelectionEditor: View {
                 Text("Entire folder").tag(SourceSelectionMode.everything)
                 Text("Selected notes").tag(SourceSelectionMode.selectedItems)
             }
-            .pickerStyle(.segmented)
 
             if draft.selectionMode == .selectedItems {
                 TextField("Filter notes", text: $filter)
