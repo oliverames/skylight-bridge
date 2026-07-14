@@ -106,7 +106,10 @@ diskutil eject "$DMG_MOUNT"
 trap - EXIT
 rmdir "$DMG_MOUNT"
 
-shasum -a 256 "$DMG_PATH" > "$CHECKSUM_PATH"
+(
+  cd "$RELEASE_DIR"
+  shasum -a 256 "$(basename "$DMG_PATH")" > "$(basename "$CHECKSUM_PATH")"
+)
 rm -rf "$DMG_SOURCE" "$APP_ZIP"
 
 printf 'Release artifacts:\n%s\n%s\n' "$DMG_PATH" "$CHECKSUM_PATH"
