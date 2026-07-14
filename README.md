@@ -48,7 +48,7 @@ Adding, editing, or enabling a mapping triggers a sync automatically (a preview 
 
 Skylight credentials and OAuth tokens are stored in the macOS Keychain. Mapping configuration and bridge-owned identity records are stored in the user's Application Support directory.
 
-Sync settings (interval, Launch at login, Hide Dock icon, Preview mode) save automatically as you change them. Hiding the Dock icon keeps the app running in the menu bar only; reopen the main window from the menu bar icon.
+Sync settings (interval, Launch at login, Hide Dock icon, Preview mode) save automatically as you change them. A short welcome walkthrough appears on first launch, and after the bridge has synchronized enough changes it may occasionally invite an optional donation (buymeacoffee.com/oliverames); "Don't Ask Again" silences that forever. Hiding the Dock icon keeps the app running in the menu bar only; reopen the main window from the menu bar icon.
 
 ## Documentation
 

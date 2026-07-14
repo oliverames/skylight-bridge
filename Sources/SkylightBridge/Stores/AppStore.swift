@@ -31,7 +31,20 @@ final class AppStore {
     /// True after a sync attempt fails, until the next attempt succeeds. Drives
     /// the menu bar's error state so background failures aren't invisible.
     var lastSyncFailed = false
+    /// First-run welcome sheet.
+    var isOnboardingPresented = false
+    /// Milestone the donation sheet is currently thanking the user for.
+    var donationPromptMilestone: Int?
     private var hasLoggedClassifierUnavailable = false
+
+    private enum SupportDefaultsKey {
+        static let hasCompletedOnboarding = "hasCompletedOnboarding"
+        static let lifetimeAppliedChanges = "lifetimeAppliedChanges"
+        static let donationPromptedMilestone = "donationPromptedMilestone"
+        static let donationLastPromptDate = "donationLastPromptDate"
+        static let donationDismissedPermanently = "donationDismissedPermanently"
+        static let donationSupportOpenedDate = "donationSupportOpenedDate"
+    }
     var statusMessage = "Choose sources to begin."
     private var hasStarted = false
 
@@ -59,6 +72,9 @@ final class AppStore {
         guard !hasStarted else { return }
         hasStarted = true
         applyDockIconPreference()
+        if !UserDefaults.standard.bool(forKey: SupportDefaultsKey.hasCompletedOnboarding) {
+            isOnboardingPresented = true
+        }
         async let sources: Void = refreshSources()
         async let account: Void = restoreAccountConnection()
         _ = await (sources, account)
@@ -266,6 +282,60 @@ final class AppStore {
         }
     }
 
+    // MARK: - Onboarding and donation reminders
+
+    func completeOnboarding(goToAccount: Bool) {
+        UserDefaults.standard.set(true, forKey: SupportDefaultsKey.hasCompletedOnboarding)
+        isOnboardingPresented = false
+        if goToAccount {
+            selection = .account
+        }
+    }
+
+    var lifetimeAppliedChanges: Int {
+        UserDefaults.standard.integer(forKey: SupportDefaultsKey.lifetimeAppliedChanges)
+    }
+
+    /// Accumulates the lifetime applied-change counter and raises the donation
+    /// sheet when a new milestone is crossed and the policy's cooldowns allow.
+    private func recordAppliedChanges(_ count: Int) {
+        let defaults = UserDefaults.standard
+        if count > 0 {
+            defaults.set(lifetimeAppliedChanges + count, forKey: SupportDefaultsKey.lifetimeAppliedChanges)
+        }
+        guard donationPromptMilestone == nil, !isOnboardingPresented else { return }
+        let context = SupportPromptPolicy.Context(
+            isConnected: isSkylightConnected,
+            isSyncing: false,
+            lifetimeAppliedChanges: lifetimeAppliedChanges,
+            promptedMilestone: defaults.integer(forKey: SupportDefaultsKey.donationPromptedMilestone),
+            dismissedPermanently: defaults.bool(forKey: SupportDefaultsKey.donationDismissedPermanently),
+            lastPromptDate: defaults.object(forKey: SupportDefaultsKey.donationLastPromptDate) as? Date,
+            supportOpenedDate: defaults.object(forKey: SupportDefaultsKey.donationSupportOpenedDate) as? Date,
+            now: .now
+        )
+        if let milestone = SupportPromptPolicy.milestoneToPrompt(context) {
+            defaults.set(milestone, forKey: SupportDefaultsKey.donationPromptedMilestone)
+            defaults.set(Date.now, forKey: SupportDefaultsKey.donationLastPromptDate)
+            donationPromptMilestone = milestone
+        }
+    }
+
+    func donationPromptSupport() {
+        UserDefaults.standard.set(Date.now, forKey: SupportDefaultsKey.donationSupportOpenedDate)
+        donationPromptMilestone = nil
+        NSWorkspace.shared.open(DonationPromptView.donationURL)
+    }
+
+    func donationPromptLater() {
+        donationPromptMilestone = nil
+    }
+
+    func donationPromptNever() {
+        UserDefaults.standard.set(true, forKey: SupportDefaultsKey.donationDismissedPermanently)
+        donationPromptMilestone = nil
+    }
+
     func storedAccountEmail() async -> String {
         (try? await sessionManager.storedEmail()) ?? ""
     }
@@ -364,6 +434,9 @@ final class AppStore {
             record(summary.meals, area: .meals, dryRun: summary.dryRun)
             lastSyncAt = .now
             lastSyncFailed = false
+            if !summary.dryRun {
+                recordAppliedChanges(summary.totalApplied)
+            }
             statusMessage = summary.dryRun
                 ? "Preview complete: \(countDescription(summary.totalPlanned, singular: "change")) planned."
                 : "Sync complete: \(countDescription(summary.totalApplied, singular: "change")) applied."

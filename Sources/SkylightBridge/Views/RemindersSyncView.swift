@@ -63,8 +63,7 @@ struct RemindersSyncView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(maxWidth: 800)
-        .frame(maxWidth: .infinity)
+        .groupedPageLayout()
         .navigationTitle("Reminders")
         .sheet(item: $editedMapping) { mapping in
             ReminderMappingEditor(

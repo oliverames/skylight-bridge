@@ -99,8 +99,7 @@ struct AccountView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(maxWidth: 800)
-        .frame(maxWidth: .infinity)
+        .groupedPageLayout()
         .scrollEdgeEffectStyle(.soft, for: .top)
         .navigationTitle("Account")
         .task {
@@ -184,8 +183,7 @@ struct SyncSettingsView: View {
 
         }
         .formStyle(.grouped)
-        .frame(maxWidth: 800)
-        .frame(maxWidth: .infinity)
+        .groupedPageLayout()
         .scrollEdgeEffectStyle(.soft, for: .top)
         .navigationTitle("Sync")
         // Mapping toggles elsewhere autosave, so these settings do too; a Save
@@ -233,11 +231,15 @@ struct DiagnosticsView: View {
                 Button("Open Activity") {
                     store.selection = .activity
                 }
+                LabeledContent("Enjoying Skylight Bridge?") {
+                    Button("Donate…") {
+                        store.donationPromptSupport()
+                    }
+                }
             }
         }
         .formStyle(.grouped)
-        .frame(maxWidth: 800)
-        .frame(maxWidth: .infinity)
+        .groupedPageLayout()
         .scrollEdgeEffectStyle(.soft, for: .top)
         .navigationTitle("Diagnostics")
     }

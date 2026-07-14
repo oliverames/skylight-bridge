@@ -93,6 +93,24 @@ struct TipFooter: View {
     }
 }
 
+/// Standard layout for grouped-settings detail pages: a centered content
+/// column with comfortable side margins at any window size, so cards never
+/// hug the window edges.
+struct GroupedPageLayout: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .contentMargins(.horizontal, 40, for: .scrollContent)
+            .frame(maxWidth: 840)
+            .frame(maxWidth: .infinity)
+    }
+}
+
+extension View {
+    func groupedPageLayout() -> some View {
+        modifier(GroupedPageLayout())
+    }
+}
+
 /// Permission row: title and detail on the left, status and the grant or
 /// refresh control on the right.
 struct AccessRow: View {

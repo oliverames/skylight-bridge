@@ -33,6 +33,28 @@ struct ContentView: View {
             guard scenePhase == .active else { return }
             Task { await store.refreshSources() }
         }
+        .sheet(isPresented: $store.isOnboardingPresented) {
+            OnboardingView(
+                onGetStarted: { store.completeOnboarding(goToAccount: true) },
+                onSkip: { store.completeOnboarding(goToAccount: false) }
+            )
+            .interactiveDismissDisabled()
+        }
+        .sheet(isPresented: donationPromptBinding) {
+            DonationPromptView(
+                syncedChangeCount: store.lifetimeAppliedChanges,
+                onSupport: { store.donationPromptSupport() },
+                onMaybeLater: { store.donationPromptLater() },
+                onDontAskAgain: { store.donationPromptNever() }
+            )
+        }
+    }
+
+    private var donationPromptBinding: Binding<Bool> {
+        Binding(
+            get: { store.donationPromptMilestone != nil },
+            set: { if !$0 { store.donationPromptLater() } }
+        )
     }
 
     private var syncButtonHelp: String {

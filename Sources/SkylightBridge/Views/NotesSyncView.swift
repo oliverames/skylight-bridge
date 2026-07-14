@@ -49,8 +49,7 @@ struct NotesSyncView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(maxWidth: 800)
-        .frame(maxWidth: .infinity)
+        .groupedPageLayout()
         .navigationTitle(kind.label)
         .sheet(item: $editedSelection) { value in
             NotesSelectionEditor(

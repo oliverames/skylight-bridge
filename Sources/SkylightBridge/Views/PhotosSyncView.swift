@@ -61,8 +61,7 @@ struct PhotosSyncView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(maxWidth: 800)
-        .frame(maxWidth: .infinity)
+        .groupedPageLayout()
         .navigationTitle("Photos")
         .sheet(item: $editedMapping) { mapping in
             PhotoMappingEditor(

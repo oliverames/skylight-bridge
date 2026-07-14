@@ -23,9 +23,13 @@ struct SkylightBridgeApp: App {
     var body: some Scene {
         WindowGroup("Skylight Bridge", id: "main") {
             ContentView(store: store)
-                .frame(minWidth: 1_040, minHeight: 700)
+                .frame(minWidth: 720, minHeight: 520)
                 .task { await store.start() }
         }
+        // Let the window shrink to the content minimum instead of pinning a
+        // large fixed size; pages are scrollable columns, so they adapt.
+        .windowResizability(.contentMinSize)
+        .defaultSize(width: 1_040, height: 700)
         .commands {
             AppCommands(store: store)
         }

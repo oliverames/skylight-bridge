@@ -31,8 +31,7 @@ struct ActivityView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(maxWidth: 800)
-        .frame(maxWidth: .infinity)
+        .groupedPageLayout()
         .navigationTitle("Activity")
         .confirmationDialog(
             "Clear Activity?",
