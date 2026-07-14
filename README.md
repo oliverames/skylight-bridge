@@ -48,6 +48,8 @@ Adding, editing, or enabling a mapping triggers a sync automatically (a preview 
 
 Skylight credentials and OAuth tokens are stored in the macOS Keychain. Mapping configuration and bridge-owned identity records are stored in the user's Application Support directory.
 
+The Sync section also offers Launch at login and Hide Dock icon. Hiding the Dock icon keeps the app running in the menu bar only; reopen the main window from the menu bar icon.
+
 ## Documentation
 
 - [Product specification](docs/PRODUCT_SPEC.md)
