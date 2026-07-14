@@ -3,6 +3,8 @@ import Foundation
 struct PhotoSyncRecord: Identifiable, Codable, Sendable, Hashable {
     var id: String { "\(mappingID.uuidString):\(appleAssetID)" }
     let mappingID: UUID
+    var frameID = ""
+    var destinationAlbumID = ""
     let appleAssetID: String
     var renderedHash: String
     var skylightMessageID: String
@@ -13,6 +15,8 @@ struct PhotoSyncRecord: Identifiable, Codable, Sendable, Hashable {
 struct ReminderSyncRecord: Identifiable, Codable, Sendable, Hashable {
     var id: String { "\(mappingID.uuidString):\(appleReminderID)" }
     let mappingID: UUID
+    var frameID = ""
+    var skylightListID = ""
     var appleReminderID: String
     var appleExternalID: String?
     var skylightItemID: String
@@ -25,6 +29,7 @@ struct ReminderSyncRecord: Identifiable, Codable, Sendable, Hashable {
 struct NoteSyncRecord: Identifiable, Codable, Sendable, Hashable {
     var id: String { "\(kind.rawValue):\(appleNoteID)" }
     let kind: NotesContentKind
+    var frameID = ""
     let appleNoteID: String
     var contentHash: String
     var skylightID: String

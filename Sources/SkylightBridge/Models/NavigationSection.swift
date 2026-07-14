@@ -5,7 +5,6 @@ enum NavigationSection: String, CaseIterable, Identifiable, Sendable {
     case recipes
     case meals
     case activity
-    case apiCoverage
 
     var id: Self { self }
 
@@ -17,7 +16,6 @@ enum NavigationSection: String, CaseIterable, Identifiable, Sendable {
         case .recipes: "Recipes"
         case .meals: "Meals"
         case .activity: "Activity"
-        case .apiCoverage: "API Coverage"
         }
     }
 
@@ -29,7 +27,6 @@ enum NavigationSection: String, CaseIterable, Identifiable, Sendable {
         case .recipes: "book.closed"
         case .meals: "fork.knife"
         case .activity: "clock.arrow.circlepath"
-        case .apiCoverage: "network"
         }
     }
 }

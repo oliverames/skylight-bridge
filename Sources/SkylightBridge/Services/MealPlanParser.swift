@@ -1,6 +1,54 @@
+import Foundation
+
+enum MealPlanParserError: Error, LocalizedError, Equatable, Sendable {
+    case inputTooLarge
+    case tooManyMeals
+    case fieldTooLong
+    case invalidLine(Int)
+
+    var errorDescription: String? {
+        switch self {
+        case .inputTooLarge:
+            "The meal plan is too large to synchronize safely."
+        case .tooManyMeals:
+            "The meal plan contains too many entries to synchronize safely."
+        case .fieldTooLong:
+            "A meal-plan entry is too long to synchronize safely."
+        case let .invalidLine(line):
+            "Meal-plan line \(line) is not in the expected ‘Day Meal: Recipe’ format."
+        }
+    }
+}
+
 enum MealPlanParser {
-    static func parse(_ note: String) -> [PlannedMeal] {
-        note.components(separatedBy: .newlines).compactMap(parseLine)
+    private static let maximumInputBytes = 1_048_576
+    private static let maximumMeals = 512
+    private static let maximumLineCharacters = 512
+
+    static func parse(_ note: String) throws -> [PlannedMeal] {
+        guard note.utf8.count <= maximumInputBytes else {
+            throw MealPlanParserError.inputTooLarge
+        }
+
+        var meals: [PlannedMeal] = []
+        for (index, rawLine) in note.components(separatedBy: .newlines).enumerated() {
+            let line = rawLine.trimmed
+            guard !line.isEmpty else { continue }
+            if line.hasPrefix("#") || ["meal plan", "weekly meal plan"].contains(line.lowercased()) {
+                continue
+            }
+            guard line.count <= maximumLineCharacters else {
+                throw MealPlanParserError.fieldTooLong
+            }
+            guard let meal = parseLine(line) else {
+                throw MealPlanParserError.invalidLine(index + 1)
+            }
+            guard meals.count < maximumMeals else {
+                throw MealPlanParserError.tooManyMeals
+            }
+            meals.append(meal)
+        }
+        return meals
     }
 
     private static func parseLine(_ rawLine: String) -> PlannedMeal? {

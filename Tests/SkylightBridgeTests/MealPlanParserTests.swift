@@ -3,14 +3,14 @@ import Testing
 
 struct MealPlanParserTests {
     @Test("Weekly meal-plan lines produce categorized entries")
-    func parsesWeeklyMealPlan() {
+    func parsesWeeklyMealPlan() throws {
         let note = """
         Monday Dinner: Chicken Parmesan
         Tuesday Dinner: Tacos
         Wednesday Lunch: Leftovers
         """
 
-        let meals = MealPlanParser.parse(note)
+        let meals = try MealPlanParser.parse(note)
 
         #expect(meals == [
             PlannedMeal(day: "Monday", category: "Dinner", recipeTitle: "Chicken Parmesan"),

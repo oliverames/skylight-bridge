@@ -117,19 +117,7 @@ actor AppleNotesStore {
 
                     repeat with noteItem in notes of targetFolder
                         if (id of noteItem as text) is requestedNoteID then
-                            set attachmentRows to {}
-                            repeat with attachmentItem in attachments of noteItem
-                                set attachmentURL to ""
-                                try
-                                    set attachmentURL to URL of attachmentItem as text
-                                end try
-                                set attachmentContentID to ""
-                                try
-                                    set attachmentContentID to content identifier of attachmentItem as text
-                                end try
-                                set end of attachmentRows to {id of attachmentItem as text, name of attachmentItem as text, attachmentContentID, attachmentURL, creation date of attachmentItem, modification date of attachmentItem, shared of attachmentItem}
-                            end repeat
-                            return {id of noteItem as text, id of targetFolder as text, name of noteItem as text, body of noteItem as text, plaintext of noteItem as text, creation date of noteItem, modification date of noteItem, password protected of noteItem, shared of noteItem, attachmentRows}
+                            return {id of noteItem as text, id of targetFolder as text, name of noteItem as text, plaintext of noteItem as text, creation date of noteItem, modification date of noteItem, password protected of noteItem, shared of noteItem}
                         end if
                     end repeat
                     error "Note not found" number 10002
@@ -137,43 +125,21 @@ actor AppleNotesStore {
                 """
         )
 
-        let attachmentsDescriptor = try requiredDescriptor(
-            in: descriptor,
-            at: 10,
-            field: "note attachments"
-        )
-        let attachments = try rows(in: attachmentsDescriptor).map { row in
-            let urlString = try requiredString(in: row, at: 4, field: "attachment URL")
-            return AppleNoteAttachmentSnapshot(
-                id: try requiredString(in: row, at: 1, field: "attachment id"),
-                name: try requiredString(in: row, at: 2, field: "attachment name"),
-                contentIdentifier: try requiredString(
-                    in: row,
-                    at: 3,
-                    field: "attachment content id"
-                ),
-                url: urlString.isEmpty ? nil : URL(string: urlString),
-                creationDate: optionalDate(in: row, at: 5),
-                modificationDate: optionalDate(in: row, at: 6),
-                isShared: try requiredBoolean(in: row, at: 7, field: "attachment shared state")
-            )
-        }
-
         return AppleNoteSnapshot(
             id: try requiredString(in: descriptor, at: 1, field: "note id"),
             folderID: try requiredString(in: descriptor, at: 2, field: "note folder id"),
             title: try requiredString(in: descriptor, at: 3, field: "note title"),
-            bodyHTML: try requiredString(in: descriptor, at: 4, field: "note body"),
-            plaintext: try requiredString(in: descriptor, at: 5, field: "note plaintext"),
-            creationDate: optionalDate(in: descriptor, at: 6),
-            modificationDate: optionalDate(in: descriptor, at: 7),
+            bodyHTML: "",
+            plaintext: try requiredString(in: descriptor, at: 4, field: "note plaintext"),
+            creationDate: optionalDate(in: descriptor, at: 5),
+            modificationDate: optionalDate(in: descriptor, at: 6),
             isPasswordProtected: try requiredBoolean(
                 in: descriptor,
-                at: 8,
+                at: 7,
                 field: "note password state"
             ),
-            isShared: try requiredBoolean(in: descriptor, at: 9, field: "note shared state"),
-            attachments: attachments
+            isShared: try requiredBoolean(in: descriptor, at: 8, field: "note shared state"),
+            attachments: []
         )
     }
 

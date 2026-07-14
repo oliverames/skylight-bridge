@@ -16,8 +16,8 @@ There is intentionally no calendar sync interface. Google Calendar already cover
 
 ## Requirements
 
-- macOS 14 or later
-- Swift 6.2 or later
+- macOS 26 or 27
+- Swift 6.4 or later
 - A Skylight Calendar account
 - Skylight Plus for Skylight features that require it
 - Photos, Reminders, and Apple Events permissions for the sources you use
@@ -31,7 +31,9 @@ swift test
 ./script/build_and_run.sh --verify
 ```
 
-The run script builds a local app bundle at `dist/Skylight Bridge.app`, validates its `Info.plist`, launches it, and verifies the process. The Codex Run action uses the same script.
+The run script builds a Developer ID-signed local app bundle at `dist/Skylight Bridge.app` when the signing identity is available, validates the bundle, launches it, and verifies the process. The Codex Run action uses the same script.
+
+The interface uses the native macOS 26 SwiftUI navigation, toolbar, sheet, and Liquid Glass materials. There are no compatibility shims for older systems.
 
 ## First run
 
@@ -54,9 +56,18 @@ Skylight credentials and OAuth tokens are stored in the macOS Keychain. Mapping 
 Unit tests cover production sync orchestration, deterministic reconciliation, parsers, authentication, and API request contracts. The opt-in live integration test exercises OAuth plus temporary list, photo, album, recipe, and meal lifecycles, with cleanup:
 
 ```bash
-SKYLIGHT_EMAIL="..." SKYLIGHT_PASSWORD="..." \
+SKYLIGHT_LIVE_TESTS=1 SKYLIGHT_EMAIL="..." SKYLIGHT_PASSWORD="..." \
   swift test --build-system native --disable-xctest --enable-swift-testing \
   --filter LiveSkylightIntegrationTests
+```
+
+Live tests are disabled unless `SKYLIGHT_LIVE_TESTS=1` is set because they create and then remove temporary Skylight content. The release script produces a universal Developer ID-signed DMG, submits both the app and DMG for notarization, staples both tickets, mounts the finished image read-only, re-verifies the nested app, and writes a SHA-256 checksum:
+
+```bash
+NOTARY_KEY_FILE="/path/to/AuthKey.p8" \
+NOTARY_KEY_ID="..." \
+NOTARY_ISSUER_ID="..." \
+  ./script/build_release.sh
 ```
 
 Embedded Apple Notes attachments are not uploaded to recipes because the discovered private recipe API does not expose a stable image-write contract.

@@ -8,7 +8,7 @@ struct ReminderSnapshot: Equatable, Sendable {
     let modifiedAt: Date
 }
 
-struct SkylightListItemSnapshot: Equatable, Sendable {
+struct SkylightListItemSnapshot: Equatable, Identifiable, Sendable {
     let id: String
     let title: String
     let notes: String?

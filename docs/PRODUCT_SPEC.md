@@ -82,6 +82,8 @@ The underlying Skylight client still covers discovered calendar, chore, routine,
 
 ## macOS architecture
 
+- macOS 26 deployment floor, with macOS 27 verification
+- native SwiftUI Liquid Glass materials and system navigation components
 - SwiftUI `WindowGroup` for the main workspace
 - `MenuBarExtra` for quick sync and status
 - dedicated Settings scene

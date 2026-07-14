@@ -1,8 +1,23 @@
 import Foundation
 
 enum RecipeParser {
+    private static let maximumInputBytes = 1_048_576
+    private static let maximumLines = 5_000
+    private static let maximumFieldCharacters = 4_096
+    private static let maximumIngredients = 1_000
+    private static let maximumInstructions = 1_000
+
     static func parse(_ note: String) throws -> RecipeDraft {
+        guard note.utf8.count <= maximumInputBytes else {
+            throw RecipeParserError.inputTooLarge
+        }
         var lines = note.components(separatedBy: .newlines)
+        guard lines.count <= maximumLines else {
+            throw RecipeParserError.tooManyLines
+        }
+        guard lines.allSatisfy({ $0.count <= maximumFieldCharacters }) else {
+            throw RecipeParserError.fieldTooLong
+        }
         guard let titleIndex = lines.firstIndex(where: { !$0.trimmed.isEmpty }) else {
             throw RecipeParserError.emptyNote
         }
@@ -28,8 +43,14 @@ enum RecipeParser {
             case .summary:
                 builder.consumeSummary(line)
             case .ingredients:
+                guard builder.ingredients.count < maximumIngredients else {
+                    throw RecipeParserError.tooManyIngredients
+                }
                 builder.ingredients.append(line.strippingListMarker)
             case .instructions:
+                guard builder.instructions.count < maximumInstructions else {
+                    throw RecipeParserError.tooManyInstructions
+                }
                 builder.instructions.append(line.strippingListMarker)
             }
         }

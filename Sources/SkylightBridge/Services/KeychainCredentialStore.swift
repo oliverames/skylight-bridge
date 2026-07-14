@@ -95,8 +95,7 @@ actor KeychainCredentialStore {
         [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
-            kSecAttrAccount: account,
-            kSecUseDataProtectionKeychain: true
+            kSecAttrAccount: account
         ]
     }
 

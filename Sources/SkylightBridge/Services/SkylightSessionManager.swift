@@ -13,6 +13,7 @@ enum SkylightSessionManagerError: Error, LocalizedError, Sendable {
     case missingTokens
     case invalidBaseURL(String)
     case noFrames
+    case frameUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -24,6 +25,8 @@ enum SkylightSessionManagerError: Error, LocalizedError, Sendable {
             "The Skylight API base URL is invalid: \(value)"
         case .noFrames:
             "The Skylight account does not contain a frame."
+        case .frameUnavailable:
+            "The selected Skylight frame is not available for this account. Choose a frame again."
         }
     }
 }
@@ -48,8 +51,23 @@ actor SkylightSessionManager {
     }
 
     func saveCredentials(email: String, password: String) async throws {
+        let storedEmail = try await credentials.string(for: Key.email)
+        if Self.shouldInvalidateTokens(storedEmail: storedEmail, replacementEmail: email) {
+            try await credentials.delete(for: Key.accessToken)
+            try await credentials.delete(for: Key.refreshToken)
+        }
         try await credentials.save(email, for: Key.email)
         try await credentials.save(password, for: Key.password)
+    }
+
+    nonisolated static func shouldInvalidateTokens(
+        storedEmail: String?,
+        replacementEmail: String
+    ) -> Bool {
+        guard let storedEmail else { return false }
+        let normalizedStored = storedEmail.trimmed.lowercased()
+        let normalizedReplacement = replacementEmail.trimmed.lowercased()
+        return normalizedStored != normalizedReplacement
     }
 
     func connect(configuration: SkylightAccountConfiguration) async throws -> SkylightAccountConnection {
@@ -91,7 +109,10 @@ actor SkylightSessionManager {
         )
     }
 
-    func client(configuration: SkylightAccountConfiguration) async throws -> SkylightAPIClient {
+    func client(
+        configuration: SkylightAccountConfiguration,
+        validateFrame: Bool = true
+    ) async throws -> SkylightAPIClient {
         if let accessToken = try await credentials.string(for: Key.accessToken),
            let refreshToken = try await credentials.string(for: Key.refreshToken),
            !accessToken.isEmpty,
@@ -109,14 +130,21 @@ actor SkylightSessionManager {
                 authenticator: authenticator
             )
             do {
-                _ = try await candidate.listFrames()
+                let frames = try await candidate.listFrames()
+                if validateFrame {
+                    try Self.validateConfiguredFrame(configuration.frameID, in: frames)
+                }
                 return candidate
             } catch {
                 // A stale or revoked refresh token is recovered with the saved
                 // credentials before any sync mutations begin.
             }
         }
-        return try await connect(configuration: configuration).client
+        let connection = try await connect(configuration: configuration)
+        if validateFrame {
+            try Self.validateConfiguredFrame(configuration.frameID, in: connection.frames)
+        }
+        return connection.client
     }
 
     private func makeClient(
@@ -140,7 +168,7 @@ actor SkylightSessionManager {
             baseURL: baseURL,
             apiVersion: configuration.apiVersion,
             transport: authenticatedTransport,
-            uploadTransport: SkylightURLSessionTransport()
+            uploadTransport: SkylightNoRedirectTransport()
         )
     }
 
@@ -158,6 +186,16 @@ actor SkylightSessionManager {
             throw SkylightSessionManagerError.invalidBaseURL(value)
         }
         return url
+    }
+
+    private nonisolated static func validateConfiguredFrame(
+        _ configuredFrameID: String,
+        in frames: [SkylightResource<SkylightFrameAttributes>]
+    ) throws {
+        let frameID = configuredFrameID.trimmed
+        guard frameID.isEmpty || frames.contains(where: { $0.id == frameID }) else {
+            throw SkylightSessionManagerError.frameUnavailable
+        }
     }
 
     private func persist(_ token: SkylightOAuthToken) async throws {

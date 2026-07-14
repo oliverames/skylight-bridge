@@ -14,11 +14,18 @@ struct MenuBarView: View {
         Button(store.configuration.dryRun ? "Run Sync Preview" : "Sync Now") {
             Task { await store.syncNow() }
         }
-        .disabled(store.isSyncing)
+        .disabled(store.isSyncing || !store.configuration.hasEnabledSync)
 
         Divider()
 
-        Text(store.isSyncing ? "Syncing…" : "Ready")
+        Label(
+            store.isSyncing
+                ? "Syncing…"
+                : (store.configuration.dryRun ? "Preview Mode" : "Live Sync"),
+            systemImage: store.isSyncing
+                ? "arrow.triangle.2.circlepath"
+                : (store.configuration.dryRun ? "eye" : "checkmark.circle")
+        )
 
         Divider()
 

@@ -5,7 +5,7 @@ import PackageDescription
 let package = Package(
     name: "SkylightBridge",
     platforms: [
-        .macOS(.v14)
+        .macOS(.v26)
     ],
     products: [
         .executable(name: "SkylightBridge", targets: ["SkylightBridge"])

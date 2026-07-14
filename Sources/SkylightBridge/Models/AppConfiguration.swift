@@ -61,8 +61,8 @@ struct ReminderListMapping: Identifiable, Codable, Sendable, Hashable {
     var selectedReminderIDs: Set<String> = []
     var destinationListID = ""
     var destinationListTitle = ""
-    var destinationKind: SkylightListKind = .other
-    var direction: ReminderSyncDirection = .twoWay
+    var destinationKind: SkylightListKind = .toDo
+    var direction: ReminderSyncDirection = .appleToSkylight
     var conflictPolicy: ReminderConflictPolicy = .newestWins
     var enabled = false
 }

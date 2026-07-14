@@ -8,7 +8,8 @@ import UniformTypeIdentifiers
 struct LiveSkylightIntegrationTests {
     @Test("Live account supports authentication, read, list, and photo lifecycle")
     func liveAccountLifecycle() async throws {
-        guard let email = ProcessInfo.processInfo.environment["SKYLIGHT_EMAIL"],
+        guard ProcessInfo.processInfo.environment["SKYLIGHT_LIVE_TESTS"] == "1",
+              let email = ProcessInfo.processInfo.environment["SKYLIGHT_EMAIL"],
               let password = ProcessInfo.processInfo.environment["SKYLIGHT_PASSWORD"],
               !email.isEmpty,
               !password.isEmpty else {

@@ -5,15 +5,18 @@ MODE="${1:-run}"
 APP_NAME="SkylightBridge"
 DISPLAY_NAME="Skylight Bridge"
 BUNDLE_ID="com.oliverames.SkylightBridge"
-MIN_SYSTEM_VERSION="14.0"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/$DISPLAY_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
+APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
+ICON_FILE="$ROOT_DIR/Resources/AppIcon.png"
+ENTITLEMENTS_FILE="$ROOT_DIR/Resources/SkylightBridge.entitlements"
+INFO_PLIST_TEMPLATE="$ROOT_DIR/Resources/Info.plist"
 
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 
@@ -22,45 +25,35 @@ swift build
 BUILD_BINARY="$(swift build --show-bin-path)/$APP_NAME"
 
 rm -rf "$APP_BUNDLE"
-mkdir -p "$APP_MACOS"
+mkdir -p "$APP_MACOS" "$APP_RESOURCES"
 cp "$BUILD_BINARY" "$APP_BINARY"
 chmod +x "$APP_BINARY"
 
-cat >"$INFO_PLIST" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleExecutable</key>
-  <string>$APP_NAME</string>
-  <key>CFBundleIdentifier</key>
-  <string>$BUNDLE_ID</string>
-  <key>CFBundleName</key>
-  <string>$DISPLAY_NAME</string>
-  <key>CFBundleDisplayName</key>
-  <string>$DISPLAY_NAME</string>
-  <key>CFBundlePackageType</key>
-  <string>APPL</string>
-  <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
-  <key>CFBundleVersion</key>
-  <string>1</string>
-  <key>LSMinimumSystemVersion</key>
-  <string>$MIN_SYSTEM_VERSION</string>
-  <key>NSPrincipalClass</key>
-  <string>NSApplication</string>
-  <key>NSPhotoLibraryUsageDescription</key>
-  <string>Skylight Bridge reads only the albums and photos you select for synchronization.</string>
-  <key>NSRemindersFullAccessUsageDescription</key>
-  <string>Skylight Bridge synchronizes only the Reminders lists and items you select.</string>
-  <key>NSAppleEventsUsageDescription</key>
-  <string>Skylight Bridge reads only the Apple Notes folders and notes you select for recipes and meals.</string>
-</dict>
-</plist>
-PLIST
+cp "$INFO_PLIST_TEMPLATE" "$INFO_PLIST"
+
+if [[ -f "$ICON_FILE" ]]; then
+  "$ROOT_DIR/script/create_icns.sh" "$ICON_FILE" "$APP_RESOURCES/AppIcon.icns"
+fi
 
 plutil -lint "$INFO_PLIST" >/dev/null
-codesign --force --deep --sign - --timestamp=none "$APP_BUNDLE" >/dev/null
+plutil -lint "$ENTITLEMENTS_FILE" >/dev/null
+
+CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-}"
+if [[ -z "$CODESIGN_IDENTITY" ]] && security find-identity -v -p codesigning | rg -Fq "Developer ID Application: Oliver Ames (PV3W52NDZ3)"; then
+  CODESIGN_IDENTITY="Developer ID Application: Oliver Ames (PV3W52NDZ3)"
+fi
+
+if [[ -n "$CODESIGN_IDENTITY" ]]; then
+  codesign \
+    --force \
+    --sign "$CODESIGN_IDENTITY" \
+    --options runtime \
+    --timestamp \
+    --entitlements "$ENTITLEMENTS_FILE" \
+    "$APP_BUNDLE" >/dev/null
+else
+  codesign --force --deep --sign - --timestamp=none "$APP_BUNDLE" >/dev/null
+fi
 codesign --verify --deep --strict "$APP_BUNDLE"
 
 open_app() {

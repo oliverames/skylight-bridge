@@ -1,6 +1,6 @@
 import Foundation
 
-struct SkylightResource<Attributes>: Codable, Equatable, Sendable
+struct SkylightResource<Attributes>: Codable, Equatable, Identifiable, Sendable
 where Attributes: Codable & Equatable & Sendable {
     let id: String
     let type: String?
@@ -88,6 +88,7 @@ struct SkylightOAuthToken: Codable, Equatable, Sendable {
 
 enum SkylightAPIError: Error, Equatable, Sendable {
     case invalidResponse
+    case invalidUploadDestination
     case httpStatus(code: Int, body: String)
     case missingResponseBody
 }
@@ -105,10 +106,10 @@ extension SkylightAPIError: LocalizedError {
         switch self {
         case .invalidResponse:
             "Skylight returned an invalid response."
-        case let .httpStatus(code, body):
-            body.isEmpty
-                ? "Skylight returned HTTP \(code)."
-                : "Skylight returned HTTP \(code): \(body.prefix(300))"
+        case .invalidUploadDestination:
+            "Skylight returned an untrusted photo upload destination."
+        case let .httpStatus(code, _):
+            "Skylight returned HTTP \(code)."
         case .missingResponseBody:
             "Skylight returned an empty response where data was expected."
         }
@@ -124,10 +125,8 @@ extension SkylightOAuthError: LocalizedError {
             "Skylight rejected the email or password."
         case .missingAuthorizationCode, .missingRedirectLocation:
             "Skylight sign-in did not return an authorization code."
-        case let .invalidFormResponse(statusCode, body):
-            body.isEmpty
-                ? "Skylight sign-in returned HTTP \(statusCode)."
-                : "Skylight sign-in returned HTTP \(statusCode): \(body.prefix(300))"
+        case let .invalidFormResponse(statusCode, _):
+            "Skylight sign-in returned HTTP \(statusCode)."
         }
     }
 }

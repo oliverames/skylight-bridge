@@ -84,7 +84,8 @@ struct SkylightAPIClient: Sendable {
         to presignedURL: URL,
         contentType: String = "application/octet-stream"
     ) async throws {
-        var request = URLRequest(url: presignedURL)
+        let validatedURL = try Self.validatedUploadURL(presignedURL.absoluteString)
+        var request = URLRequest(url: validatedURL)
         request.httpMethod = "PUT"
         request.httpBody = data
         request.setValue(contentType, forHTTPHeaderField: "Content-Type")
@@ -94,6 +95,31 @@ struct SkylightAPIClient: Sendable {
         // Skylight bearer token here can invalidate the signature.
         let (responseData, response) = try await uploadTransport.data(for: request)
         try validate(response: response, data: responseData)
+    }
+
+    static func validatedUploadURL(_ value: String) throws -> URL {
+        guard let components = URLComponents(string: value),
+              components.scheme?.lowercased() == "https",
+              let host = components.host?.lowercased(),
+              !host.isEmpty,
+              components.user == nil,
+              components.password == nil,
+              components.port == nil || components.port == 443,
+              isAllowedUploadHost(host),
+              let url = components.url else {
+            throw SkylightAPIError.invalidUploadDestination
+        }
+        return url
+    }
+
+    private static func isAllowedUploadHost(_ host: String) -> Bool {
+        let suffixes = [
+            ".amazonaws.com",
+            ".cloudfront.net",
+            ".googleapis.com",
+            ".ourskylight.com"
+        ]
+        return suffixes.contains { host.hasSuffix($0) }
     }
 }
 

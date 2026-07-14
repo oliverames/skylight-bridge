@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Testing
 @testable import SkylightBridge
@@ -38,6 +39,37 @@ struct SyncCoordinatorTests {
         #expect(calls.createdItems == 0)
     }
 
+    @Test("A new photo album and its first photo are planned without writes during dry run")
+    func photoDryRunPlansNewAlbumAndPhoto() async throws {
+        let api = CoordinatorAPIStub()
+        let photoSource = CoordinatorPhotoSource(assets: [photoAsset(id: "apple-photo")])
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            photoSource: photoSource,
+            imageConverter: CoordinatorImageConverter(convertedAssetID: "apple-photo")
+        )
+        var configuration = AppConfiguration.empty
+        configuration.account.frameID = "frame-1"
+        configuration.dryRun = true
+        configuration.photoMappings = [
+            PhotoMapping(
+                name: "Our House",
+                sourceCollectionID: "apple-album",
+                sourceCollectionTitle: "Our House",
+                destinationAlbumTitle: "Our House"
+            )
+        ]
+
+        let summary = try await coordinator.sync(configuration: configuration)
+        let calls = await api.snapshot()
+
+        #expect(summary.photos.planned == 2)
+        #expect(summary.photos.applied == 0)
+        #expect(calls.albumCollections == 1)
+        #expect(calls.createdAlbums == 0)
+    }
+
     @Test("A live reminder sync creates its named list and only selected items")
     func reminderLiveSyncCreatesDestinationAndSelectedItem() async throws {
         let api = CoordinatorAPIStub()
@@ -66,13 +98,15 @@ struct SyncCoordinatorTests {
     private func makeCoordinator(
         api: CoordinatorAPIStub,
         reminders: [AppleReminderSnapshot],
+        photoSource: CoordinatorPhotoSource = CoordinatorPhotoSource(),
+        imageConverter: CoordinatorImageConverter = CoordinatorImageConverter(),
         state: CoordinatorStateStore = CoordinatorStateStore()
     ) -> SyncCoordinator {
         SyncCoordinator(
-            photoSource: CoordinatorPhotoSource(),
+            photoSource: photoSource,
             reminderSource: CoordinatorReminderSource(reminders: reminders),
             notesSource: CoordinatorNotesSource(),
-            imageConverter: CoordinatorImageConverter(),
+            imageConverter: imageConverter,
             api: api,
             stateStore: state
         )
@@ -114,6 +148,22 @@ struct SyncCoordinatorTests {
             hasRecurrenceRules: false
         )
     }
+
+    private func photoAsset(id: String) -> ApplePhotoAssetSnapshot {
+        ApplePhotoAssetSnapshot(
+            id: id,
+            mediaKind: .image,
+            pixelWidth: 1,
+            pixelHeight: 1,
+            creationDate: nil,
+            modificationDate: nil,
+            adjustmentDate: nil,
+            contentTypeIdentifier: "public.jpeg",
+            isFavorite: false,
+            isHidden: false,
+            hasAdjustments: false
+        )
+    }
 }
 
 private enum CoordinatorStubError: Error {
@@ -122,11 +172,30 @@ private enum CoordinatorStubError: Error {
 
 @MainActor
 private final class CoordinatorPhotoSource: PhotoSyncSource {
+    let assets: [ApplePhotoAssetSnapshot]
+
+    init(assets: [ApplePhotoAssetSnapshot] = []) {
+        self.assets = assets
+    }
+
     func syncPhotoCollections() async throws -> [ApplePhotoCollectionSnapshot] { [] }
-    func syncPhotoAssets(in collectionID: String) async throws -> [ApplePhotoAssetSnapshot] { [] }
+    func syncPhotoAssets(in collectionID: String) async throws -> [ApplePhotoAssetSnapshot] { assets }
     func syncPhotoAssets(withIDs assetIDs: [String]) async throws -> [ApplePhotoAssetSnapshot] { [] }
     func syncRenderedPhoto(withID assetID: String, maximumLongEdge: Int) async throws -> AppleRenderedPhoto {
-        throw CoordinatorStubError.unexpectedCall
+        guard let asset = assets.first(where: { $0.id == assetID }),
+              let context = CGContext(
+                  data: nil,
+                  width: 1,
+                  height: 1,
+                  bitsPerComponent: 8,
+                  bytesPerRow: 4,
+                  space: CGColorSpaceCreateDeviceRGB(),
+                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              ),
+              let image = context.makeImage() else {
+            throw CoordinatorStubError.unexpectedCall
+        }
+        return AppleRenderedPhoto(asset: asset, image: image)
     }
 }
 
@@ -158,11 +227,27 @@ private actor CoordinatorNotesSource: NotesSyncSource {
 }
 
 private actor CoordinatorImageConverter: SyncImageConverting {
+    let convertedAssetID: String?
+
+    init(convertedAssetID: String? = nil) {
+        self.convertedAssetID = convertedAssetID
+    }
+
     func syncConvert(
         _ renderedPhoto: AppleRenderedPhoto,
         options: AppleImageConversionOptions
     ) async throws -> AppleConvertedImage {
-        throw CoordinatorStubError.unexpectedCall
+        guard let convertedAssetID else {
+            throw CoordinatorStubError.unexpectedCall
+        }
+        return AppleConvertedImage(
+            assetID: convertedAssetID,
+            data: Data([0x01]),
+            typeIdentifier: "public.jpeg",
+            pixelWidth: 1,
+            pixelHeight: 1,
+            sha256: "rendered-hash"
+        )
     }
 }
 
@@ -181,6 +266,8 @@ private struct CoordinatorAPICalls: Equatable, Sendable {
     var listCollections = 0
     var createdLists = 0
     var createdItems = 0
+    var albumCollections = 0
+    var createdAlbums = 0
 }
 
 private actor CoordinatorAPIStub: SkylightSyncAPI {
@@ -233,8 +320,14 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
 
     func updateListItem(frameID: String, listID: String, itemID: String, request: SkylightListItemRequest) async throws -> SkylightResource<SkylightListItemAttributes> { throw CoordinatorStubError.unexpectedCall }
     func deleteListItem(frameID: String, listID: String, itemID: String) async throws { throw CoordinatorStubError.unexpectedCall }
-    func listAlbums(frameID: String) async throws -> [SkylightResource<SkylightAlbumAttributes>] { throw CoordinatorStubError.unexpectedCall }
-    func createAlbum(frameID: String, title: String) async throws -> SkylightResource<SkylightAlbumAttributes> { throw CoordinatorStubError.unexpectedCall }
+    func listAlbums(frameID: String) async throws -> [SkylightResource<SkylightAlbumAttributes>] {
+        calls.albumCollections += 1
+        return []
+    }
+    func createAlbum(frameID: String, title: String) async throws -> SkylightResource<SkylightAlbumAttributes> {
+        calls.createdAlbums += 1
+        throw CoordinatorStubError.unexpectedCall
+    }
     func requestUploadURL(ext: String, frameIDs: [String], caption: String?) async throws -> SkylightUploadURLAttributes { throw CoordinatorStubError.unexpectedCall }
     func upload(data: Data, to presignedURL: URL, contentType: String) async throws { throw CoordinatorStubError.unexpectedCall }
     func addMessages(frameID: String, albumIDs: [String], messageIDs: [String]) async throws { throw CoordinatorStubError.unexpectedCall }

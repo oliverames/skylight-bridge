@@ -1,5 +1,10 @@
 enum RecipeParserError: Error, Equatable, Sendable {
     case emptyNote
+    case inputTooLarge
+    case tooManyLines
+    case fieldTooLong
+    case tooManyIngredients
+    case tooManyInstructions
     case missingIngredients
     case missingInstructions
 }

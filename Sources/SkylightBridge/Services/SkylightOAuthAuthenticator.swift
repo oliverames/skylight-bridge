@@ -16,6 +16,7 @@ actor SkylightOAuthAuthenticator: SkylightOAuthTokenProvider {
     private let revokeURL: URL
     private let deviceFingerprint: String
     private let transport: any SkylightTransport
+    private let sendsManualCookies: Bool
     private var cookies: [String: String] = [:]
 
     init(
@@ -31,7 +32,13 @@ actor SkylightOAuthAuthenticator: SkylightOAuthTokenProvider {
         self.authorizeURL = authorizeURL
         self.tokenURL = tokenURL
         self.revokeURL = revokeURL
-        self.transport = transport ?? SkylightOAuthAuthenticator.defaultTransport()
+        if let transport {
+            self.transport = transport
+            sendsManualCookies = true
+        } else {
+            self.transport = SkylightOAuthAuthenticator.defaultTransport()
+            sendsManualCookies = false
+        }
     }
 
     func login(email: String, password: String) async throws -> SkylightOAuthToken {
@@ -127,18 +134,35 @@ actor SkylightOAuthAuthenticator: SkylightOAuthTokenProvider {
         }
 
         let (_, response) = try await transport.data(for: browserRequest(url: url, method: "GET"))
+        guard (300..<400).contains(response.statusCode) else {
+            throw SkylightOAuthError.missingRedirectLocation
+        }
         guard let location = response.value(forHTTPHeaderField: "Location") else {
             throw SkylightOAuthError.missingRedirectLocation
         }
+        do {
+            return try Self.validatedAuthorizationCode(from: location)
+        } catch {
+            if location.contains("/auth/session/new") {
+                throw SkylightOAuthError.loginRejected
+            }
+            throw SkylightOAuthError.missingAuthorizationCode
+        }
+    }
+
+    nonisolated static func validatedAuthorizationCode(from location: String) throws -> String {
         guard let redirect = URL(string: location),
+              redirect.scheme?.lowercased() == "https",
+              redirect.host?.lowercased() == "ourskylight.com",
+              redirect.port == nil || redirect.port == 443,
+              redirect.path == "/welcome",
+              redirect.user == nil,
+              redirect.password == nil,
               let code = URLComponents(url: redirect, resolvingAgainstBaseURL: false)?
                 .queryItems?
                 .first(where: { $0.name == "code" })?
                 .value,
               !code.isEmpty else {
-            if location.contains("/auth/session/new") {
-                throw SkylightOAuthError.loginRejected
-            }
             throw SkylightOAuthError.missingAuthorizationCode
         }
         return code
@@ -176,7 +200,7 @@ actor SkylightOAuthAuthenticator: SkylightOAuthTokenProvider {
             "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
             forHTTPHeaderField: "Accept"
         )
-        if !cookies.isEmpty {
+        if sendsManualCookies, !cookies.isEmpty {
             let value = cookies
                 .sorted { $0.key < $1.key }
                 .map { "\($0.key)=\($0.value)" }
@@ -229,7 +253,10 @@ actor SkylightOAuthAuthenticator: SkylightOAuthTokenProvider {
 
     private nonisolated static func defaultTransport() -> any SkylightTransport {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.httpShouldSetCookies = false
+        // Keep URLSession's isolated cookie store enabled. The manual jar is
+        // retained for injectable transports and tests, while URLSession
+        // handles domain, path, and rotated session cookies in live OAuth.
+        configuration.httpShouldSetCookies = true
         let session = URLSession(
             configuration: configuration,
             delegate: SkylightNoRedirectDelegate(),

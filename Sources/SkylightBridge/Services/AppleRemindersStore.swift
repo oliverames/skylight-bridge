@@ -94,10 +94,7 @@ final class AppleRemindersStore {
         let predicate = eventStore.predicateForReminders(in: [calendar])
         return await withCheckedContinuation { continuation in
             eventStore.fetchReminders(matching: predicate) { reminders in
-                let snapshots = (reminders ?? [])
-                    .map(Self.snapshot(for:))
-                    .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
-                continuation.resume(returning: snapshots)
+                continuation.resume(returning: Self.snapshots(for: reminders ?? []))
             }
         }
     }
@@ -302,5 +299,15 @@ final class AppleRemindersStore {
             modificationDate: reminder.lastModifiedDate,
             hasRecurrenceRules: reminder.hasRecurrenceRules
         )
+    }
+
+    nonisolated private static func snapshots(
+        for reminders: [EKReminder]
+    ) -> [AppleReminderSnapshot] {
+        reminders
+            .map(snapshot(for:))
+            .sorted { left, right in
+                left.title.localizedStandardCompare(right.title) == .orderedAscending
+            }
     }
 }

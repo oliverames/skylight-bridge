@@ -14,11 +14,18 @@ final class AppStore {
     var notesByFolderID: [String: [AppleNoteSummarySnapshot]] = [:]
     var skylightFrames: [SkylightResource<SkylightFrameAttributes>] = []
     var skylightDevices: [SkylightResource<SkylightDeviceAttributes>] = []
+    var skylightAlbums: [SkylightResource<SkylightAlbumAttributes>] = []
+    var skylightLists: [SkylightResource<SkylightListAttributes>] = []
+    var skylightMealCategories: [SkylightResource<SkylightMealCategoryAttributes>] = []
+    var photosAuthorizationStatus: ApplePhotosAuthorizationStatus = .notDetermined
+    var remindersAuthorizationStatus: AppleRemindersAuthorizationStatus = .notDetermined
+    var notesAccessGranted = false
     var isConnecting = false
     var isRefreshingSources = false
     var isSyncing = false
     var lastSyncAt: Date?
     var statusMessage = "Choose sources to begin."
+    private var hasStarted = false
 
     private let persistence: ConfigurationStore
     @ObservationIgnored private let scheduler = BackgroundSyncScheduler()
@@ -31,7 +38,21 @@ final class AppStore {
         self.persistence = persistence
         configuration = (try? persistence.loadConfiguration()) ?? .empty
         activity = (try? persistence.loadActivity()) ?? []
+        photosAuthorizationStatus = photoLibrary.authorizationStatus()
+        remindersAuthorizationStatus = remindersStore.authorizationStatus()
         configureScheduler()
+    }
+
+    var isSkylightConnected: Bool {
+        !configuration.account.frameID.isEmpty && !skylightFrames.isEmpty
+    }
+
+    func start() async {
+        guard !hasStarted else { return }
+        hasStarted = true
+        async let sources: Void = refreshSources()
+        async let account: Void = restoreAccountConnection()
+        _ = await (sources, account)
     }
 
     func saveConfiguration() {
@@ -54,26 +75,34 @@ final class AppStore {
         isRefreshingSources = true
         defer { isRefreshingSources = false }
 
-        if photoLibrary.authorizationStatus() == .fullAccess {
+        photosAuthorizationStatus = photoLibrary.authorizationStatus()
+        remindersAuthorizationStatus = remindersStore.authorizationStatus()
+
+        if photosAuthorizationStatus == .fullAccess {
             do {
                 photoCollections = try photoLibrary.collections()
             } catch {
                 recordSourceError(error, area: .photos)
             }
+        } else {
+            photoCollections = []
         }
 
-        if remindersStore.authorizationStatus() == .fullAccess {
+        if remindersAuthorizationStatus == .fullAccess {
             do {
                 reminderLists = try remindersStore.lists()
             } catch {
                 recordSourceError(error, area: .reminders)
             }
+        } else {
+            reminderLists = []
         }
 
         statusMessage = "Sources refreshed."
     }
 
     func requestPhotosAccess() async {
+        defer { photosAuthorizationStatus = photoLibrary.authorizationStatus() }
         do {
             guard await photoLibrary.requestAccess() else {
                 throw ApplePhotoLibraryError.accessDenied
@@ -86,6 +115,7 @@ final class AppStore {
     }
 
     func requestRemindersAccess() async {
+        defer { remindersAuthorizationStatus = remindersStore.authorizationStatus() }
         do {
             guard try await remindersStore.requestAccess() else {
                 throw AppleRemindersStoreError.accessDenied
@@ -109,6 +139,7 @@ final class AppStore {
     func requestNotesAccess() async {
         do {
             notesFolders = try await notesStore.folders()
+            notesAccessGranted = true
             let configuredFolderIDs = Set([
                 configuration.recipeSelection.folderID,
                 configuration.mealSelection.folderID
@@ -118,6 +149,7 @@ final class AppStore {
             }
             statusMessage = "Loaded \(notesFolders.count) Notes folders."
         } catch {
+            notesAccessGranted = false
             recordSourceError(error, area: .recipes)
         }
     }
@@ -154,11 +186,12 @@ final class AppStore {
             configuration.account.deviceID = connection.selectedDeviceID
             try persistence.saveConfiguration(configuration)
             configureScheduler()
+            try await refreshSkylightDestinations(using: connection.client)
             statusMessage = "Connected to Skylight."
             appendActivity(.init(
                 level: .success,
                 area: .account,
-                message: "Connected to Skylight and found \(connection.frames.count) frame(s). Credentials and OAuth tokens are stored in the macOS Keychain."
+                message: "Connected to Skylight and found \(countDescription(connection.frames.count, singular: "frame")). Credentials and OAuth tokens are stored in the macOS Keychain."
             ))
         } catch {
             recordSourceError(error, area: .account)
@@ -175,7 +208,10 @@ final class AppStore {
         defer { isConnecting = false }
 
         do {
-            let client = try await sessionManager.client(configuration: configuration.account)
+            let client = try await sessionManager.client(
+                configuration: configuration.account,
+                validateFrame: false
+            )
             skylightFrames = try await client.listFrames()
             guard !skylightFrames.isEmpty else {
                 throw SkylightSessionManagerError.noFrames
@@ -187,6 +223,7 @@ final class AppStore {
             if !skylightDevices.contains(where: { $0.id == configuration.account.deviceID }) {
                 configuration.account.deviceID = skylightDevices.first?.id ?? ""
             }
+            try await refreshSkylightDestinations(using: client)
             try persistence.saveConfiguration(configuration)
             statusMessage = "Connected to Skylight."
         } catch SkylightSessionManagerError.missingCredentials {
@@ -203,6 +240,7 @@ final class AppStore {
             let client = try await sessionManager.client(configuration: configuration.account)
             skylightDevices = try await client.listDevices(frameID: frameID)
             configuration.account.deviceID = skylightDevices.first?.id ?? ""
+            try await refreshSkylightDestinations(using: client)
             saveConfiguration()
         } catch {
             recordSourceError(error, area: .account)
@@ -213,6 +251,15 @@ final class AppStore {
         guard !isSyncing else { return }
         isSyncing = true
         defer { isSyncing = false }
+
+        let processLock: ProcessSyncLock
+        do {
+            processLock = try ProcessSyncLock.acquire()
+        } catch {
+            recordSourceError(error, area: .system)
+            return
+        }
+        defer { withExtendedLifetime(processLock) {} }
 
         guard configuration.hasEnabledSync else {
             statusMessage = "No sources are enabled."
@@ -229,14 +276,15 @@ final class AppStore {
             let client = try await sessionManager.client(configuration: configuration.account)
             let coordinator = SyncCoordinator.live(apiClient: client)
             let summary = try await coordinator.sync(configuration: configuration)
+            try await refreshSkylightDestinations(using: client)
             record(summary.photos, area: .photos, dryRun: summary.dryRun)
             record(summary.reminders, area: .reminders, dryRun: summary.dryRun)
             record(summary.recipes, area: .recipes, dryRun: summary.dryRun)
             record(summary.meals, area: .meals, dryRun: summary.dryRun)
             lastSyncAt = .now
             statusMessage = summary.dryRun
-                ? "Preview complete: \(summary.totalPlanned) change(s)."
-                : "Sync complete: \(summary.totalApplied) change(s)."
+                ? "Preview complete: \(countDescription(summary.totalPlanned, singular: "change")) planned."
+                : "Sync complete: \(countDescription(summary.totalApplied, singular: "change")) applied."
             appendActivity(.init(
                 level: summary.dryRun ? .info : .success,
                 area: .system,
@@ -259,6 +307,16 @@ final class AppStore {
         try? persistence.saveActivity(activity)
     }
 
+    func clearActivity() {
+        activity.removeAll()
+        do {
+            try persistence.saveActivity(activity)
+            statusMessage = "Activity cleared."
+        } catch {
+            recordSourceError(error, area: .system)
+        }
+    }
+
     func deletePhotoMappings(at offsets: IndexSet) {
         configuration.photoMappings.remove(atOffsets: offsets)
         saveConfiguration()
@@ -269,9 +327,72 @@ final class AppStore {
         saveConfiguration()
     }
 
+    func refreshSkylightDestinations() async {
+        do {
+            let client = try await sessionManager.client(configuration: configuration.account)
+            try await refreshSkylightDestinations(using: client)
+        } catch SkylightSessionManagerError.missingCredentials {
+            // Account setup is optional until the first sync.
+        } catch {
+            recordSourceError(error, area: .account)
+        }
+    }
+
     private func configureScheduler() {
         scheduler.schedule(everyMinutes: max(configuration.syncIntervalMinutes, 10)) { [weak self] in
             await self?.syncNow()
+        }
+    }
+
+    private func refreshSkylightDestinations(using client: SkylightAPIClient) async throws {
+        let frameID = configuration.account.frameID.trimmed
+        guard !frameID.isEmpty else {
+            skylightAlbums = []
+            skylightLists = []
+            skylightMealCategories = []
+            return
+        }
+        async let albums = client.listAlbums(frameID: frameID)
+        async let lists = client.listLists(frameID: frameID).data
+        async let mealCategories = client.listMealCategories(frameID: frameID)
+        skylightAlbums = try await albums.sorted {
+            ($0.attributes.title ?? "").localizedStandardCompare($1.attributes.title ?? "") == .orderedAscending
+        }
+        skylightLists = try await lists.sorted {
+            ($0.attributes.label ?? "").localizedStandardCompare($1.attributes.label ?? "") == .orderedAscending
+        }
+        skylightMealCategories = (try? await mealCategories)?.sorted {
+            ($0.attributes.label ?? "").localizedStandardCompare($1.attributes.label ?? "") == .orderedAscending
+        } ?? []
+        hydrateUniqueDestinationIDs()
+    }
+
+    private func hydrateUniqueDestinationIDs() {
+        var changed = false
+        for index in configuration.photoMappings.indices
+        where configuration.photoMappings[index].destinationAlbumID?.isEmpty != false {
+            let title = configuration.photoMappings[index].destinationAlbumTitle
+            let matches = skylightAlbums.filter {
+                $0.attributes.title?.localizedCaseInsensitiveCompare(title) == .orderedSame
+            }
+            if matches.count == 1 {
+                configuration.photoMappings[index].destinationAlbumID = matches[0].id
+                changed = true
+            }
+        }
+        for index in configuration.reminderMappings.indices
+        where configuration.reminderMappings[index].destinationListID.isEmpty {
+            let title = configuration.reminderMappings[index].destinationListTitle
+            let matches = skylightLists.filter {
+                $0.attributes.label?.localizedCaseInsensitiveCompare(title) == .orderedSame
+            }
+            if matches.count == 1 {
+                configuration.reminderMappings[index].destinationListID = matches[0].id
+                changed = true
+            }
+        }
+        if changed {
+            try? persistence.saveConfiguration(configuration)
         }
     }
 
@@ -293,8 +414,12 @@ final class AppStore {
         appendActivity(.init(
             level: dryRun ? .info : .success,
             area: area,
-            message: "\(count) change(s) \(verb).",
+            message: "\(countDescription(count, singular: "change")) \(verb).",
             isDryRun: dryRun
         ))
+    }
+
+    private func countDescription(_ count: Int, singular: String) -> String {
+        "\(count) \(count == 1 ? singular : singular + "s")"
     }
 }

@@ -17,6 +17,7 @@ enum IntegrationArea: String, Codable, Sendable {
 }
 
 struct ActivityEntry: Identifiable, Codable, Sendable, Hashable {
+    private static let maximumMessageCharacters = 1_000
     let id: UUID
     let date: Date
     let level: ActivityLevel
@@ -36,7 +37,7 @@ struct ActivityEntry: Identifiable, Codable, Sendable, Hashable {
         self.date = date
         self.level = level
         self.area = area
-        self.message = message
+        self.message = String(message.prefix(Self.maximumMessageCharacters))
         self.isDryRun = isDryRun
     }
 }
