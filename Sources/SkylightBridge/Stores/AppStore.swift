@@ -22,9 +22,15 @@ final class AppStore {
     var remindersAuthorizationStatus: AppleRemindersAuthorizationStatus = .notDetermined
     var notesAccessGranted = false
     var isConnecting = false
+    /// Most recent sign-in or reconnect failure, shown inline on the Account
+    /// screen. Cleared when a new attempt starts or succeeds.
+    var connectionError: String?
     var isRefreshingSources = false
     var isSyncing = false
     var lastSyncAt: Date?
+    /// True after a sync attempt fails, until the next attempt succeeds. Drives
+    /// the menu bar's error state so background failures aren't invisible.
+    var lastSyncFailed = false
     var statusMessage = "Choose sources to begin."
     private var hasStarted = false
 
@@ -82,7 +88,18 @@ final class AppStore {
     /// background schedule. Skipped when nothing is connected or a sync is already
     /// in flight.
     private func autoSync() {
-        guard configuration.hasEnabledSync, isSkylightConnected, !isSyncing else { return }
+        guard configuration.hasEnabledSync, !isSyncing else { return }
+        guard isSkylightConnected else {
+            // The mapping was saved, but nothing can sync until sign-in; say so
+            // instead of silently skipping the promised automatic sync.
+            statusMessage = "Mapping saved. Sign in to Skylight to start syncing."
+            appendActivity(.init(
+                level: .warning,
+                area: .account,
+                message: "A mapping changed but no Skylight account is connected. Sign in to sync it."
+            ))
+            return
+        }
         Task { await syncNow() }
     }
 
@@ -223,6 +240,7 @@ final class AppStore {
 
         guard !isConnecting else { return }
         isConnecting = true
+        connectionError = nil
         defer { isConnecting = false }
 
         do {
@@ -242,6 +260,7 @@ final class AppStore {
                 message: "Connected to Skylight and found \(countDescription(connection.frames.count, singular: "frame")). Credentials and OAuth tokens are stored in the macOS Keychain."
             ))
         } catch {
+            connectionError = error.localizedDescription
             recordSourceError(error, area: .account)
         }
     }
@@ -274,6 +293,7 @@ final class AppStore {
             try await refreshSkylightDestinations(using: client)
             try persistence.saveConfiguration(configuration)
             statusMessage = "Connected to Skylight."
+            connectionError = nil
         } catch SkylightSessionManagerError.missingCredentials {
             // First launch is expected to have no saved account.
         } catch {
@@ -330,6 +350,7 @@ final class AppStore {
             record(summary.recipes, area: .recipes, dryRun: summary.dryRun)
             record(summary.meals, area: .meals, dryRun: summary.dryRun)
             lastSyncAt = .now
+            lastSyncFailed = false
             statusMessage = summary.dryRun
                 ? "Preview complete: \(countDescription(summary.totalPlanned, singular: "change")) planned."
                 : "Sync complete: \(countDescription(summary.totalApplied, singular: "change")) applied."
@@ -340,6 +361,7 @@ final class AppStore {
                 isDryRun: summary.dryRun
             ))
         } catch let error as DecodingError {
+            lastSyncFailed = true
             statusMessage = "Sync failed: could not decode local data (\(error.fieldLevelDescription))."
             appendActivity(.init(
                 level: .error,
@@ -348,6 +370,7 @@ final class AppStore {
                 isDryRun: configuration.dryRun
             ))
         } catch {
+            lastSyncFailed = true
             statusMessage = "Sync failed: \(error.localizedDescription)"
             appendActivity(.init(
                 level: .error,

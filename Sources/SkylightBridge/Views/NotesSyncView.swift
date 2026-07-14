@@ -196,7 +196,11 @@ private struct NotesSelectionEditor: View {
         NavigationStack {
             Form {
                 sourceSection
-                destinationSection
+                // The meal-category picker only affects meal sync; recipes
+                // always land in the Skylight recipe box.
+                if draft.kind == .meals {
+                    destinationSection
+                }
                 behaviorSection
             }
             .formStyle(.grouped)

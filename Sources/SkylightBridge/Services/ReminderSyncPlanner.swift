@@ -126,8 +126,8 @@ enum ReminderSyncPlanner {
         direction: ReminderSyncDirection,
         conflictPolicy: SyncConflictPolicy
     ) -> ReminderSyncAction? {
-        let appleChanged = apple.modifiedAt > link.lastAppleModifiedAt
-        let skylightChanged = skylight.modifiedAt > link.lastSkylightModifiedAt
+        let appleChanged = apple.modifiedAt.isMeaningfullyAfter(link.lastAppleModifiedAt)
+        let skylightChanged = skylight.modifiedAt.isMeaningfullyAfter(link.lastSkylightModifiedAt)
 
         switch direction {
         case .appleToSkylight:
@@ -272,6 +272,17 @@ enum ReminderSyncPlanner {
             }
             return .updateRemote(appleID: apple.id, remoteID: skylight.id)
         }
+    }
+}
+
+extension Date {
+    /// Change detection against persisted sync baselines. The sealed state file
+    /// stores dates as Unix seconds, and the 1970↔2001 epoch conversion loses
+    /// sub-microsecond bits, so a decoded baseline can land fractionally below
+    /// the live EventKit date it was copied from. A strict `>` then reports a
+    /// phantom edit on every sync. No real edit is under a millisecond newer.
+    func isMeaningfullyAfter(_ other: Date) -> Bool {
+        timeIntervalSince(other) > 0.001
     }
 }
 

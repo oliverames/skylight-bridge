@@ -6,7 +6,7 @@ The app keeps Apple Photos, Reminders, and Notes as the source systems. Nothing 
 
 ## Product scope
 
-- Photos: choose an album, folder, Favorites, or individual photos. The bridge renders the current edited appearance (including RAW and ProRAW), converts it to sRGB JPEG, strips location metadata by default, uploads it, and manages only its own Skylight copies. Photos always push one way to Skylight. Deleting a photo mapping removes the copies it created from Skylight, since Apple Photos is never touched, and also deletes the Skylight album if the bridge created it and it is now empty. The menu bar icon pulses while a sync is running.
+- Photos: choose an album, folder, Favorites, or individual photos. The bridge renders the current edited appearance (including RAW and ProRAW), converts it to sRGB JPEG, strips location metadata by default, uploads it, and manages only its own Skylight copies. Photos always push one way to Skylight. Deleting a photo mapping removes the copies it created from Skylight, since Apple Photos is never touched, and also deletes the Skylight album if the bridge created it and it is now empty. The menu bar icon pulses while a sync is running and switches to a warning glyph if the last sync failed; the menu shows the last sync time.
 - Reminders: link an Apple Reminders list with a Skylight list. Either side can be an existing list or created new, so a list that already lives on the Skylight can flow into a fresh Apple Reminders list. Each mapping is one-way or two-way, and the first sync into an existing list links items whose title and completion state match instead of duplicating them. Two-way sync preserves separate additions on each side and merges simultaneous edits field by field, using the conflict policy only when both sides changed the same field. Deleting a mapping asks whether to also remove the synced items from Skylight or Apple Reminders.
 - Recipes: choose an Apple Notes folder, then synchronize every note or selected recipe notes. Recipe sync can be push-only or two-way; two-way pulls Skylight recipe-box changes back into the folder as notes. Notes the bridge writes use native Apple Notes styling (title heading, section headings, and real bullet and numbered lists) with a toggle to fall back to plain text, and notes containing attachments are never rewritten.
 - Meals: choose a separate Notes folder, then synchronize every note or selected meal-plan notes. Meal plans always push one way because rewriting freeform meal notes from parsed data would risk user text.
@@ -38,17 +38,17 @@ The interface uses native macOS 26 SwiftUI navigation with standard grouped-sett
 ## First run
 
 1. Open the Account section in the sidebar and sign in to Skylight. The app discovers its frames and devices automatically.
-2. Keep Dry Run enabled (Sync section).
+2. Keep Preview mode enabled (the "Preview changes without applying them" toggle in the Sync section).
 3. Open Photos, Reminders, Recipes, and Meals to grant only the source permissions you need.
 4. Add source mappings. No unselected list, reminder, folder, note, album, or photo is considered.
 5. Run a sync preview and inspect Activity.
-6. Turn off Dry Run only after the preview matches the intended changes.
+6. Turn off Preview mode only after the preview matches the intended changes.
 
-Adding, editing, or enabling a mapping triggers a sync automatically (a preview while Dry Run is on), so changes appear in Activity without waiting for the background schedule.
+Adding, editing, or enabling a mapping triggers a sync automatically (a preview while Preview mode is on), so changes appear in Activity without waiting for the background schedule.
 
 Skylight credentials and OAuth tokens are stored in the macOS Keychain. Mapping configuration and bridge-owned identity records are stored in the user's Application Support directory.
 
-The Sync section also offers Launch at login and Hide Dock icon. Hiding the Dock icon keeps the app running in the menu bar only; reopen the main window from the menu bar icon.
+Sync settings (interval, Launch at login, Hide Dock icon, Preview mode) save automatically as you change them. Hiding the Dock icon keeps the app running in the menu bar only; reopen the main window from the menu bar icon.
 
 ## Documentation
 

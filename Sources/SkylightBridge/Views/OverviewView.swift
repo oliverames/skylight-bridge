@@ -36,21 +36,21 @@ struct OverviewView: View {
                 sourceRow(
                     title: "Reminders",
                     systemImage: "checklist",
-                    value: countDescription(enabledReminderMappingCount, singular: "list"),
+                    value: countDescription(enabledReminderMappingCount, singular: "mapping"),
                     detail: "Whole lists or selected reminders. One-way or two-way.",
                     destination: .reminders
                 )
                 sourceRow(
                     title: "Recipes",
                     systemImage: "book.closed",
-                    value: store.configuration.recipeSelection.folderTitle ?? "Not configured",
+                    value: notesSelectionValue(store.configuration.recipeSelection),
                     detail: recipesDetail,
                     destination: .recipes
                 )
                 sourceRow(
                     title: "Meals",
                     systemImage: "fork.knife",
-                    value: store.configuration.mealSelection.folderTitle ?? "Not configured",
+                    value: notesSelectionValue(store.configuration.mealSelection),
                     detail: "Dated meal lines from a Notes folder. Push only.",
                     destination: .meals
                 )
@@ -100,7 +100,7 @@ struct OverviewView: View {
                     ? "Connected to Skylight"
                     : "Connect your Skylight account")
                 Text(store.isSkylightConnected
-                    ? store.statusMessage
+                    ? connectedFrameDescription
                     : "Credentials stay in the macOS Keychain.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -122,6 +122,19 @@ struct OverviewView: View {
             return "Syncing…"
         }
         return store.configuration.dryRun ? "Preview Sync" : "Sync Now"
+    }
+
+    private var connectedFrameDescription: String {
+        let frame = store.skylightFrames.first { $0.id == store.configuration.account.frameID }
+        if let name = frame?.attributes.name, !name.isEmpty {
+            return "Syncing with \(name)."
+        }
+        return "Signed in. Syncs run on the schedule in Sync settings."
+    }
+
+    private func notesSelectionValue(_ selection: NotesSelection) -> String {
+        guard let title = selection.folderTitle else { return "Not configured" }
+        return selection.enabled ? title : "\(title) (paused)"
     }
 
     private var recipesDetail: String {

@@ -10,6 +10,41 @@ struct PhotoSyncRecord: Identifiable, Codable, Sendable, Hashable {
     var skylightMessageID: String
     var skylightAlbumIDs: Set<String>
     var lastSyncedAt: Date
+
+    init(
+        mappingID: UUID,
+        frameID: String = "",
+        destinationAlbumID: String = "",
+        appleAssetID: String,
+        renderedHash: String,
+        skylightMessageID: String,
+        skylightAlbumIDs: Set<String>,
+        lastSyncedAt: Date
+    ) {
+        self.mappingID = mappingID
+        self.frameID = frameID
+        self.destinationAlbumID = destinationAlbumID
+        self.appleAssetID = appleAssetID
+        self.renderedHash = renderedHash
+        self.skylightMessageID = skylightMessageID
+        self.skylightAlbumIDs = skylightAlbumIDs
+        self.lastSyncedAt = lastSyncedAt
+    }
+
+    // Persisted struct: synthesized decoding throws on any missing key, so a
+    // field added in a future version would make older state files unreadable.
+    // Identity fields stay strict; everything else falls back per field.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        mappingID = try container.decode(UUID.self, forKey: .mappingID)
+        frameID = try container.decodeIfPresent(String.self, forKey: .frameID) ?? ""
+        destinationAlbumID = try container.decodeIfPresent(String.self, forKey: .destinationAlbumID) ?? ""
+        appleAssetID = try container.decode(String.self, forKey: .appleAssetID)
+        renderedHash = try container.decodeIfPresent(String.self, forKey: .renderedHash) ?? ""
+        skylightMessageID = try container.decodeIfPresent(String.self, forKey: .skylightMessageID) ?? ""
+        skylightAlbumIDs = try container.decodeIfPresent(Set<String>.self, forKey: .skylightAlbumIDs) ?? []
+        lastSyncedAt = try container.decodeIfPresent(Date.self, forKey: .lastSyncedAt) ?? .distantPast
+    }
 }
 
 struct ReminderSyncRecord: Identifiable, Codable, Sendable, Hashable {
@@ -28,6 +63,52 @@ struct ReminderSyncRecord: Identifiable, Codable, Sendable, Hashable {
     var lastSyncedTitle: String?
     var lastSyncedCompleted: Bool?
     var tombstonedAt: Date?
+
+    init(
+        mappingID: UUID,
+        frameID: String = "",
+        skylightListID: String = "",
+        appleReminderID: String,
+        appleExternalID: String? = nil,
+        skylightItemID: String,
+        lastAppleModifiedAt: Date,
+        lastSkylightModifiedAt: Date,
+        contentFingerprint: String,
+        lastSyncedTitle: String? = nil,
+        lastSyncedCompleted: Bool? = nil,
+        tombstonedAt: Date? = nil
+    ) {
+        self.mappingID = mappingID
+        self.frameID = frameID
+        self.skylightListID = skylightListID
+        self.appleReminderID = appleReminderID
+        self.appleExternalID = appleExternalID
+        self.skylightItemID = skylightItemID
+        self.lastAppleModifiedAt = lastAppleModifiedAt
+        self.lastSkylightModifiedAt = lastSkylightModifiedAt
+        self.contentFingerprint = contentFingerprint
+        self.lastSyncedTitle = lastSyncedTitle
+        self.lastSyncedCompleted = lastSyncedCompleted
+        self.tombstonedAt = tombstonedAt
+    }
+
+    // Persisted struct: decode per field so future additions never strand old
+    // state files (see PhotoSyncRecord).
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        mappingID = try container.decode(UUID.self, forKey: .mappingID)
+        frameID = try container.decodeIfPresent(String.self, forKey: .frameID) ?? ""
+        skylightListID = try container.decodeIfPresent(String.self, forKey: .skylightListID) ?? ""
+        appleReminderID = try container.decode(String.self, forKey: .appleReminderID)
+        appleExternalID = try container.decodeIfPresent(String.self, forKey: .appleExternalID)
+        skylightItemID = try container.decodeIfPresent(String.self, forKey: .skylightItemID) ?? ""
+        lastAppleModifiedAt = try container.decodeIfPresent(Date.self, forKey: .lastAppleModifiedAt) ?? .distantPast
+        lastSkylightModifiedAt = try container.decodeIfPresent(Date.self, forKey: .lastSkylightModifiedAt) ?? .distantPast
+        contentFingerprint = try container.decodeIfPresent(String.self, forKey: .contentFingerprint) ?? ""
+        lastSyncedTitle = try container.decodeIfPresent(String.self, forKey: .lastSyncedTitle)
+        lastSyncedCompleted = try container.decodeIfPresent(Bool.self, forKey: .lastSyncedCompleted)
+        tombstonedAt = try container.decodeIfPresent(Date.self, forKey: .tombstonedAt)
+    }
 }
 
 struct NoteSyncRecord: Identifiable, Codable, Sendable, Hashable {
@@ -41,6 +122,40 @@ struct NoteSyncRecord: Identifiable, Codable, Sendable, Hashable {
     // Two-way recipe fields; absent in state files written by 1.0.
     var lastAppleModifiedAt: Date?
     var lastSkylightUpdatedAt: String?
+
+    init(
+        kind: NotesContentKind,
+        frameID: String = "",
+        appleNoteID: String,
+        contentHash: String,
+        skylightID: String,
+        lastSyncedAt: Date,
+        lastAppleModifiedAt: Date? = nil,
+        lastSkylightUpdatedAt: String? = nil
+    ) {
+        self.kind = kind
+        self.frameID = frameID
+        self.appleNoteID = appleNoteID
+        self.contentHash = contentHash
+        self.skylightID = skylightID
+        self.lastSyncedAt = lastSyncedAt
+        self.lastAppleModifiedAt = lastAppleModifiedAt
+        self.lastSkylightUpdatedAt = lastSkylightUpdatedAt
+    }
+
+    // Persisted struct: decode per field so future additions never strand old
+    // state files (see PhotoSyncRecord).
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try container.decode(NotesContentKind.self, forKey: .kind)
+        frameID = try container.decodeIfPresent(String.self, forKey: .frameID) ?? ""
+        appleNoteID = try container.decode(String.self, forKey: .appleNoteID)
+        contentHash = try container.decodeIfPresent(String.self, forKey: .contentHash) ?? ""
+        skylightID = try container.decodeIfPresent(String.self, forKey: .skylightID) ?? ""
+        lastSyncedAt = try container.decodeIfPresent(Date.self, forKey: .lastSyncedAt) ?? .distantPast
+        lastAppleModifiedAt = try container.decodeIfPresent(Date.self, forKey: .lastAppleModifiedAt)
+        lastSkylightUpdatedAt = try container.decodeIfPresent(String.self, forKey: .lastSkylightUpdatedAt)
+    }
 }
 
 /// A Skylight album that the bridge created for a mapping. Only bridge-created
@@ -51,6 +166,21 @@ struct PhotoAlbumRecord: Identifiable, Codable, Sendable, Hashable {
     let mappingID: UUID
     var frameID = ""
     let albumID: String
+
+    init(mappingID: UUID, frameID: String = "", albumID: String) {
+        self.mappingID = mappingID
+        self.frameID = frameID
+        self.albumID = albumID
+    }
+
+    // Persisted struct: decode per field so future additions never strand old
+    // state files (see PhotoSyncRecord).
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        mappingID = try container.decode(UUID.self, forKey: .mappingID)
+        frameID = try container.decodeIfPresent(String.self, forKey: .frameID) ?? ""
+        albumID = try container.decode(String.self, forKey: .albumID)
+    }
 }
 
 struct SyncState: Codable, Sendable {

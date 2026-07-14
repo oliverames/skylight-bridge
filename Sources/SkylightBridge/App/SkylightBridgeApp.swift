@@ -33,11 +33,20 @@ struct SkylightBridgeApp: App {
         MenuBarExtra {
             MenuBarView(store: store)
         } label: {
-            // Pulse the menu bar icon while a sync is running.
-            Image(systemName: "rectangle.2.swap")
+            // Pulse while syncing; switch to a warning glyph after a failed
+            // sync so background failures are visible without opening the menu.
+            Image(systemName: store.lastSyncFailed && !store.isSyncing
+                ? "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90"
+                : "rectangle.2.swap")
                 .symbolEffect(.pulse, options: .repeating, isActive: store.isSyncing)
-                .accessibilityLabel(store.isSyncing ? "Skylight Bridge, syncing" : "Skylight Bridge")
+                .accessibilityLabel(menuBarAccessibilityLabel)
         }
+    }
+
+    private var menuBarAccessibilityLabel: String {
+        if store.isSyncing { return "Skylight Bridge, syncing" }
+        if store.lastSyncFailed { return "Skylight Bridge, last sync failed" }
+        return "Skylight Bridge"
     }
 }
 
@@ -63,7 +72,9 @@ private struct AppCommands: Commands {
                 Task { await store.syncNow() }
             }
             .keyboardShortcut("r", modifiers: [.command, .shift])
-            .disabled(store.isSyncing || !store.configuration.hasEnabledSync)
+            .disabled(store.isSyncing
+                || !store.configuration.hasEnabledSync
+                || !store.isSkylightConnected)
         }
     }
 }

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Account, Sync, and Diagnostics live directly in the main window's sidebar so
@@ -53,6 +54,13 @@ struct AccountView: View {
                     .disabled(store.isConnecting || email.trimmed.isEmpty || password.isEmpty)
                     .accessibilityIdentifier("account.connect")
                 }
+
+                if let connectionError = store.connectionError {
+                    Label(connectionError, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .accessibilityIdentifier("account.connectionError")
+                }
             } header: {
                 SectionHeader(
                     title: "Sign in to Skylight",
@@ -70,17 +78,23 @@ struct AccountView: View {
                 accessRow(
                     title: "Photos",
                     isAuthorized: store.photosAuthorizationStatus == .fullAccess,
-                    detail: store.photosAuthorizationStatus.rawValue
+                    detail: store.photosAuthorizationStatus.label,
+                    isBlocked: store.photosAuthorizationStatus.isBlocked,
+                    privacyPane: "Privacy_Photos"
                 )
                 accessRow(
                     title: "Reminders",
                     isAuthorized: store.remindersAuthorizationStatus == .fullAccess,
-                    detail: store.remindersAuthorizationStatus.rawValue
+                    detail: store.remindersAuthorizationStatus.label,
+                    isBlocked: store.remindersAuthorizationStatus.isBlocked,
+                    privacyPane: "Privacy_Reminders"
                 )
                 accessRow(
                     title: "Notes",
                     isAuthorized: store.notesAccessGranted,
-                    detail: store.notesAccessGranted ? "authorized" : "not requested"
+                    detail: store.notesAccessGranted ? "Authorized" : "Not requested",
+                    isBlocked: false,
+                    privacyPane: "Privacy_Automation"
                 )
             }
         }
@@ -97,16 +111,38 @@ struct AccountView: View {
     }
 
     @ViewBuilder
-    private func accessRow(title: String, isAuthorized: Bool, detail: String) -> some View {
+    private func accessRow(
+        title: String,
+        isAuthorized: Bool,
+        detail: String,
+        isBlocked: Bool,
+        privacyPane: String
+    ) -> some View {
         LabeledContent(title) {
             HStack(spacing: 6) {
                 Image(systemName: isAuthorized ? "checkmark.circle.fill" : "circle.dashed")
                     .foregroundStyle(isAuthorized ? Color.green : Color.secondary)
-                Text(isAuthorized ? "Authorized" : detail.capitalized)
+                Text(detail)
                     .foregroundStyle(.primary)
+                if isBlocked {
+                    // macOS never re-prompts after a denial; the only path back
+                    // is System Settings.
+                    Button("Open System Settings…") {
+                        openPrivacyPane(privacyPane)
+                    }
+                    .buttonStyle(.link)
+                    .font(.caption)
+                }
             }
             .accessibilityElement(children: .combine)
         }
+    }
+
+    private func openPrivacyPane(_ pane: String) {
+        guard let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?\(pane)"
+        ) else { return }
+        NSWorkspace.shared.open(url)
     }
 }
 
@@ -146,21 +182,19 @@ struct SyncSettingsView: View {
                 .foregroundStyle(store.configuration.dryRun ? Color.secondary : Color.orange)
             }
 
-            Section {
-                HStack {
-                    Spacer()
-                    Button("Save Sync Settings") { store.saveConfiguration() }
-                        .buttonStyle(.borderedProminent)
-                        .keyboardShortcut(.defaultAction)
-                        .accessibilityIdentifier("settings.saveSync")
-                }
-            }
         }
         .formStyle(.grouped)
         .frame(maxWidth: 800)
         .frame(maxWidth: .infinity)
         .scrollEdgeEffectStyle(.soft, for: .top)
         .navigationTitle("Sync")
+        // Mapping toggles elsewhere autosave, so these settings do too; a Save
+        // button here silently lost changes on quit and made "Hide Dock icon"
+        // appear broken until pressed.
+        .onChange(of: store.configuration.syncIntervalMinutes) { store.saveConfiguration() }
+        .onChange(of: store.configuration.launchAtLogin) { store.saveConfiguration() }
+        .onChange(of: store.configuration.hideDockIcon) { store.saveConfiguration() }
+        .onChange(of: store.configuration.dryRun) { store.saveConfiguration() }
     }
 }
 

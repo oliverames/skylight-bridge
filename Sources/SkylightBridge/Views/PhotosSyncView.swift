@@ -18,7 +18,9 @@ struct PhotosSyncView: View {
                     detail: isAuthorized
                         ? "\(store.photoCollections.count) albums, folders, and smart albums are available."
                         : "Skylight Bridge needs read access only to the sources you select.",
-                    isAuthorized: isAuthorized
+                    isAuthorized: isAuthorized,
+                    deniedPane: "Privacy_Photos",
+                    isDenied: store.photosAuthorizationStatus.isBlocked
                 ) {
                     Task { await store.requestPhotosAccess() }
                 }

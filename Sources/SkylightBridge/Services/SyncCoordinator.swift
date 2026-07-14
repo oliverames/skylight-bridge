@@ -496,10 +496,13 @@ actor SyncCoordinator {
             .filter { $0.mappingID == mappingID && $0.frameID == frameID }
             .sorted { $0.albumID < $1.albumID }
         for albumRecord in albumRecords {
-            let remaining = (try? await api.listAllAlbumMessageIDs(
+            // "Failed to list" must not read as "empty": deleting on a transport
+            // error could destroy an album holding photos the user added on
+            // Skylight. Keep the record so a later purge can retry.
+            guard let remaining = try? await api.listAllAlbumMessageIDs(
                 frameID: frameID,
                 albumID: albumRecord.albumID
-            )) ?? []
+            ) else { continue }
             if remaining.isEmpty {
                 try? await api.deleteAlbum(frameID: frameID, albumID: albumRecord.albumID)
                 result.albums += 1

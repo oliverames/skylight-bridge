@@ -24,6 +24,48 @@ struct ReminderSyncPlannerTests {
         #expect(actions == [.createRemote(appleID: "apple-1")])
     }
 
+    @Test("A sub-millisecond baseline drift plans no update")
+    func toleratesLossyBaselineRoundtrip() {
+        // The sealed state file stores dates as Unix seconds; the 1970↔2001
+        // epoch conversion can decode a baseline fractionally below the live
+        // EventKit date it was copied from. That drift must not read as an edit.
+        let liveDate = Date(timeIntervalSinceReferenceDate: 805_000_000.123456789)
+        let roundtripped = Date(timeIntervalSince1970: liveDate.timeIntervalSince1970)
+            .addingTimeInterval(-0.0005)
+        let apple = ReminderSnapshot(
+            id: "apple-1",
+            title: "Milk",
+            notes: nil,
+            isCompleted: false,
+            modifiedAt: liveDate
+        )
+        let skylight = SkylightListItemSnapshot(
+            id: "remote-1",
+            title: "Milk",
+            notes: nil,
+            isCompleted: false,
+            modifiedAt: roundtripped
+        )
+        let link = ReminderSyncLink(
+            appleID: "apple-1",
+            skylightID: "remote-1",
+            lastAppleModifiedAt: roundtripped,
+            lastSkylightModifiedAt: roundtripped,
+            baselineTitle: "Milk",
+            baselineCompleted: false
+        )
+
+        let actions = ReminderSyncPlanner.plan(
+            apple: [apple],
+            skylight: [skylight],
+            links: [link],
+            direction: .twoWay,
+            conflictPolicy: .newestWins
+        )
+
+        #expect(actions.isEmpty)
+    }
+
     @Test("A newer Skylight completion updates Apple during two-way sync")
     func pullsNewerRemoteCompletion() {
         let apple = ReminderSnapshot(

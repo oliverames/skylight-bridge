@@ -99,6 +99,30 @@ struct SyncStateDecodingTests {
         #expect(state.notes.isEmpty)
         #expect(state.photoAlbums.isEmpty)
     }
+
+    @Test("Records missing later-added fields still decode with defaults")
+    func decodesRecordsWithMissingNewerFields() throws {
+        // Simulates a state file written before newer per-record fields
+        // existed: only identity fields are present.
+        let json = #"""
+        {
+          "photos": [{"mappingID":"11111111-1111-1111-1111-111111111111","appleAssetID":"asset-1"}],
+          "reminders": [{"mappingID":"22222222-2222-2222-2222-222222222222","appleReminderID":"rem-1"}],
+          "notes": [{"kind":"recipes","appleNoteID":"note-1"}],
+          "photoAlbums": [{"mappingID":"33333333-3333-3333-3333-333333333333","albumID":"album-1"}]
+        }
+        """#
+
+        let state = try JSONDecoder().decode(SyncState.self, from: Data(json.utf8))
+
+        #expect(state.photos.first?.appleAssetID == "asset-1")
+        #expect(state.photos.first?.skylightAlbumIDs.isEmpty == true)
+        #expect(state.reminders.first?.appleReminderID == "rem-1")
+        #expect(state.reminders.first?.lastAppleModifiedAt == .distantPast)
+        #expect(state.notes.first?.appleNoteID == "note-1")
+        #expect(state.notes.first?.contentHash == "")
+        #expect(state.photoAlbums.first?.albumID == "album-1")
+    }
 }
 
 struct AppConfigurationDecodingTests {

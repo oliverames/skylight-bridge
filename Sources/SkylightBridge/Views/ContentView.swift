@@ -16,15 +16,15 @@ struct ContentView: View {
                         } label: {
                             Label(
                                 store.isSyncing
-                                    ? "Syncing"
+                                    ? "Syncing…"
                                     : (store.configuration.dryRun ? "Preview Sync" : "Sync Now"),
                                 systemImage: "arrow.triangle.2.circlepath"
                             )
                         }
-                        .disabled(store.isSyncing || !store.configuration.hasEnabledSync)
-                        .help(store.configuration.hasEnabledSync
-                              ? "Synchronize enabled sources"
-                              : "Add and enable a source mapping first")
+                        .disabled(store.isSyncing
+                            || !store.configuration.hasEnabledSync
+                            || !store.isSkylightConnected)
+                        .help(syncButtonHelp)
                     }
                 }
         }
@@ -33,6 +33,16 @@ struct ContentView: View {
             guard scenePhase == .active else { return }
             Task { await store.refreshSources() }
         }
+    }
+
+    private var syncButtonHelp: String {
+        if !store.isSkylightConnected {
+            return "Sign in to Skylight to sync"
+        }
+        if !store.configuration.hasEnabledSync {
+            return "Add and enable a source mapping first"
+        }
+        return "Synchronize enabled sources"
     }
 }
 

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Shared building blocks for the grouped-settings layout used across the app.
@@ -98,22 +99,39 @@ struct AccessRow: View {
     let title: String
     let detail: String
     let isAuthorized: Bool
+    /// After the user denies access, macOS never shows the permission prompt
+    /// again, so "Allow Access" would silently do nothing. Callers pass the
+    /// System Settings privacy pane to link instead (e.g. "Privacy_Photos").
+    var deniedPane: String? = nil
+    var isDenied: Bool = false
     let action: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                Text(detail)
+                Text(isDenied
+                    ? "Access was denied. Grant it in System Settings, then return here."
+                    : detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 12)
             StatusBadge(
-                title: isAuthorized ? "Granted" : "Not granted",
+                title: isAuthorized ? "Granted" : (isDenied ? "Denied" : "Not granted"),
                 tone: isAuthorized ? .positive : .warning
             )
-            Button(isAuthorized ? "Refresh" : "Allow Access", action: action)
+            if isDenied, let deniedPane {
+                Button("Open System Settings…") {
+                    if let url = URL(
+                        string: "x-apple.systempreferences:com.apple.preference.security?\(deniedPane)"
+                    ) {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+            } else {
+                Button(isAuthorized ? "Refresh" : "Allow Access", action: action)
+            }
         }
         .padding(.vertical, 2)
     }

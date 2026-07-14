@@ -17,7 +17,9 @@ struct RemindersSyncView: View {
                     detail: isAuthorized
                         ? remindersAccessDetail
                         : "Skylight Bridge only reads or changes lists you explicitly map.",
-                    isAuthorized: isAuthorized
+                    isAuthorized: isAuthorized,
+                    deniedPane: "Privacy_Reminders",
+                    isDenied: store.remindersAuthorizationStatus.isBlocked
                 ) {
                     Task { await store.requestRemindersAccess() }
                 }

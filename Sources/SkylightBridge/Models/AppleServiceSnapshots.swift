@@ -15,6 +15,20 @@ enum ApplePhotosAuthorizationStatus: String, Sendable, Codable {
     case fullAccess
     case limited
     case unknown
+
+    /// User-facing wording; raw case names read as "Notdetermined" in the UI.
+    var label: String {
+        switch self {
+        case .notDetermined: "Not requested"
+        case .restricted: "Restricted"
+        case .denied: "Denied"
+        case .fullAccess: "Authorized"
+        case .limited: "Limited"
+        case .unknown: "Unknown"
+        }
+    }
+
+    var isBlocked: Bool { self == .denied || self == .restricted }
 }
 
 struct ApplePhotoCollectionSnapshot: Identifiable, Sendable, Hashable {
@@ -90,6 +104,20 @@ enum AppleRemindersAuthorizationStatus: String, Sendable, Codable {
     case fullAccess
     case writeOnly
     case unknown
+
+    /// User-facing wording; raw case names read as "Writeonly" in the UI.
+    var label: String {
+        switch self {
+        case .notDetermined: "Not requested"
+        case .restricted: "Restricted"
+        case .denied: "Denied"
+        case .fullAccess: "Authorized"
+        case .writeOnly: "Write only"
+        case .unknown: "Unknown"
+        }
+    }
+
+    var isBlocked: Bool { self == .denied || self == .restricted }
 }
 
 struct AppleReminderListSnapshot: Identifiable, Sendable, Hashable {

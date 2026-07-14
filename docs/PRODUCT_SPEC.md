@@ -90,12 +90,12 @@ The underlying Skylight client still covers discovered calendar, chore, routine,
 
 ## Safety rules
 
-- Dry Run is enabled by default.
+- Preview mode (dry run) is enabled by default.
 - A write requires an enabled mapping.
 - Managed deletion is limited to remote identifiers recorded as bridge-owned, including identifiers adopted by explicit title matching when the user links existing lists.
 - Two-way recipe sync never destroys a note outright; retirement moves it to Recently Deleted.
 - Deleting a mapping cleans up only the items that mapping recorded as bridge-owned, and reminder cleanup is limited to the side the user explicitly chooses.
-- Adding, editing, or enabling a mapping triggers a sync automatically. While Dry Run is on this is a preview, so automatic runs never change data until the user turns Dry Run off.
+- Adding, editing, or enabling a mapping triggers a sync automatically. While Preview mode is on this is a preview, so automatic runs never change data until the user turns it off. If no Skylight account is connected yet, the app instead records a warning in Activity; the mapping syncs on the next run after sign-in.
 - Manual Skylight content outside managed albums and lists is untouched.
 - The activity log records previews, applied changes, and errors by integration.
 - A failed or partial upload is reconciled before retrying a non-idempotent request.
