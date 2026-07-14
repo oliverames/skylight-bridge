@@ -23,6 +23,10 @@ struct ReminderSyncRecord: Identifiable, Codable, Sendable, Hashable {
     var lastAppleModifiedAt: Date
     var lastSkylightModifiedAt: Date
     var contentFingerprint: String
+    // Last-synced field values for field-level two-way merge; absent in state
+    // files written before merge support.
+    var lastSyncedTitle: String?
+    var lastSyncedCompleted: Bool?
     var tombstonedAt: Date?
 }
 

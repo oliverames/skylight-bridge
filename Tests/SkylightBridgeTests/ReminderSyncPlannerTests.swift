@@ -44,7 +44,9 @@ struct ReminderSyncPlannerTests {
             appleID: "apple-1",
             skylightID: "remote-1",
             lastAppleModifiedAt: Date(timeIntervalSince1970: 100),
-            lastSkylightModifiedAt: Date(timeIntervalSince1970: 100)
+            lastSkylightModifiedAt: Date(timeIntervalSince1970: 100),
+            baselineTitle: "Milk",
+            baselineCompleted: false
         )
 
         let actions = ReminderSyncPlanner.plan(
@@ -78,7 +80,9 @@ struct ReminderSyncPlannerTests {
             appleID: apple.id,
             skylightID: skylight.id,
             lastAppleModifiedAt: apple.modifiedAt,
-            lastSkylightModifiedAt: skylight.modifiedAt
+            lastSkylightModifiedAt: skylight.modifiedAt,
+            baselineTitle: "Milk",
+            baselineCompleted: false
         )
 
         let deletedOnSkylight = ReminderSyncPlanner.plan(
@@ -148,5 +152,122 @@ struct ReminderSyncPlannerTests {
         // The completed Milk and the unmatched Bread stay unpaired, as does the
         // leftover Skylight duplicate.
         #expect(pairs == [ReminderAdoptionPair(appleID: "a1", skylightID: "s1")])
+    }
+
+    @Test("Separate additions on each side are both preserved")
+    func preservesSeparateAdditions() {
+        let apple = ReminderSnapshot(
+            id: "apple-new",
+            title: "Walk the dog",
+            notes: nil,
+            isCompleted: false,
+            modifiedAt: Date(timeIntervalSince1970: 100)
+        )
+        let skylight = SkylightListItemSnapshot(
+            id: "remote-new",
+            title: "Water the plants",
+            notes: nil,
+            isCompleted: false,
+            modifiedAt: Date(timeIntervalSince1970: 100)
+        )
+
+        let actions = ReminderSyncPlanner.plan(
+            apple: [apple],
+            skylight: [skylight],
+            links: [],
+            direction: .twoWay,
+            conflictPolicy: .newestWins
+        )
+
+        #expect(actions == [
+            .createRemote(appleID: "apple-new"),
+            .createApple(remoteID: "remote-new")
+        ])
+    }
+
+    @Test("Disjoint field edits merge instead of clobbering")
+    func mergesDisjointFieldEdits() {
+        // Apple flipped completion; Skylight renamed the item. Newest-wins would
+        // discard one edit, but the two changes touch different fields.
+        let apple = ReminderSnapshot(
+            id: "apple-1",
+            title: "Buy milk",
+            notes: nil,
+            isCompleted: true,
+            modifiedAt: Date(timeIntervalSince1970: 200)
+        )
+        let skylight = SkylightListItemSnapshot(
+            id: "remote-1",
+            title: "Buy 2% milk",
+            notes: nil,
+            isCompleted: false,
+            modifiedAt: Date(timeIntervalSince1970: 200)
+        )
+        let link = ReminderSyncLink(
+            appleID: "apple-1",
+            skylightID: "remote-1",
+            lastAppleModifiedAt: Date(timeIntervalSince1970: 100),
+            lastSkylightModifiedAt: Date(timeIntervalSince1970: 100),
+            baselineTitle: "Buy milk",
+            baselineCompleted: false
+        )
+
+        let actions = ReminderSyncPlanner.plan(
+            apple: [apple],
+            skylight: [skylight],
+            links: [link],
+            direction: .twoWay,
+            conflictPolicy: .newestWins
+        )
+
+        #expect(actions == [
+            .merge(appleID: "apple-1", remoteID: "remote-1", title: "Buy 2% milk", isCompleted: true)
+        ])
+    }
+
+    @Test("A true same-field conflict follows the conflict policy")
+    func sameFieldConflictFollowsPolicy() {
+        let apple = ReminderSnapshot(
+            id: "apple-1",
+            title: "Apple title",
+            notes: nil,
+            isCompleted: false,
+            modifiedAt: Date(timeIntervalSince1970: 200)
+        )
+        let skylight = SkylightListItemSnapshot(
+            id: "remote-1",
+            title: "Skylight title",
+            notes: nil,
+            isCompleted: false,
+            modifiedAt: Date(timeIntervalSince1970: 300)
+        )
+        let link = ReminderSyncLink(
+            appleID: "apple-1",
+            skylightID: "remote-1",
+            lastAppleModifiedAt: Date(timeIntervalSince1970: 100),
+            lastSkylightModifiedAt: Date(timeIntervalSince1970: 100),
+            baselineTitle: "Original title",
+            baselineCompleted: false
+        )
+
+        let appleWins = ReminderSyncPlanner.plan(
+            apple: [apple],
+            skylight: [skylight],
+            links: [link],
+            direction: .twoWay,
+            conflictPolicy: .appleWins
+        )
+        let skylightWins = ReminderSyncPlanner.plan(
+            apple: [apple],
+            skylight: [skylight],
+            links: [link],
+            direction: .twoWay,
+            conflictPolicy: .skylightWins
+        )
+
+        // Both renamed the same field, so the whole record resolves by policy and
+        // collapses onto the winning side's one-way update.
+        #expect(appleWins == [.updateRemote(appleID: "apple-1", remoteID: "remote-1")])
+        #expect(skylightWins == [.updateApple(appleID: "apple-1", remoteID: "remote-1")])
     }
 }

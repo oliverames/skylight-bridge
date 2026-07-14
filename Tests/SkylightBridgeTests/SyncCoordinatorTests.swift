@@ -430,21 +430,172 @@ struct SyncCoordinatorTests {
         #expect(persisted.notes[0].skylightID == "recipe-1")
     }
 
+    @Test("Deleting a photo mapping purges its Skylight copies")
+    func purgePhotoMappingRemovesManagedPhotos() async throws {
+        let mappingID = UUID()
+        var initial = SyncState()
+        initial.photos = [
+            photoRecord(mappingID: mappingID, appleAssetID: "a1", messageID: "m1"),
+            photoRecord(mappingID: mappingID, appleAssetID: "a2", messageID: "m2")
+        ]
+        let api = CoordinatorAPIStub()
+        let state = CoordinatorStateStore(state: initial)
+        let coordinator = makeCoordinator(api: api, reminders: [], state: state)
+
+        let removed = try await coordinator.purgePhotoMapping(mappingID: mappingID, frameID: "frame-1")
+        let deleted = await api.deletedMessageIDs
+        let removedFromAlbums = await api.removedFromAlbumMessageIDs
+        let persisted = try await state.loadSyncState()
+
+        #expect(removed == 2)
+        #expect(Set(deleted) == ["m1", "m2"])
+        #expect(Set(removedFromAlbums) == ["m1", "m2"])
+        #expect(persisted.photos.isEmpty)
+    }
+
+    @Test("Deleting a reminder mapping can clear the Skylight side")
+    func purgeReminderMappingSkylightSide() async throws {
+        let mappingID = UUID()
+        var initial = SyncState()
+        initial.reminders = [
+            reminderRecordFor(mappingID: mappingID, appleID: "a1", itemID: "s1"),
+            reminderRecordFor(mappingID: mappingID, appleID: "a2", itemID: "s2")
+        ]
+        let api = CoordinatorAPIStub()
+        let state = CoordinatorStateStore(state: initial)
+        let reminderSource = CoordinatorReminderSource(reminders: [])
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            state: state,
+            reminderSource: reminderSource
+        )
+
+        let affected = try await coordinator.purgeReminderMapping(
+            mappingID: mappingID,
+            frameID: "frame-1",
+            side: .skylight
+        )
+        let deletedItems = await api.deletedListItemIDs
+        let persisted = try await state.loadSyncState()
+
+        #expect(affected == 2)
+        #expect(Set(deletedItems) == ["s1", "s2"])
+        #expect(reminderSource.removedReminderIDs.isEmpty)
+        #expect(persisted.reminders.isEmpty)
+    }
+
+    @Test("Deleting a reminder mapping can clear the Apple side")
+    func purgeReminderMappingAppleSide() async throws {
+        let mappingID = UUID()
+        var initial = SyncState()
+        initial.reminders = [reminderRecordFor(mappingID: mappingID, appleID: "a1", itemID: "s1")]
+        let api = CoordinatorAPIStub()
+        let state = CoordinatorStateStore(state: initial)
+        let reminderSource = CoordinatorReminderSource(reminders: [])
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            state: state,
+            reminderSource: reminderSource
+        )
+
+        let affected = try await coordinator.purgeReminderMapping(
+            mappingID: mappingID,
+            frameID: "frame-1",
+            side: .appleReminders
+        )
+        let deletedItems = await api.deletedListItemIDs
+        let persisted = try await state.loadSyncState()
+
+        #expect(affected == 1)
+        #expect(reminderSource.removedReminderIDs == ["a1"])
+        #expect(deletedItems.isEmpty)
+        #expect(persisted.reminders.isEmpty)
+    }
+
+    @Test("Removing a mapping with no cleanup only forgets its records")
+    func purgeReminderMappingNoneClearsRecords() async throws {
+        let mappingID = UUID()
+        var initial = SyncState()
+        initial.reminders = [reminderRecordFor(mappingID: mappingID, appleID: "a1", itemID: "s1")]
+        let api = CoordinatorAPIStub()
+        let state = CoordinatorStateStore(state: initial)
+        let reminderSource = CoordinatorReminderSource(reminders: [])
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            state: state,
+            reminderSource: reminderSource
+        )
+
+        let affected = try await coordinator.purgeReminderMapping(
+            mappingID: mappingID,
+            frameID: "frame-1",
+            side: .none
+        )
+        let deletedItems = await api.deletedListItemIDs
+        let persisted = try await state.loadSyncState()
+
+        #expect(affected == 0)
+        #expect(reminderSource.removedReminderIDs.isEmpty)
+        #expect(deletedItems.isEmpty)
+        #expect(persisted.reminders.isEmpty)
+    }
+
     private func makeCoordinator(
         api: CoordinatorAPIStub,
         reminders: [AppleReminderSnapshot],
         photoSource: CoordinatorPhotoSource = CoordinatorPhotoSource(),
         imageConverter: CoordinatorImageConverter = CoordinatorImageConverter(),
         state: CoordinatorStateStore = CoordinatorStateStore(),
-        notesSource: CoordinatorNotesSource = CoordinatorNotesSource()
+        notesSource: CoordinatorNotesSource = CoordinatorNotesSource(),
+        reminderSource: CoordinatorReminderSource? = nil
     ) -> SyncCoordinator {
         SyncCoordinator(
             photoSource: photoSource,
-            reminderSource: CoordinatorReminderSource(reminders: reminders),
+            reminderSource: reminderSource ?? CoordinatorReminderSource(reminders: reminders),
             notesSource: notesSource,
             imageConverter: imageConverter,
             api: api,
             stateStore: state
+        )
+    }
+
+    private func photoRecord(
+        mappingID: UUID,
+        appleAssetID: String,
+        messageID: String
+    ) -> PhotoSyncRecord {
+        PhotoSyncRecord(
+            mappingID: mappingID,
+            frameID: "frame-1",
+            destinationAlbumID: "album-1",
+            appleAssetID: appleAssetID,
+            renderedHash: "hash-\(appleAssetID)",
+            skylightMessageID: messageID,
+            skylightAlbumIDs: ["album-1"],
+            lastSyncedAt: Date(timeIntervalSince1970: 100)
+        )
+    }
+
+    private func reminderRecordFor(
+        mappingID: UUID,
+        appleID: String,
+        itemID: String
+    ) -> ReminderSyncRecord {
+        ReminderSyncRecord(
+            mappingID: mappingID,
+            frameID: "frame-1",
+            skylightListID: "remote-list",
+            appleReminderID: appleID,
+            appleExternalID: nil,
+            skylightItemID: itemID,
+            lastAppleModifiedAt: Date(timeIntervalSince1970: 100),
+            lastSkylightModifiedAt: Date(timeIntervalSince1970: 100),
+            contentFingerprint: "fingerprint",
+            lastSyncedTitle: "Item",
+            lastSyncedCompleted: false
         )
     }
 
@@ -615,6 +766,7 @@ private final class CoordinatorPhotoSource: PhotoSyncSource {
 @MainActor
 private final class CoordinatorReminderSource: ReminderSyncSource {
     let reminders: [AppleReminderSnapshot]
+    private(set) var removedReminderIDs: [String] = []
 
     init(reminders: [AppleReminderSnapshot]) {
         self.reminders = reminders
@@ -628,7 +780,7 @@ private final class CoordinatorReminderSource: ReminderSyncSource {
         throw CoordinatorStubError.unexpectedCall
     }
     func syncRemoveReminder(withID reminderID: String) async throws {
-        throw CoordinatorStubError.unexpectedCall
+        removedReminderIDs.append(reminderID)
     }
 }
 
@@ -861,8 +1013,14 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
         )
     }
 
+    private(set) var deletedListItemIDs: [String] = []
+    private(set) var deletedMessageIDs: [String] = []
+    private(set) var removedFromAlbumMessageIDs: [String] = []
+
     func updateListItem(frameID: String, listID: String, itemID: String, request: SkylightListItemRequest) async throws -> SkylightResource<SkylightListItemAttributes> { throw CoordinatorStubError.unexpectedCall }
-    func deleteListItem(frameID: String, listID: String, itemID: String) async throws { throw CoordinatorStubError.unexpectedCall }
+    func deleteListItem(frameID: String, listID: String, itemID: String) async throws {
+        deletedListItemIDs.append(itemID)
+    }
     func listAlbums(frameID: String) async throws -> [SkylightResource<SkylightAlbumAttributes>] {
         calls.albumCollections += 1
         return []
@@ -874,8 +1032,12 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
     func requestUploadURL(ext: String, frameIDs: [String], caption: String?) async throws -> SkylightUploadURLAttributes { throw CoordinatorStubError.unexpectedCall }
     func upload(data: Data, to presignedURL: URL, contentType: String) async throws { throw CoordinatorStubError.unexpectedCall }
     func addMessages(frameID: String, albumIDs: [String], messageIDs: [String]) async throws { throw CoordinatorStubError.unexpectedCall }
-    func removeMessages(frameID: String, albumIDs: [String], messageIDs: [String]) async throws { throw CoordinatorStubError.unexpectedCall }
-    func deleteMessage(frameID: String, messageID: String) async throws { throw CoordinatorStubError.unexpectedCall }
+    func removeMessages(frameID: String, albumIDs: [String], messageIDs: [String]) async throws {
+        removedFromAlbumMessageIDs.append(contentsOf: messageIDs)
+    }
+    func deleteMessage(frameID: String, messageID: String) async throws {
+        deletedMessageIDs.append(messageID)
+    }
     func getMessage(frameID: String, messageID: String) async throws -> SkylightResource<SkylightPhotoMessageAttributes> { throw CoordinatorStubError.unexpectedCall }
     func listMessages(frameID: String, page: Int?, syncToken: String?, pageToken: String?) async throws -> SkylightPhotoMessagesResponse { throw CoordinatorStubError.unexpectedCall }
     func createRecipe(frameID: String, request: SkylightRecipeRequest) async throws -> SkylightResource<SkylightRecipeAttributes> {

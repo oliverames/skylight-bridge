@@ -37,7 +37,7 @@ struct PhotosSyncView: View {
                             subtitle: mappingDetail(mapping),
                             caption: "JPEG, sRGB, up to \(mapping.maximumLongEdge.formatted()) px",
                             isEnabled: savingBinding($mapping.enabled) {
-                                store.saveConfiguration()
+                                store.saveConfiguration(triggerSync: true)
                             },
                             onEdit: { editedMapping = mapping },
                             onDelete: { mappingToDelete = mapping }
@@ -82,7 +82,7 @@ struct PhotosSyncView: View {
             Button("Cancel", role: .cancel) { mappingToDelete = nil }
             Button("Delete", role: .destructive) { delete(mapping) }
         } message: { mapping in
-            Text("This removes the “\(mapping.name)” configuration. It does not delete photos from Apple Photos or Skylight.")
+            Text("This removes the “\(mapping.name)” configuration and deletes the photos it added to Skylight. Your Apple Photos library is not changed.")
         }
     }
 
@@ -92,14 +92,13 @@ struct PhotosSyncView: View {
         } else {
             store.configuration.photoMappings.append(mapping)
         }
-        store.saveConfiguration()
+        store.saveConfiguration(triggerSync: true)
         editedMapping = nil
     }
 
     private func delete(_ mapping: PhotoMapping) {
-        store.configuration.photoMappings.removeAll { $0.id == mapping.id }
-        store.saveConfiguration()
         mappingToDelete = nil
+        Task { await store.removePhotoMapping(mapping) }
     }
 
     private func sourceImage(for sourceKind: PhotoSourceKind) -> String {
@@ -254,7 +253,8 @@ private struct PhotoMappingEditor: View {
                 selection: $pickedPhotos,
                 maxSelectionCount: nil,
                 matching: .images,
-                preferredItemEncoding: .current
+                preferredItemEncoding: .current,
+                photoLibrary: .shared()
             ) {
                 Label("Choose Photos", systemImage: "photo.badge.plus")
             }

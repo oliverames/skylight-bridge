@@ -21,12 +21,22 @@ struct ReminderSyncLink: Equatable, Sendable {
     let skylightID: String
     let lastAppleModifiedAt: Date
     let lastSkylightModifiedAt: Date
+    // Last-synced field values, used to merge two-way edits field by field.
+    // Nil for records written before field-level merge existed.
+    let baselineTitle: String?
+    let baselineCompleted: Bool?
 }
 
 enum ReminderSyncDirection: String, Codable, CaseIterable, Equatable, Sendable {
     case appleToSkylight
     case skylightToApple
     case twoWay
+}
+
+enum ReminderMappingCleanupSide: String, CaseIterable, Sendable {
+    case skylight
+    case appleReminders
+    case none
 }
 
 enum SyncConflictPolicy: String, Codable, CaseIterable, Equatable, Sendable {
@@ -48,6 +58,8 @@ enum ReminderSyncAction: Equatable, Sendable {
     case createApple(remoteID: String)
     case updateRemote(appleID: String, remoteID: String)
     case updateApple(appleID: String, remoteID: String)
+    // A two-way edit merged field by field, written to both sides.
+    case merge(appleID: String, remoteID: String, title: String, isCompleted: Bool)
     case deleteRemote(remoteID: String)
     case deleteApple(appleID: String)
 }

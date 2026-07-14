@@ -100,7 +100,7 @@ struct NotesSyncView: View {
 
             Toggle(
                 "Enabled",
-                isOn: savingBinding(enabledBinding) { store.saveConfiguration() }
+                isOn: savingBinding(enabledBinding) { store.saveConfiguration(triggerSync: true) }
             )
             .labelsHidden()
             .toggleStyle(.switch)
@@ -150,7 +150,7 @@ struct NotesSyncView: View {
         } else {
             store.configuration.mealSelection = value
         }
-        store.saveConfiguration()
+        store.saveConfiguration(triggerSync: true)
         editedSelection = nil
     }
 }

@@ -55,7 +55,7 @@ final class AppStore {
         _ = await (sources, account)
     }
 
-    func saveConfiguration() {
+    func saveConfiguration(triggerSync: Bool = false) {
         do {
             try persistence.saveConfiguration(configuration)
             configureScheduler()
@@ -67,7 +67,20 @@ final class AppStore {
                 area: .system,
                 message: "Could not save configuration: \(error.localizedDescription)"
             ))
+            return
         }
+        if triggerSync {
+            autoSync()
+        }
+    }
+
+    /// Runs a sync (a preview while Dry Run is on) right after a mapping is added,
+    /// edited, or enabled, so the change lands in Activity without waiting for the
+    /// background schedule. Skipped when nothing is connected or a sync is already
+    /// in flight.
+    private func autoSync() {
+        guard configuration.hasEnabledSync, isSkylightConnected, !isSyncing else { return }
+        Task { await syncNow() }
     }
 
     func refreshSources() async {
@@ -330,13 +343,64 @@ final class AppStore {
         }
     }
 
-    func deletePhotoMappings(at offsets: IndexSet) {
-        configuration.photoMappings.remove(atOffsets: offsets)
+    /// Deletes a photo mapping and, when possible, removes the Skylight copies it
+    /// created. Apple Photos is never touched, so the Skylight album is the only
+    /// place the bridge put these photos.
+    func removePhotoMapping(_ mapping: PhotoMapping) async {
+        let frameID = configuration.account.frameID.trimmed
+        if !frameID.isEmpty, isSkylightConnected {
+            do {
+                let client = try await sessionManager.client(configuration: configuration.account)
+                let coordinator = SyncCoordinator.live(apiClient: client)
+                let removed = try await coordinator.purgePhotoMapping(
+                    mappingID: mapping.id,
+                    frameID: frameID
+                )
+                if removed > 0 {
+                    appendActivity(.init(
+                        level: .success,
+                        area: .photos,
+                        message: "Removed \(countDescription(removed, singular: "photo")) from Skylight for “\(mapping.name)”."
+                    ))
+                }
+            } catch {
+                recordSourceError(error, area: .photos)
+            }
+        }
+        configuration.photoMappings.removeAll { $0.id == mapping.id }
         saveConfiguration()
     }
 
-    func deleteReminderMappings(at offsets: IndexSet) {
-        configuration.reminderMappings.remove(atOffsets: offsets)
+    /// Deletes a reminder mapping. Because the mapping can be two-way, the caller
+    /// chooses whether to also remove the synced items from Skylight, from Apple
+    /// Reminders, or from neither.
+    func removeReminderMapping(
+        _ mapping: ReminderListMapping,
+        cleanup side: ReminderMappingCleanupSide
+    ) async {
+        let frameID = configuration.account.frameID.trimmed
+        if !frameID.isEmpty, isSkylightConnected {
+            do {
+                let client = try await sessionManager.client(configuration: configuration.account)
+                let coordinator = SyncCoordinator.live(apiClient: client)
+                let affected = try await coordinator.purgeReminderMapping(
+                    mappingID: mapping.id,
+                    frameID: frameID,
+                    side: side
+                )
+                if affected > 0, side != .none {
+                    let place = side == .skylight ? "Skylight" : "Apple Reminders"
+                    appendActivity(.init(
+                        level: .success,
+                        area: .reminders,
+                        message: "Removed \(countDescription(affected, singular: "item")) from \(place) for “\(mapping.sourceListTitle)”."
+                    ))
+                }
+            } catch {
+                recordSourceError(error, area: .reminders)
+            }
+        }
+        configuration.reminderMappings.removeAll { $0.id == mapping.id }
         saveConfiguration()
     }
 

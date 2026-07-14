@@ -142,6 +142,7 @@ enum ReminderSyncPlanner {
             return twoWayUpdateAction(
                 apple: apple,
                 skylight: skylight,
+                link: link,
                 appleChanged: appleChanged,
                 skylightChanged: skylightChanged,
                 conflictPolicy: conflictPolicy
@@ -152,6 +153,7 @@ enum ReminderSyncPlanner {
     private static func twoWayUpdateAction(
         apple: ReminderSnapshot,
         skylight: SkylightListItemSnapshot,
+        link: ReminderSyncLink,
         appleChanged: Bool,
         skylightChanged: Bool,
         conflictPolicy: SyncConflictPolicy
@@ -164,17 +166,111 @@ enum ReminderSyncPlanner {
         case (false, true):
             return .updateApple(appleID: apple.id, remoteID: skylight.id)
         case (true, true):
+            return bothChangedAction(
+                apple: apple,
+                skylight: skylight,
+                link: link,
+                conflictPolicy: conflictPolicy
+            )
+        }
+    }
+
+    /// When a linked reminder changed on both sides, merge the two portable
+    /// fields (title and completion) independently against the last-synced
+    /// baseline. A field only counts as a conflict when both sides changed that
+    /// same field, in which case the conflict policy decides that one field. If
+    /// the merged result already matches one side, reuse the plain one-way
+    /// update; otherwise write the merged value to both sides.
+    private static func bothChangedAction(
+        apple: ReminderSnapshot,
+        skylight: SkylightListItemSnapshot,
+        link: ReminderSyncLink,
+        conflictPolicy: SyncConflictPolicy
+    ) -> ReminderSyncAction? {
+        guard let baselineTitle = link.baselineTitle,
+              let baselineCompleted = link.baselineCompleted else {
+            // No field baseline (legacy record): fall back to whole-record policy.
+            return wholeRecordWinner(apple: apple, skylight: skylight, conflictPolicy: conflictPolicy)
+        }
+
+        let mergedTitle = mergedField(
+            baseline: baselineTitle,
+            apple: apple.title,
+            skylight: skylight.title,
+            appleIsNewer: apple.modifiedAt >= skylight.modifiedAt,
+            conflictPolicy: conflictPolicy
+        )
+        let mergedCompleted = mergedField(
+            baseline: baselineCompleted,
+            apple: apple.isCompleted,
+            skylight: skylight.isCompleted,
+            appleIsNewer: apple.modifiedAt >= skylight.modifiedAt,
+            conflictPolicy: conflictPolicy
+        )
+
+        let matchesApple = mergedTitle == apple.title && mergedCompleted == apple.isCompleted
+        let matchesSkylight = mergedTitle == skylight.title && mergedCompleted == skylight.isCompleted
+        if matchesApple, matchesSkylight {
+            return nil
+        }
+        if matchesApple {
+            return .updateRemote(appleID: apple.id, remoteID: skylight.id)
+        }
+        if matchesSkylight {
+            return .updateApple(appleID: apple.id, remoteID: skylight.id)
+        }
+        return .merge(
+            appleID: apple.id,
+            remoteID: skylight.id,
+            title: mergedTitle,
+            isCompleted: mergedCompleted
+        )
+    }
+
+    private static func mergedField<Value: Equatable>(
+        baseline: Value,
+        apple: Value,
+        skylight: Value,
+        appleIsNewer: Bool,
+        conflictPolicy: SyncConflictPolicy
+    ) -> Value {
+        let appleChanged = apple != baseline
+        let skylightChanged = skylight != baseline
+        switch (appleChanged, skylightChanged) {
+        case (false, false):
+            return baseline
+        case (true, false):
+            return apple
+        case (false, true):
+            return skylight
+        case (true, true):
+            // Both sides changed this same field: a true conflict.
             switch conflictPolicy {
             case .appleWins:
-                return .updateRemote(appleID: apple.id, remoteID: skylight.id)
+                return apple
             case .skylightWins:
-                return .updateApple(appleID: apple.id, remoteID: skylight.id)
+                return skylight
             case .newestWins:
-                if skylight.modifiedAt > apple.modifiedAt {
-                    return .updateApple(appleID: apple.id, remoteID: skylight.id)
-                }
-                return .updateRemote(appleID: apple.id, remoteID: skylight.id)
+                return appleIsNewer ? apple : skylight
             }
+        }
+    }
+
+    private static func wholeRecordWinner(
+        apple: ReminderSnapshot,
+        skylight: SkylightListItemSnapshot,
+        conflictPolicy: SyncConflictPolicy
+    ) -> ReminderSyncAction {
+        switch conflictPolicy {
+        case .appleWins:
+            return .updateRemote(appleID: apple.id, remoteID: skylight.id)
+        case .skylightWins:
+            return .updateApple(appleID: apple.id, remoteID: skylight.id)
+        case .newestWins:
+            if skylight.modifiedAt > apple.modifiedAt {
+                return .updateApple(appleID: apple.id, remoteID: skylight.id)
+            }
+            return .updateRemote(appleID: apple.id, remoteID: skylight.id)
         }
     }
 }
@@ -206,10 +302,12 @@ private extension ReminderSyncAction {
             "2:\(appleID):\(remoteID)"
         case let .updateApple(appleID, remoteID):
             "3:\(appleID):\(remoteID)"
+        case let .merge(appleID, remoteID, _, _):
+            "4:\(appleID):\(remoteID)"
         case let .deleteRemote(remoteID):
-            "4:\(remoteID)"
+            "5:\(remoteID)"
         case let .deleteApple(appleID):
-            "5:\(appleID)"
+            "6:\(appleID)"
         }
     }
 }

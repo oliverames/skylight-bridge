@@ -457,6 +457,66 @@ actor SyncCoordinator {
         return summary
     }
 
+    /// Removes every bridge-managed Skylight photo for a mapping and forgets its
+    /// records. Apple Photos is never touched, so this is the only place the
+    /// bridge's copies live. Best-effort per item: an already-deleted remote
+    /// photo does not abort the rest of the cleanup.
+    func purgePhotoMapping(mappingID: UUID, frameID: String) async throws -> Int {
+        var state = try await stateStore.loadSyncState()
+        let records = state.photos
+            .filter { $0.mappingID == mappingID && $0.frameID == frameID }
+            .sorted { $0.appleAssetID < $1.appleAssetID }
+        var removed = 0
+        for record in records {
+            if !record.skylightAlbumIDs.isEmpty {
+                try? await api.removeMessages(
+                    frameID: frameID,
+                    albumIDs: record.skylightAlbumIDs.sorted(),
+                    messageIDs: [record.skylightMessageID]
+                )
+            }
+            try? await api.deleteMessage(frameID: frameID, messageID: record.skylightMessageID)
+            state.photos.removeAll { $0.id == record.id }
+            try await stateStore.saveSyncState(state)
+            removed += 1
+        }
+        return removed
+    }
+
+    /// Removes the linked items for a reminder mapping from the chosen side, then
+    /// forgets its records. Because a mapping can be two-way, the caller decides
+    /// whether to clear the Skylight list, Apple Reminders, or neither.
+    func purgeReminderMapping(
+        mappingID: UUID,
+        frameID: String,
+        side: ReminderMappingCleanupSide
+    ) async throws -> Int {
+        var state = try await stateStore.loadSyncState()
+        let records = state.reminders
+            .filter { $0.mappingID == mappingID && $0.frameID == frameID }
+            .sorted { $0.appleReminderID < $1.appleReminderID }
+        var affected = 0
+        for record in records {
+            switch side {
+            case .skylight:
+                try? await api.deleteListItem(
+                    frameID: frameID,
+                    listID: record.skylightListID,
+                    itemID: record.skylightItemID
+                )
+                affected += 1
+            case .appleReminders:
+                try? await reminderSource.syncRemoveReminder(withID: record.appleReminderID)
+                affected += 1
+            case .none:
+                break
+            }
+            state.reminders.removeAll { $0.id == record.id }
+            try await stateStore.saveSyncState(state)
+        }
+        return affected
+    }
+
     private func syncPhotos(
         mappings: [PhotoMapping],
         frameID: String,
@@ -826,7 +886,9 @@ actor SyncCoordinator {
                         contentFingerprint: reminderFingerprint(
                             title: apple.title,
                             isCompleted: apple.isCompleted
-                        )
+                        ),
+                        lastSyncedTitle: apple.title,
+                        lastSyncedCompleted: apple.isCompleted
                     )
                     upsertReminderRecord(adopted, in: &state)
                     activeRecords.removeAll {
@@ -940,6 +1002,34 @@ actor SyncCoordinator {
                             apple: apple,
                             remoteID: remoteID,
                             remoteModifiedAt: remoteSnapshotByID[remoteID]?.modifiedAt ?? now()
+                        ),
+                        in: &state
+                    )
+                    try await checkpoint(state, dryRun: dryRun)
+
+                case let .merge(appleID, remoteID, title, isCompleted):
+                    guard appleByID[appleID] != nil else { continue }
+                    let apple = try await reminderSource.syncUpdateReminder(
+                        withID: appleID,
+                        patch: AppleReminderPatch(title: title, isCompleted: isCompleted)
+                    )
+                    _ = try await api.updateListItem(
+                        frameID: frameID,
+                        listID: destinationID,
+                        itemID: remoteID,
+                        request: SkylightListItemRequest(
+                            label: title,
+                            status: isCompleted ? .completed : .pending
+                        )
+                    )
+                    upsertReminderRecord(
+                        reminderRecord(
+                            mapping: mapping,
+                            frameID: frameID,
+                            listID: destinationID,
+                            apple: apple,
+                            remoteID: remoteID,
+                            remoteModifiedAt: now()
                         ),
                         in: &state
                     )
@@ -1802,7 +1892,9 @@ actor SyncCoordinator {
             contentFingerprint: reminderFingerprint(
                 title: apple.title,
                 isCompleted: apple.isCompleted
-            )
+            ),
+            lastSyncedTitle: apple.title,
+            lastSyncedCompleted: apple.isCompleted
         )
     }
 
@@ -1815,7 +1907,9 @@ actor SyncCoordinator {
             appleID: record.appleReminderID,
             skylightID: record.skylightItemID,
             lastAppleModifiedAt: record.lastAppleModifiedAt,
-            lastSkylightModifiedAt: record.lastSkylightModifiedAt
+            lastSkylightModifiedAt: record.lastSkylightModifiedAt,
+            baselineTitle: record.lastSyncedTitle,
+            baselineCompleted: record.lastSyncedCompleted
         )
     }
 

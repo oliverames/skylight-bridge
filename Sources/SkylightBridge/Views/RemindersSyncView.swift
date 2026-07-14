@@ -36,7 +36,7 @@ struct RemindersSyncView: View {
                             subtitle: selectionDescription(mapping),
                             caption: behaviorDescription(mapping),
                             isEnabled: savingBinding($mapping.enabled) {
-                                store.saveConfiguration()
+                                store.saveConfiguration(triggerSync: true)
                             },
                             onEdit: {
                                 editedMapping = mapping
@@ -77,18 +77,25 @@ struct RemindersSyncView: View {
                 onSave: save
             )
         }
-        .alert(
+        .confirmationDialog(
             "Delete Reminder Mapping?",
             isPresented: Binding(
                 get: { mappingToDelete != nil },
                 set: { if !$0 { mappingToDelete = nil } }
             ),
+            titleVisibility: .visible,
             presenting: mappingToDelete
         ) { mapping in
+            Button("Remove Mapping Only") { delete(mapping, cleanup: .none) }
+            Button("Also Delete Items from Skylight", role: .destructive) {
+                delete(mapping, cleanup: .skylight)
+            }
+            Button("Also Delete Items from Apple Reminders", role: .destructive) {
+                delete(mapping, cleanup: .appleReminders)
+            }
             Button("Cancel", role: .cancel) { mappingToDelete = nil }
-            Button("Delete", role: .destructive) { delete(mapping) }
         } message: { mapping in
-            Text("This removes the “\(mapping.sourceListTitle)” mapping. It does not delete either list.")
+            Text("“\(mapping.sourceListTitle)” is linked to “\(mapping.destinationListTitle)”. Choose whether to also remove the items this mapping synced from one side. Neither list itself is deleted.")
         }
     }
 
@@ -114,14 +121,13 @@ struct RemindersSyncView: View {
         } else {
             store.configuration.reminderMappings.append(mapping)
         }
-        store.saveConfiguration()
+        store.saveConfiguration(triggerSync: true)
         editedMapping = nil
     }
 
-    private func delete(_ mapping: ReminderListMapping) {
-        store.configuration.reminderMappings.removeAll { $0.id == mapping.id }
-        store.saveConfiguration()
+    private func delete(_ mapping: ReminderListMapping, cleanup side: ReminderMappingCleanupSide) {
         mappingToDelete = nil
+        Task { await store.removeReminderMapping(mapping, cleanup: side) }
     }
 
     private func selectionDescription(_ mapping: ReminderListMapping) -> String {
