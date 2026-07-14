@@ -18,7 +18,9 @@ A mapping can use one of three sources:
 2. The built-in Favorites smart album
 3. An explicit set of images chosen with the system photo picker
 
-Each mapping targets one Skylight album. The bridge records the Apple asset identifier, render fingerprint, output hash, Skylight message identifier, and album membership. It never deletes a Skylight photo that it did not create.
+Each mapping targets one Skylight album. The bridge records the Apple asset identifier, render fingerprint, output hash, Skylight message identifier, and album membership. It never deletes a Skylight photo that it did not create. Deleting a photo mapping removes the copies it created from Skylight; because Apple Photos is never modified, the Skylight album is the only place those copies live.
+
+RAW and ProRAW sources are rendered to a displayable image by PhotoKit and then encoded as sRGB JPEG, so nothing RAW is ever uploaded.
 
 Default conversion behavior:
 
@@ -46,7 +48,11 @@ Starting from a Skylight list is the "new Apple list" case: pick the Skylight li
 
 Skylight does not expose equivalents for Apple due dates, notes, URLs, priorities, tags, subtasks, or attachments. Those fields remain in Apple and local metadata. Title and completion state are the portable fields.
 
-The bridge stores local and external Apple identifiers, the Skylight item identifier, content fingerprints, and last-seen modification times. On the first sync into an existing list, unlinked items whose title and completion state match are linked instead of duplicated, in deterministic identifier order.
+The bridge stores local and external Apple identifiers, the Skylight item identifier, content fingerprints, the last-synced title and completion baseline, and last-seen modification times. On the first sync into an existing list, unlinked items whose title and completion state match are linked instead of duplicated, in deterministic identifier order.
+
+Two-way merge is field-aware. A reminder added on only one side is created on the other; neither side's independent additions are lost. When a linked reminder changed on both sides, the title and completion fields merge independently against the baseline: a field only counts as a conflict when both sides changed that same field, and only then does the conflict policy (newest, Apple, or Skylight) decide that one field. Disjoint edits, such as a rename on one side and a completion toggle on the other, are combined rather than resolved by discarding one.
+
+Deleting a reminder mapping asks whether to also remove the items it synced from Skylight, from Apple Reminders, or from neither. Neither list itself is deleted. Cleanup is best-effort per item so an already-removed item does not block the rest.
 
 ### Recipes
 
@@ -88,6 +94,8 @@ The underlying Skylight client still covers discovered calendar, chore, routine,
 - A write requires an enabled mapping.
 - Managed deletion is limited to remote identifiers recorded as bridge-owned, including identifiers adopted by explicit title matching when the user links existing lists.
 - Two-way recipe sync never destroys a note outright; retirement moves it to Recently Deleted.
+- Deleting a mapping cleans up only the items that mapping recorded as bridge-owned, and reminder cleanup is limited to the side the user explicitly chooses.
+- Adding, editing, or enabling a mapping triggers a sync automatically. While Dry Run is on this is a preview, so automatic runs never change data until the user turns Dry Run off.
 - Manual Skylight content outside managed albums and lists is untouched.
 - The activity log records previews, applied changes, and errors by integration.
 - A failed or partial upload is reconciled before retrying a non-idempotent request.
