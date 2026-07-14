@@ -10,166 +10,117 @@ struct NotesSyncView: View {
     }
 
     var body: some View {
-        ScrollView {
-            GlassEffectContainer(spacing: 16) {
-                VStack(alignment: .leading, spacing: 22) {
-                PageHeader(
-                    title: kind.label,
-                    subtitle: subtitle,
-                    systemImage: kind == .recipes ? "book.closed" : "fork.knife"
-                )
-
-                AccessCard(
-                    title: store.notesAccessGranted ? "Notes access granted" : "Allow Notes access",
+        Form {
+            Section {
+                AccessRow(
+                    title: "Notes access",
                     detail: store.notesAccessGranted
                         ? "\(store.notesFolders.count) folders are available."
                         : "macOS will ask permission to read the folders and notes you choose.",
-                    systemImage: "note.text",
-                    isAuthorized: store.notesAccessGranted,
-                    buttonTitle: "Allow Access"
+                    isAuthorized: store.notesAccessGranted
                 ) {
                     Task { await store.requestNotesAccess() }
                 }
-
-                recommendationCard
-
-                HStack {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Notes selection")
-                            .font(.title2.bold())
-                        Text("Choose a folder, then include all notes or an explicit subset.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button {
-                        editedSelection = selection
-                    } label: {
-                        Label(selection.folderID == nil ? "Choose Notes" : "Configure", systemImage: "slider.horizontal.3")
-                    }
-                    .buttonStyle(.glassProminent)
-                }
-
-                selectionCard
-                }
             }
-            .padding(24)
-            .frame(maxWidth: 980, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+
+            Section {
+                if selection.folderID == nil {
+                    EmptyConfigurationRow(
+                        text: "No \(kind.label.lowercased()) folder selected. Choose a Notes folder and decide which notes may synchronize."
+                    )
+                } else {
+                    selectionRow
+                }
+                Button {
+                    editedSelection = selection
+                } label: {
+                    Label(
+                        selection.folderID == nil ? "Choose Notes…" : "Configure…",
+                        systemImage: "slider.horizontal.3"
+                    )
+                }
+            } header: {
+                SectionHeader(
+                    title: "Notes selection",
+                    subtitle: "Choose a folder, then include all notes or an explicit subset."
+                )
+            } footer: {
+                TipFooter(text: "A dedicated \(kind.label) folder with one \(singularName) per note works best. You can still select individual notes from any folder.")
+            }
         }
+        .formStyle(.grouped)
+        .frame(maxWidth: 800)
+        .frame(maxWidth: .infinity)
         .navigationTitle(kind.label)
         .sheet(item: $editedSelection) { value in
-            NavigationStack {
-                NotesSelectionEditor(
-                    selection: value,
-                    folders: store.notesFolders,
-                    initialNotes: value.folderID.flatMap { store.notesByFolderID[$0] } ?? [],
-                    mealCategories: store.skylightMealCategories,
-                    loadNotes: { folderID in
-                        await store.loadNotes(
-                            in: folderID,
-                            area: kind == .recipes ? .recipes : .meals
-                        )
-                    },
-                    notesForFolder: { folderID in store.notesByFolderID[folderID] ?? [] },
-                    onCancel: { editedSelection = nil },
-                    onSave: save
-                )
-            }
-        }
-    }
-
-    private var recommendationCard: some View {
-        GlassCard {
-            HStack(alignment: .top, spacing: 13) {
-                Image(systemName: "lightbulb.max.fill")
-                    .font(.title3)
-                    .foregroundStyle(.yellow)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("A dedicated folder works best")
-                        .font(.headline)
-                    Text("We recommend a \(kind.label) folder in Apple Notes with one \(singularName) per note. You can still select individual notes from any folder.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var selectionCard: some View {
-        if selection.folderID == nil {
-            GlassCard {
-                ContentUnavailableView(
-                    "No \(kind.label) Folder Selected",
-                    systemImage: kind == .recipes ? "folder.badge.plus" : "calendar.badge.plus",
-                    description: Text("Choose a Notes folder and decide which notes may synchronize.")
-                )
-                .frame(minHeight: 210)
-            }
-        } else {
-            GlassCard {
-                HStack(spacing: 15) {
-                    Image(systemName: "folder.fill")
-                        .font(.title2)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 34)
-
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack(spacing: 8) {
-                            Text(selection.folderTitle ?? "Selected Folder")
-                                .font(.headline)
-                            StatusPill(
-                                title: selection.enabled ? "Enabled" : "Paused",
-                                systemImage: selection.enabled ? "checkmark.circle.fill" : "pause.circle",
-                                color: selection.enabled ? .green : .secondary
-                            )
-                        }
-                        Text(selectionDescription)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                        Text(kind == .recipes
-                             ? "Text is parsed into recipe title, ingredients, instructions, timing, tags, and source URL."
-                             : "Dated meal lines are matched to synchronized recipes when possible.")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    }
-
-                    Spacer()
-
-                    Toggle(
-                        "Enabled",
-                        isOn: Binding(
-                            get: { selection.enabled },
-                            set: { enabled in
-                                if kind == .recipes {
-                                    store.configuration.recipeSelection.enabled = enabled
-                                } else {
-                                    store.configuration.mealSelection.enabled = enabled
-                                }
-                                store.saveConfiguration()
-                            }
-                        )
+            NotesSelectionEditor(
+                selection: value,
+                folders: store.notesFolders,
+                initialNotes: value.folderID.flatMap { store.notesByFolderID[$0] } ?? [],
+                mealCategories: store.skylightMealCategories,
+                loadNotes: { folderID in
+                    await store.loadNotes(
+                        in: folderID,
+                        area: kind == .recipes ? .recipes : .meals
                     )
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .accessibilityLabel("Enable \(kind.label) sync")
-
-                    Button("Edit") { editedSelection = selection }
-                        .buttonStyle(.glass)
-                }
-            }
+                },
+                notesForFolder: { folderID in store.notesByFolderID[folderID] ?? [] },
+                onCancel: { editedSelection = nil },
+                onSave: save
+            )
         }
     }
 
-    private var subtitle: String {
-        switch kind {
-        case .recipes:
-            "Synchronize a recipe folder or only the recipe notes you select."
-        case .meals:
-            "Select exactly which meal-plan notes may create Skylight meals."
+    private var selectionRow: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "folder")
+                .foregroundStyle(.secondary)
+                .frame(width: 22)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(selection.folderTitle ?? "Selected Folder")
+                    .fontWeight(.medium)
+                Text(selectionDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(behaviorDescription)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+
+            Spacer(minLength: 12)
+
+            StatusBadge(
+                title: selection.enabled ? "Enabled" : "Paused",
+                tone: selection.enabled ? .positive : .neutral
+            )
+
+            Button("Edit") { editedSelection = selection }
+
+            Toggle(
+                "Enabled",
+                isOn: savingBinding(enabledBinding) { store.saveConfiguration() }
+            )
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .accessibilityLabel("Enable \(kind.label) sync")
         }
+        .padding(.vertical, 4)
+    }
+
+    private var enabledBinding: Binding<Bool> {
+        Binding(
+            get: { selection.enabled },
+            set: { enabled in
+                if kind == .recipes {
+                    store.configuration.recipeSelection.enabled = enabled
+                } else {
+                    store.configuration.mealSelection.enabled = enabled
+                }
+            }
+        )
     }
 
     private var singularName: String {
@@ -180,6 +131,17 @@ struct NotesSyncView: View {
         selection.selectionMode == .everything
             ? "Every note in this folder"
             : "\(selection.selectedNoteIDs.count) selected notes"
+    }
+
+    private var behaviorDescription: String {
+        switch kind {
+        case .recipes:
+            selection.direction == .twoWay
+                ? "Two-way with the Skylight recipe box · Conflicts: \(selection.conflictPolicy.label.lowercased())"
+                : "Apple → Skylight"
+        case .meals:
+            "Apple → Skylight · Dated meal lines match synchronized recipes when possible."
+        }
     }
 
     private func save(_ value: NotesSelection) {
@@ -230,88 +192,124 @@ private struct NotesSelectionEditor: View {
     }
 
     var body: some View {
-        Form {
-            Section("Apple Notes source") {
-                Picker("Folder", selection: folderBinding) {
-                    Text("Choose a folder").tag("")
-                    ForEach(folders) { folder in
-                        Text(folder.name).tag(folder.id)
-                    }
-                }
+        NavigationStack {
+            Form {
+                sourceSection
+                destinationSection
+                behaviorSection
+            }
+            .formStyle(.grouped)
+            .navigationTitle("\(draft.kind.label) Selection")
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                EditorFooter(
+                    confirmTitle: "Save Selection",
+                    canConfirm: canSave,
+                    onCancel: onCancel,
+                    onConfirm: { onSave(draft) }
+                )
+            }
+            .task(id: draft.folderID) {
+                guard let folderID = draft.folderID, !folderID.isEmpty else { return }
+                await loadNotes(folderID)
+                loadedNotes = notesForFolder(folderID)
+            }
+        }
+        .frame(width: 660, height: 640)
+    }
 
-                Picker("Include", selection: $draft.selectionMode) {
-                    Text("Entire folder").tag(SourceSelectionMode.everything)
-                    Text("Selected notes").tag(SourceSelectionMode.selectedItems)
+    private var sourceSection: some View {
+        Section {
+            Picker("Folder", selection: folderBinding) {
+                Text("Choose a folder").tag("")
+                ForEach(folders) { folder in
+                    Text(folder.name).tag(folder.id)
                 }
-                .pickerStyle(.segmented)
+            }
 
-                if draft.selectionMode == .selectedItems {
-                    TextField("Filter notes", text: $filter)
-                    if loadedNotes.isEmpty {
-                        Label("Choose a folder to load its notes.", systemImage: "info.circle")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(filteredNotes) { note in
-                            Toggle(isOn: noteSelectionBinding(note.id)) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(note.title)
-                                    if note.isPasswordProtected {
-                                        Label("Password-protected notes are skipped", systemImage: "lock")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
+            Picker("Include", selection: $draft.selectionMode) {
+                Text("Entire folder").tag(SourceSelectionMode.everything)
+                Text("Selected notes").tag(SourceSelectionMode.selectedItems)
+            }
+            .pickerStyle(.segmented)
+
+            if draft.selectionMode == .selectedItems {
+                TextField("Filter notes", text: $filter)
+                if loadedNotes.isEmpty {
+                    Label("Choose a folder to load its notes.", systemImage: "info.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(filteredNotes) { note in
+                        Toggle(isOn: noteSelectionBinding(note.id)) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(note.title)
+                                if note.isPasswordProtected {
+                                    Label(
+                                        "Password-protected notes are skipped",
+                                        systemImage: "lock"
+                                    )
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                                 }
                             }
-                            .disabled(note.isPasswordProtected)
+                        }
+                        .disabled(note.isPasswordProtected)
+                    }
+                }
+            }
+        } header: {
+            SectionHeader(title: "Apple Notes")
+        }
+    }
+
+    private var destinationSection: some View {
+        Section {
+            Picker("Meal category", selection: categoryBinding) {
+                Text("Automatic").tag("")
+                ForEach(mealCategories) { category in
+                    Text(category.attributes.label ?? "Untitled Category").tag(category.id)
+                }
+            }
+        } header: {
+            SectionHeader(title: "Skylight")
+        } footer: {
+            Text("Automatic uses the first available Skylight meal category.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var behaviorSection: some View {
+        Section {
+            if draft.kind == .recipes {
+                Picker("Direction", selection: $draft.direction) {
+                    Text("Apple → Skylight").tag(NotesSyncDirection.appleToSkylight)
+                    Text("Two-way").tag(NotesSyncDirection.twoWay)
+                }
+
+                if draft.direction == .twoWay {
+                    Picker("Conflicts", selection: $draft.conflictPolicy) {
+                        ForEach(SyncConflictPolicy.allCases, id: \.self) { policy in
+                            Text(policy.label).tag(policy)
                         }
                     }
+                    Label(
+                        "Two-way sync can create notes, rewrite linked notes, and move notes whose recipes were deleted on Skylight to Recently Deleted.",
+                        systemImage: "exclamationmark.triangle"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
                 }
             }
 
-            Section("Skylight destination") {
-                Picker("Meal category", selection: categoryBinding) {
-                    Text("Automatic").tag("")
-                    ForEach(mealCategories) { category in
-                        Text(category.attributes.label ?? "Untitled Category").tag(category.id)
-                    }
-                }
-                Text("Automatic uses the first available Skylight meal category.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Sync") {
-                Toggle("Enable \(draft.kind.label) sync", isOn: $draft.enabled)
-                Text("Only the folder and notes selected above can be read during sync.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-        .navigationTitle("\(draft.kind.label) Selection")
-        .frame(width: 660, height: 620)
-        .safeAreaInset(edge: .bottom) {
-            HStack {
-                Button("Cancel", action: onCancel)
-                    .keyboardShortcut(.cancelAction)
-                Spacer()
-                Button("Save Selection") { onSave(draft) }
-                    .buttonStyle(.glassProminent)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!canSave)
-            }
-            .padding()
-            .glassEffect(
-                .regular,
-                in: .rect(corners: .concentric(minimum: .fixed(16)))
-            )
-            .padding([.horizontal, .bottom])
-        }
-        .task(id: draft.folderID) {
-            guard let folderID = draft.folderID, !folderID.isEmpty else { return }
-            await loadNotes(folderID)
-            loadedNotes = notesForFolder(folderID)
+            Toggle("Enable \(draft.kind.label) sync", isOn: $draft.enabled)
+        } header: {
+            SectionHeader(title: "Sync behavior")
+        } footer: {
+            TipFooter(text: draft.kind == .recipes
+                ? "Notes are parsed into recipe title, ingredients, instructions, timing, tags, and source URL. Recipes pulled from Skylight become notes in the same shape."
+                : "Meal plans always push from Apple Notes to Skylight. Only the folder and notes selected above are read.")
         }
     }
 

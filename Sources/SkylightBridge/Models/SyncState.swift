@@ -34,6 +34,9 @@ struct NoteSyncRecord: Identifiable, Codable, Sendable, Hashable {
     var contentHash: String
     var skylightID: String
     var lastSyncedAt: Date
+    // Two-way recipe fields; absent in state files written by 1.0.
+    var lastAppleModifiedAt: Date?
+    var lastSkylightUpdatedAt: String?
 }
 
 struct SyncState: Codable, Sendable {

@@ -99,4 +99,54 @@ struct ReminderSyncPlannerTests {
         #expect(deletedOnSkylight == [.deleteApple(appleID: apple.id)])
         #expect(deletedOnApple == [.deleteRemote(remoteID: skylight.id)])
     }
+
+    @Test("Adoption pairs unlinked items with equal title and completion state")
+    func adoptionPairsMatchingItems() {
+        let apple = [
+            ReminderSnapshot(
+                id: "a1",
+                title: "Milk",
+                notes: nil,
+                isCompleted: false,
+                modifiedAt: Date(timeIntervalSince1970: 100)
+            ),
+            ReminderSnapshot(
+                id: "a2",
+                title: "Milk",
+                notes: nil,
+                isCompleted: true,
+                modifiedAt: Date(timeIntervalSince1970: 100)
+            ),
+            ReminderSnapshot(
+                id: "a3",
+                title: "Bread",
+                notes: nil,
+                isCompleted: false,
+                modifiedAt: Date(timeIntervalSince1970: 100)
+            )
+        ]
+        let skylight = [
+            SkylightListItemSnapshot(
+                id: "s1",
+                title: " milk ",
+                notes: nil,
+                isCompleted: false,
+                modifiedAt: Date(timeIntervalSince1970: 100)
+            ),
+            SkylightListItemSnapshot(
+                id: "s2",
+                title: "Milk",
+                notes: nil,
+                isCompleted: false,
+                modifiedAt: Date(timeIntervalSince1970: 100)
+            )
+        ]
+
+        let pairs = ReminderSyncPlanner.adoptionPairs(apple: apple, skylight: skylight, links: [])
+
+        // The pending "Milk" items pair up case- and whitespace-insensitively.
+        // The completed Milk and the unmatched Bread stay unpaired, as does the
+        // leftover Skylight duplicate.
+        #expect(pairs == [ReminderAdoptionPair(appleID: "a1", skylightID: "s1")])
+    }
 }

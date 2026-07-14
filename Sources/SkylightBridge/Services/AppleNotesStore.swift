@@ -143,6 +143,77 @@ actor AppleNotesStore {
         )
     }
 
+    /// Creates a note in the folder and returns its identifier. The body is
+    /// Notes-flavored HTML; Notes derives the note title from the first line.
+    func createNote(inFolderID folderID: String, bodyHTML: String) throws -> String {
+        let descriptor = try execute(
+            Self.noteSelectionHandlers
+                + "\n"
+                + """
+                set requestedFolderID to "\(appleScriptLiteral(folderID))"
+                set requestedBody to "\(appleScriptLiteral(bodyHTML))"
+                tell application "Notes"
+                    set targetFolder to my findFolderInAccounts(requestedFolderID)
+                    if targetFolder is missing value then error "Folder not found" number 10001
+                    set newNote to make new note at targetFolder with properties {body:requestedBody}
+                    return {id of newNote as text}
+                end tell
+                """
+        )
+        return try requiredString(in: descriptor, at: 1, field: "created note id")
+    }
+
+    func updateNote(
+        withID noteID: String,
+        inFolderID folderID: String,
+        bodyHTML: String
+    ) throws {
+        _ = try execute(
+            Self.noteSelectionHandlers
+                + "\n"
+                + """
+                set requestedFolderID to "\(appleScriptLiteral(folderID))"
+                set requestedNoteID to "\(appleScriptLiteral(noteID))"
+                set requestedBody to "\(appleScriptLiteral(bodyHTML))"
+                tell application "Notes"
+                    set targetFolder to my findFolderInAccounts(requestedFolderID)
+                    if targetFolder is missing value then error "Folder not found" number 10001
+                    repeat with noteItem in notes of targetFolder
+                        if (id of noteItem as text) is requestedNoteID then
+                            set body of noteItem to requestedBody
+                            return {id of noteItem as text}
+                        end if
+                    end repeat
+                    error "Note not found" number 10002
+                end tell
+                """
+        )
+    }
+
+    /// Moves a note to the Recently Deleted folder. Notes keeps trashed notes
+    /// recoverable for 30 days, so this never destroys content outright.
+    func trashNote(withID noteID: String, inFolderID folderID: String) throws {
+        _ = try execute(
+            Self.noteSelectionHandlers
+                + "\n"
+                + """
+                set requestedFolderID to "\(appleScriptLiteral(folderID))"
+                set requestedNoteID to "\(appleScriptLiteral(noteID))"
+                tell application "Notes"
+                    set targetFolder to my findFolderInAccounts(requestedFolderID)
+                    if targetFolder is missing value then error "Folder not found" number 10001
+                    repeat with noteItem in notes of targetFolder
+                        if (id of noteItem as text) is requestedNoteID then
+                            delete noteItem
+                            return {"trashed"}
+                        end if
+                    end repeat
+                    error "Note not found" number 10002
+                end tell
+                """
+        )
+    }
+
     private func execute(_ source: String) throws -> NSAppleEventDescriptor {
         guard let script = NSAppleScript(source: source) else {
             throw AppleNotesStoreError.scriptCreationFailed

@@ -10,65 +10,72 @@ struct RemindersSyncView: View {
     }
 
     var body: some View {
-        ScrollView {
-            GlassEffectContainer(spacing: 16) {
-                VStack(alignment: .leading, spacing: 22) {
-                PageHeader(
-                    title: "Reminders",
-                    subtitle: "Choose which lists may sync. You can include a whole list or only selected reminders.",
-                    systemImage: "checklist"
-                )
-
-                AccessCard(
-                    title: isAuthorized ? "Reminders access granted" : "Allow Reminders access",
+        Form {
+            Section {
+                AccessRow(
+                    title: "Reminders access",
                     detail: isAuthorized
                         ? remindersAccessDetail
                         : "Skylight Bridge only reads or changes lists you explicitly map.",
-                    systemImage: "checklist",
-                    isAuthorized: isAuthorized,
-                    buttonTitle: "Allow Access"
+                    isAuthorized: isAuthorized
                 ) {
                     Task { await store.requestRemindersAccess() }
                 }
-
-                sectionHeader
-
-                if store.configuration.reminderMappings.isEmpty {
-                    GlassCard {
-                        ContentUnavailableView(
-                            "No Reminder Mappings",
-                            systemImage: "checklist",
-                            description: Text("Only lists added here will ever synchronize.")
-                        )
-                        .frame(minHeight: 210)
-                    }
-                } else {
-                    LazyVStack(spacing: 12) {
-                        ForEach($store.configuration.reminderMappings) { $mapping in
-                            reminderMappingCard(mapping: $mapping)
-                        }
-                    }
-                }
-                }
             }
-            .padding(24)
-            .frame(maxWidth: 980, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+
+            Section {
+                if store.configuration.reminderMappings.isEmpty {
+                    EmptyConfigurationRow(
+                        text: "No list mappings. Only lists added here will ever synchronize."
+                    )
+                } else {
+                    ForEach($store.configuration.reminderMappings) { $mapping in
+                        MappingRow(
+                            systemImage: mapping.destinationKind == .shopping ? "cart" : "checklist",
+                            title: mappingTitle(mapping),
+                            subtitle: selectionDescription(mapping),
+                            caption: behaviorDescription(mapping),
+                            isEnabled: savingBinding($mapping.enabled) {
+                                store.saveConfiguration()
+                            },
+                            onEdit: {
+                                editedMapping = mapping
+                                Task { await store.loadReminders(in: mapping.sourceListID) }
+                            },
+                            onDelete: { mappingToDelete = mapping }
+                        )
+                    }
+                }
+                Button {
+                    editedMapping = ReminderListMapping()
+                } label: {
+                    Label("Add Mapping…", systemImage: "plus")
+                }
+            } header: {
+                SectionHeader(
+                    title: "List mappings",
+                    subtitle: "Link an Apple Reminders list with a Skylight list. Either side can be created new."
+                )
+            } footer: {
+                TipFooter(text: "Two-way mappings adopt matching items on the first sync, so linking two existing lists does not duplicate their contents.")
+            }
         }
+        .formStyle(.grouped)
+        .frame(maxWidth: 800)
+        .frame(maxWidth: .infinity)
         .navigationTitle("Reminders")
         .sheet(item: $editedMapping) { mapping in
-            NavigationStack {
-                ReminderMappingEditor(
-                    mapping: mapping,
-                    reminderLists: store.reminderLists,
-                    reminders: store.remindersByListID[mapping.sourceListID] ?? [],
-                    skylightLists: store.skylightLists,
-                    loadReminders: { listID in await store.loadReminders(in: listID) },
-                    remindersForList: { listID in store.remindersByListID[listID] ?? [] },
-                    onCancel: { editedMapping = nil },
-                    onSave: save
-                )
-            }
+            ReminderMappingEditor(
+                mapping: mapping,
+                reminderLists: store.reminderLists,
+                reminders: store.remindersByListID[mapping.sourceListID] ?? [],
+                skylightLists: store.skylightLists,
+                loadReminders: { listID in await store.loadReminders(in: listID) },
+                remindersForList: { listID in store.remindersByListID[listID] ?? [] },
+                createAppleList: { name in try store.createReminderList(named: name) },
+                onCancel: { editedMapping = nil },
+                onSave: save
+            )
         }
         .alert(
             "Delete Reminder Mapping?",
@@ -92,78 +99,13 @@ struct RemindersSyncView: View {
         return "\(store.reminderLists.count) lists are available. Only mapped lists can synchronize."
     }
 
-    private var sectionHeader: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("List mappings")
-                    .font(.title2.bold())
-                Text("Apple Reminders lists stay separate from Skylight chores and routines.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button {
-                editedMapping = ReminderListMapping()
-            } label: {
-                Label("Add Mapping", systemImage: "plus")
-            }
-            .buttonStyle(.glassProminent)
+    private func mappingTitle(_ mapping: ReminderListMapping) -> String {
+        let arrow = switch mapping.direction {
+        case .appleToSkylight: "→"
+        case .skylightToApple: "←"
+        case .twoWay: "⇄"
         }
-    }
-
-    private func reminderMappingCard(mapping: Binding<ReminderListMapping>) -> some View {
-        let value = mapping.wrappedValue
-        return GlassCard {
-            HStack(spacing: 15) {
-                Image(systemName: value.destinationKind == .shopping ? "cart" : "checklist")
-                    .font(.title2)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 34)
-                    .accessibilityHidden(true)
-
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 8) {
-                        Text("\(value.sourceListTitle) → \(value.destinationListTitle)")
-                            .font(.headline)
-                        StatusPill(
-                            title: value.enabled ? "Enabled" : "Paused",
-                            systemImage: value.enabled ? "checkmark.circle.fill" : "pause.circle",
-                            color: value.enabled ? .green : .secondary
-                        )
-                    }
-                    Text(selectionDescription(value))
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    Text(directionDescription(value.direction))
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-
-                Spacer(minLength: 12)
-
-                Toggle("Enabled", isOn: mapping.enabled)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .onChange(of: mapping.wrappedValue.enabled) { store.saveConfiguration() }
-                    .accessibilityLabel("Enable \(value.sourceListTitle) mapping")
-
-                Button("Edit") {
-                    editedMapping = value
-                    Task { await store.loadReminders(in: value.sourceListID) }
-                }
-                .buttonStyle(.glass)
-
-                Menu {
-                    Button("Delete Mapping", systemImage: "trash", role: .destructive) {
-                        mappingToDelete = value
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
-                }
-                .menuStyle(.borderlessButton)
-                .accessibilityLabel("More options for \(value.sourceListTitle)")
-            }
-        }
+        return "\(mapping.sourceListTitle) \(arrow) \(mapping.destinationListTitle)"
     }
 
     private func save(_ mapping: ReminderListMapping) {
@@ -188,23 +130,36 @@ struct RemindersSyncView: View {
             : "\(mapping.selectedReminderIDs.count) selected reminders"
     }
 
-    private func directionDescription(_ direction: ReminderSyncDirection) -> String {
-        switch direction {
-        case .appleToSkylight: "Apple → Skylight"
-        case .skylightToApple: "Skylight → Apple"
-        case .twoWay: "Two-way sync"
+    private func behaviorDescription(_ mapping: ReminderListMapping) -> String {
+        switch mapping.direction {
+        case .appleToSkylight:
+            "Apple → Skylight"
+        case .skylightToApple:
+            "Skylight → Apple · Conflicts: \(mapping.conflictPolicy.label.lowercased())"
+        case .twoWay:
+            "Two-way · Conflicts: \(mapping.conflictPolicy.label.lowercased())"
         }
     }
 }
 
+private enum AppleListChoice: Hashable {
+    case none
+    case existing(String)
+    case new
+}
+
 private struct ReminderMappingEditor: View {
     @State private var draft: ReminderListMapping
+    @State private var appleChoice: AppleListChoice
+    @State private var newAppleListName = ""
     @State private var loadedReminders: [AppleReminderSnapshot]
     @State private var filter = ""
+    @State private var saveError: String?
     let reminderLists: [AppleReminderListSnapshot]
     let skylightLists: [SkylightResource<SkylightListAttributes>]
     let loadReminders: (String) async -> Void
     let remindersForList: (String) -> [AppleReminderSnapshot]
+    let createAppleList: (String) throws -> AppleReminderListSnapshot
     let onCancel: () -> Void
     let onSave: (ReminderListMapping) -> Void
 
@@ -215,15 +170,20 @@ private struct ReminderMappingEditor: View {
         skylightLists: [SkylightResource<SkylightListAttributes>],
         loadReminders: @escaping (String) async -> Void,
         remindersForList: @escaping (String) -> [AppleReminderSnapshot],
+        createAppleList: @escaping (String) throws -> AppleReminderListSnapshot,
         onCancel: @escaping () -> Void,
         onSave: @escaping (ReminderListMapping) -> Void
     ) {
         _draft = State(initialValue: mapping)
+        _appleChoice = State(
+            initialValue: mapping.sourceListID.isEmpty ? .none : .existing(mapping.sourceListID)
+        )
         _loadedReminders = State(initialValue: reminders)
         self.reminderLists = reminderLists
         self.skylightLists = skylightLists
         self.loadReminders = loadReminders
         self.remindersForList = remindersForList
+        self.createAppleList = createAppleList
         self.onCancel = onCancel
         self.onSave = onSave
     }
@@ -234,15 +194,58 @@ private struct ReminderMappingEditor: View {
     }
 
     var body: some View {
-        Form {
-            Section("Apple Reminders source") {
-                Picker("List", selection: sourceListBinding) {
-                    Text("Choose a list").tag("")
-                    ForEach(reminderLists) { list in
-                        Text("\(list.title) (\(list.sourceTitle))").tag(list.id)
+        NavigationStack {
+            Form {
+                appleSection
+                skylightSection
+                behaviorSection
+                if let saveError {
+                    Section {
+                        Label(saveError, systemImage: "exclamationmark.triangle")
+                            .font(.callout)
+                            .foregroundStyle(.red)
                     }
                 }
+            }
+            .formStyle(.grouped)
+            .navigationTitle("Reminder Mapping")
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                EditorFooter(
+                    confirmTitle: "Save Mapping",
+                    canConfirm: canSave,
+                    onCancel: onCancel,
+                    onConfirm: save
+                )
+            }
+            .task(id: draft.sourceListID) {
+                guard !draft.sourceListID.isEmpty else { return }
+                await loadReminders(draft.sourceListID)
+                loadedReminders = remindersForList(draft.sourceListID)
+            }
+        }
+        .frame(width: 660, height: 640)
+    }
 
+    private var appleSection: some View {
+        Section {
+            Picker("List", selection: appleChoiceBinding) {
+                Text("Choose a list").tag(AppleListChoice.none)
+                ForEach(reminderLists) { list in
+                    Text("\(list.title) (\(list.sourceTitle))")
+                        .tag(AppleListChoice.existing(list.id))
+                }
+                Divider()
+                Text("New Reminders list…").tag(AppleListChoice.new)
+            }
+
+            if appleChoice == .new {
+                TextField("New list name", text: $newAppleListName)
+                Text("The list is created in Apple Reminders when you save this mapping.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if case .existing = appleChoice {
                 Picker("Include", selection: $draft.selectionMode) {
                     Text("Entire list").tag(SourceSelectionMode.everything)
                     Text("Selected reminders").tag(SourceSelectionMode.selectedItems)
@@ -262,82 +265,98 @@ private struct ReminderMappingEditor: View {
                     }
                 }
             }
-
-            Section("Skylight destination") {
-                Picker("List", selection: destinationListBinding) {
-                    Text("Create a new list").tag("")
-                    ForEach(skylightLists) { list in
-                        Text(list.attributes.label ?? "Untitled List").tag(list.id)
-                    }
-                }
-
-                if draft.destinationListID.isEmpty {
-                    TextField("New list name", text: $draft.destinationListTitle)
-                    Picker("List type", selection: $draft.destinationKind) {
-                        Text("To-do").tag(SkylightListKind.toDo)
-                        Text("Shopping").tag(SkylightListKind.shopping)
-                        Text("Other").tag(SkylightListKind.other)
-                    }
-                }
-            }
-
-            Section("Sync behavior") {
-                Picker("Direction", selection: $draft.direction) {
-                    Text("Apple → Skylight").tag(ReminderSyncDirection.appleToSkylight)
-                    Text("Skylight → Apple").tag(ReminderSyncDirection.skylightToApple)
-                    Text("Two-way").tag(ReminderSyncDirection.twoWay)
-                }
-
-                if draft.direction != .appleToSkylight {
-                    Picker("Conflicts", selection: $draft.conflictPolicy) {
-                        Text("Newest change wins").tag(ReminderConflictPolicy.newestWins)
-                        Text("Apple wins").tag(ReminderConflictPolicy.appleWins)
-                        Text("Skylight wins").tag(ReminderConflictPolicy.skylightWins)
-                    }
-                    Label("This direction can change Apple Reminders.", systemImage: "exclamationmark.triangle")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-
-                Toggle("Enable after saving", isOn: $draft.enabled)
-            }
-        }
-        .formStyle(.grouped)
-        .navigationTitle("Reminder Mapping")
-        .frame(width: 660, height: 620)
-        .safeAreaInset(edge: .bottom) {
-            HStack {
-                Button("Cancel", action: onCancel)
-                    .keyboardShortcut(.cancelAction)
-                Spacer()
-                Button("Save Mapping") { onSave(draft) }
-                    .buttonStyle(.glassProminent)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!canSave)
-            }
-            .padding()
-            .glassEffect(
-                .regular,
-                in: .rect(corners: .concentric(minimum: .fixed(16)))
+        } header: {
+            SectionHeader(
+                title: "Apple Reminders",
+                subtitle: "Pick the Apple side of this mapping, or create a fresh list."
             )
-            .padding([.horizontal, .bottom])
-        }
-        .task(id: draft.sourceListID) {
-            guard !draft.sourceListID.isEmpty else { return }
-            await loadReminders(draft.sourceListID)
-            loadedReminders = remindersForList(draft.sourceListID)
         }
     }
 
-    private var sourceListBinding: Binding<String> {
+    private var skylightSection: some View {
+        Section {
+            Picker("List", selection: destinationListBinding) {
+                Text("New Skylight list…").tag("")
+                ForEach(skylightLists) { list in
+                    Text(list.attributes.label ?? "Untitled List").tag(list.id)
+                }
+            }
+
+            if draft.destinationListID.isEmpty {
+                TextField("New list name", text: $draft.destinationListTitle)
+                Picker("List type", selection: $draft.destinationKind) {
+                    Text("To-do").tag(SkylightListKind.toDo)
+                    Text("Shopping").tag(SkylightListKind.shopping)
+                    Text("Other").tag(SkylightListKind.other)
+                }
+                Text("The list is created on Skylight during the first live sync.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            SectionHeader(
+                title: "Skylight",
+                subtitle: "Pick the Skylight side, or let the first sync create it."
+            )
+        }
+    }
+
+    private var behaviorSection: some View {
+        Section {
+            Picker("Direction", selection: $draft.direction) {
+                Text("Apple → Skylight").tag(ReminderSyncDirection.appleToSkylight)
+                Text("Skylight → Apple").tag(ReminderSyncDirection.skylightToApple)
+                Text("Two-way").tag(ReminderSyncDirection.twoWay)
+            }
+
+            if draft.direction != .appleToSkylight {
+                Picker("Conflicts", selection: $draft.conflictPolicy) {
+                    ForEach(SyncConflictPolicy.allCases, id: \.self) { policy in
+                        Text(policy.label).tag(policy)
+                    }
+                }
+                Label("This direction can change Apple Reminders.", systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+
+            Toggle("Enable after saving", isOn: $draft.enabled)
+        } header: {
+            SectionHeader(title: "Sync behavior")
+        } footer: {
+            TipFooter(text: "On the first sync into an existing list, items with the same title and completion state are linked instead of duplicated.")
+        }
+    }
+
+    private var appleChoiceBinding: Binding<AppleListChoice> {
         Binding(
-            get: { draft.sourceListID },
-            set: { listID in
-                draft.sourceListID = listID
-                draft.sourceListTitle = reminderLists.first(where: { $0.id == listID })?.title ?? ""
-                draft.selectedReminderIDs = []
-                if draft.destinationListTitle.isEmpty {
-                    draft.destinationListTitle = draft.sourceListTitle
+            get: { appleChoice },
+            set: { choice in
+                appleChoice = choice
+                switch choice {
+                case .none:
+                    draft.sourceListID = ""
+                    draft.sourceListTitle = ""
+                    draft.selectedReminderIDs = []
+                case let .existing(listID):
+                    draft.sourceListID = listID
+                    draft.sourceListTitle = reminderLists.first(where: { $0.id == listID })?.title ?? ""
+                    draft.selectedReminderIDs = []
+                    if draft.destinationListTitle.isEmpty {
+                        draft.destinationListTitle = draft.sourceListTitle
+                    }
+                case .new:
+                    draft.sourceListID = ""
+                    draft.selectionMode = .everything
+                    draft.selectedReminderIDs = []
+                    if newAppleListName.isEmpty {
+                        newAppleListName = draft.destinationListTitle
+                    }
+                    // Adopting a Skylight list into a fresh Apple list only makes
+                    // sense when items flow back, so default to two-way.
+                    if draft.direction == .appleToSkylight {
+                        draft.direction = .twoWay
+                    }
                 }
             }
         )
@@ -351,6 +370,9 @@ private struct ReminderMappingEditor: View {
                 if let list = skylightLists.first(where: { $0.id == listID }) {
                     draft.destinationListTitle = list.attributes.label ?? ""
                     draft.destinationKind = list.attributes.kind ?? .other
+                    if appleChoice == .new, newAppleListName.trimmed.isEmpty {
+                        newAppleListName = draft.destinationListTitle
+                    }
                 }
             }
         )
@@ -369,9 +391,34 @@ private struct ReminderMappingEditor: View {
         )
     }
 
+    private func save() {
+        saveError = nil
+        var mapping = draft
+        if appleChoice == .new {
+            do {
+                let list = try createAppleList(newAppleListName.trimmed)
+                mapping.sourceListID = list.id
+                mapping.sourceListTitle = list.title
+                mapping.selectionMode = .everything
+                mapping.selectedReminderIDs = []
+            } catch {
+                saveError = error.localizedDescription
+                return
+            }
+        }
+        onSave(mapping)
+    }
+
     private var canSave: Bool {
-        !draft.sourceListID.isEmpty
-            && !draft.destinationListTitle.trimmed.isEmpty
-            && (draft.selectionMode == .everything || !draft.selectedReminderIDs.isEmpty)
+        let appleReady = switch appleChoice {
+        case .none:
+            false
+        case .existing:
+            !draft.sourceListID.isEmpty
+                && (draft.selectionMode == .everything || !draft.selectedReminderIDs.isEmpty)
+        case .new:
+            !newAppleListName.trimmed.isEmpty
+        }
+        return appleReady && !draft.destinationListTitle.trimmed.isEmpty
     }
 }

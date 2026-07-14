@@ -1,12 +1,57 @@
 import Foundation
 
+struct ReminderAdoptionPair: Equatable, Sendable {
+    let appleID: String
+    let skylightID: String
+}
+
 enum ReminderSyncPlanner {
+    /// Pairs unlinked Apple reminders with unlinked Skylight items whose title and
+    /// completion state match, so syncing into an existing list links equal items
+    /// instead of duplicating them. Pairing is deterministic: both sides are
+    /// consumed in identifier order.
+    static func adoptionPairs(
+        apple: [ReminderSnapshot],
+        skylight: [SkylightListItemSnapshot],
+        links: [ReminderSyncLink]
+    ) -> [ReminderAdoptionPair] {
+        let linkedAppleIDs = Set(links.map(\.appleID))
+        let linkedSkylightIDs = Set(links.map(\.skylightID))
+
+        var candidatesByKey: [String: [SkylightListItemSnapshot]] = [:]
+        for item in skylight where !linkedSkylightIDs.contains(item.id) {
+            candidatesByKey[matchKey(title: item.title, isCompleted: item.isCompleted), default: []]
+                .append(item)
+        }
+        for key in candidatesByKey.keys {
+            candidatesByKey[key]?.sort { $0.id < $1.id }
+        }
+
+        var pairs: [ReminderAdoptionPair] = []
+        let unlinkedApple = apple
+            .filter { !linkedAppleIDs.contains($0.id) }
+            .sorted { $0.id < $1.id }
+        for reminder in unlinkedApple {
+            let key = matchKey(title: reminder.title, isCompleted: reminder.isCompleted)
+            guard var candidates = candidatesByKey[key], !candidates.isEmpty else { continue }
+            pairs.append(
+                ReminderAdoptionPair(appleID: reminder.id, skylightID: candidates.removeFirst().id)
+            )
+            candidatesByKey[key] = candidates
+        }
+        return pairs
+    }
+
+    private static func matchKey(title: String, isCompleted: Bool) -> String {
+        "\(title.trimmed.lowercased())\u{0}\(isCompleted)"
+    }
+
     static func plan(
         apple: [ReminderSnapshot],
         skylight: [SkylightListItemSnapshot],
         links: [ReminderSyncLink],
         direction: ReminderSyncDirection,
-        conflictPolicy: ReminderConflictPolicy
+        conflictPolicy: SyncConflictPolicy
     ) -> [ReminderSyncAction] {
         let appleByID = apple.indexedByID
         let skylightByID = skylight.indexedByID
@@ -41,7 +86,7 @@ enum ReminderSyncPlanner {
         appleByID: [String: ReminderSnapshot],
         skylightByID: [String: SkylightListItemSnapshot],
         direction: ReminderSyncDirection,
-        conflictPolicy: ReminderConflictPolicy
+        conflictPolicy: SyncConflictPolicy
     ) -> [ReminderSyncAction] {
         links.compactMap { link in
             let appleItem = appleByID[link.appleID]
@@ -79,7 +124,7 @@ enum ReminderSyncPlanner {
         skylight: SkylightListItemSnapshot,
         link: ReminderSyncLink,
         direction: ReminderSyncDirection,
-        conflictPolicy: ReminderConflictPolicy
+        conflictPolicy: SyncConflictPolicy
     ) -> ReminderSyncAction? {
         let appleChanged = apple.modifiedAt > link.lastAppleModifiedAt
         let skylightChanged = skylight.modifiedAt > link.lastSkylightModifiedAt
@@ -109,7 +154,7 @@ enum ReminderSyncPlanner {
         skylight: SkylightListItemSnapshot,
         appleChanged: Bool,
         skylightChanged: Bool,
-        conflictPolicy: ReminderConflictPolicy
+        conflictPolicy: SyncConflictPolicy
     ) -> ReminderSyncAction? {
         switch (appleChanged, skylightChanged) {
         case (false, false):

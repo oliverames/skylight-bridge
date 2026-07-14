@@ -5,51 +5,34 @@ struct ActivityView: View {
     @State private var isConfirmingClear = false
 
     var body: some View {
-        ScrollView {
-            GlassEffectContainer(spacing: 10) {
-                VStack(alignment: .leading, spacing: 22) {
-                PageHeader(
-                    title: "Activity",
-                    subtitle: "Review sync previews, applied changes, conversions, conflicts, and errors.",
-                    systemImage: "clock.arrow.circlepath"
-                )
-
+        Form {
+            Section {
                 if store.activity.isEmpty {
-                    GlassCard {
-                        ContentUnavailableView(
-                            "No Activity Yet",
-                            systemImage: "clock.arrow.circlepath",
-                            description: Text("Preview and live sync results appear here.")
-                        )
-                        .frame(minHeight: 260)
-                    }
+                    EmptyConfigurationRow(text: "No activity yet. Preview and live sync results appear here.")
                 } else {
-                    HStack {
-                        Text("Recent activity")
-                            .font(.title2.bold())
-                        Spacer()
-                        StatusPill(
-                            title: activityCountDescription,
-                            systemImage: "list.bullet"
-                        )
-                        Button("Clear", systemImage: "trash") {
-                            isConfirmingClear = true
-                        }
-                        .buttonStyle(.glass)
-                    }
-
-                    LazyVStack(spacing: 10) {
-                        ForEach(store.activity) { entry in
-                            ActivityEntryCard(entry: entry)
-                        }
+                    ForEach(store.activity) { entry in
+                        ActivityRow(entry: entry)
                     }
                 }
+            } header: {
+                HStack(alignment: .firstTextBaseline) {
+                    SectionHeader(
+                        title: "Recent activity",
+                        subtitle: "Sync previews, applied changes, conflicts, and errors."
+                    )
+                    Spacer()
+                    if !store.activity.isEmpty {
+                        StatusBadge(title: activityCountDescription)
+                        Button("Clear…") { isConfirmingClear = true }
+                            .controlSize(.small)
+                    }
                 }
+                .textCase(nil)
             }
-            .padding(24)
-            .frame(maxWidth: 980, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
+        .formStyle(.grouped)
+        .frame(maxWidth: 800)
+        .frame(maxWidth: .infinity)
         .navigationTitle("Activity")
         .confirmationDialog(
             "Clear Activity?",
@@ -70,36 +53,35 @@ struct ActivityView: View {
     }
 }
 
-private struct ActivityEntryCard: View {
+private struct ActivityRow: View {
     let entry: ActivityEntry
 
     var body: some View {
-        GlassCard {
-            HStack(alignment: .top, spacing: 13) {
-                Image(systemName: icon)
-                    .font(.title3)
-                    .foregroundStyle(color)
-                    .frame(width: 26)
-                    .accessibilityHidden(true)
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .foregroundStyle(color)
+                .frame(width: 20)
+                .accessibilityHidden(true)
 
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 8) {
-                        Text(entry.area.rawValue.capitalized)
-                            .font(.headline)
-                        if entry.isDryRun {
-                            StatusPill(title: "Preview", systemImage: "eye")
-                        }
-                        Spacer()
-                        Text(entry.date, style: .relative)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(entry.area.rawValue.capitalized)
+                        .fontWeight(.medium)
+                    if entry.isDryRun {
+                        StatusBadge(title: "Preview")
                     }
-                    Text(entry.message)
-                        .font(.callout)
-                        .textSelection(.enabled)
+                    Spacer()
+                    Text(entry.date, style: .relative)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
+                Text(entry.message)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
             }
         }
+        .padding(.vertical, 3)
         .accessibilityElement(children: .combine)
     }
 

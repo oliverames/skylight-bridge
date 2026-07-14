@@ -46,10 +46,9 @@ struct SettingsView: View {
         Form {
             Section("Skylight") {
                 LabeledContent("Status") {
-                    StatusPill(
-                        title: store.isSkylightConnected ? "Connected" : "Not Connected",
-                        systemImage: store.isSkylightConnected ? "checkmark.circle.fill" : "exclamationmark.circle",
-                        color: store.isSkylightConnected ? .green : .orange
+                    StatusBadge(
+                        title: store.isSkylightConnected ? "Connected" : "Not connected",
+                        tone: store.isSkylightConnected ? .positive : .warning
                     )
                 }
 
@@ -86,7 +85,7 @@ struct SettingsView: View {
                             password = ""
                         }
                     }
-                    .buttonStyle(.glassProminent)
+                    .buttonStyle(.borderedProminent)
                     .disabled(store.isConnecting || email.trimmed.isEmpty || password.isEmpty)
                     .accessibilityIdentifier("settings.connect")
                 }
@@ -142,7 +141,7 @@ struct SettingsView: View {
                 HStack {
                     Spacer()
                     Button("Save Sync Settings") { store.saveConfiguration() }
-                        .buttonStyle(.glassProminent)
+                        .buttonStyle(.borderedProminent)
                         .keyboardShortcut(.defaultAction)
                         .accessibilityIdentifier("settings.saveSync")
                 }
@@ -206,9 +205,7 @@ struct SettingsView: View {
     }
 
     private var versionDescription: String {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
-        return build.map { "\(version) (\($0))" } ?? version
+        AppVersion.description
     }
 
     private func redacted(_ value: String) -> String {

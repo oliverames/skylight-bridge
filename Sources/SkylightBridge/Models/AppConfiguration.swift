@@ -63,7 +63,7 @@ struct ReminderListMapping: Identifiable, Codable, Sendable, Hashable {
     var destinationListTitle = ""
     var destinationKind: SkylightListKind = .toDo
     var direction: ReminderSyncDirection = .appleToSkylight
-    var conflictPolicy: ReminderConflictPolicy = .newestWins
+    var conflictPolicy: SyncConflictPolicy = .newestWins
     var enabled = false
 }
 
@@ -72,6 +72,18 @@ enum NotesContentKind: String, Codable, CaseIterable, Sendable {
     case meals
 
     var label: String { rawValue.capitalized }
+}
+
+enum NotesSyncDirection: String, Codable, CaseIterable, Sendable {
+    case appleToSkylight
+    case twoWay
+
+    var label: String {
+        switch self {
+        case .appleToSkylight: "Apple → Skylight"
+        case .twoWay: "Two-way"
+        }
+    }
 }
 
 struct NotesSelection: Identifiable, Codable, Sendable, Hashable {
@@ -83,10 +95,37 @@ struct NotesSelection: Identifiable, Codable, Sendable, Hashable {
     var selectionMode: SourceSelectionMode = .everything
     var selectedNoteIDs: Set<String> = []
     var destinationCategoryID: String?
+    var direction: NotesSyncDirection = .appleToSkylight
+    var conflictPolicy: SyncConflictPolicy = .newestWins
     var enabled = false
 
     init(kind: NotesContentKind) {
         self.kind = kind
+    }
+
+    // Configurations written by 1.0 have no direction or conflict keys.
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        kind = try container.decode(NotesContentKind.self, forKey: .kind)
+        accountID = try container.decodeIfPresent(String.self, forKey: .accountID)
+        folderID = try container.decodeIfPresent(String.self, forKey: .folderID)
+        folderTitle = try container.decodeIfPresent(String.self, forKey: .folderTitle)
+        selectionMode = try container.decode(SourceSelectionMode.self, forKey: .selectionMode)
+        selectedNoteIDs = try container.decode(Set<String>.self, forKey: .selectedNoteIDs)
+        destinationCategoryID = try container.decodeIfPresent(
+            String.self,
+            forKey: .destinationCategoryID
+        )
+        direction = try container.decodeIfPresent(
+            NotesSyncDirection.self,
+            forKey: .direction
+        ) ?? .appleToSkylight
+        conflictPolicy = try container.decodeIfPresent(
+            SyncConflictPolicy.self,
+            forKey: .conflictPolicy
+        ) ?? .newestWins
+        enabled = try container.decode(Bool.self, forKey: .enabled)
     }
 }
 

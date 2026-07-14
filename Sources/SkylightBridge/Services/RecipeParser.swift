@@ -55,13 +55,6 @@ enum RecipeParser {
             }
         }
 
-        guard !builder.ingredients.isEmpty else {
-            throw RecipeParserError.missingIngredients
-        }
-        guard !builder.instructions.isEmpty else {
-            throw RecipeParserError.missingInstructions
-        }
-
         return builder.recipe
     }
 }

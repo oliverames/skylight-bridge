@@ -136,6 +136,19 @@ final class AppStore {
         }
     }
 
+    func createReminderList(named title: String) throws -> AppleReminderListSnapshot {
+        let list = try remindersStore.createList(named: title)
+        if let lists = try? remindersStore.lists() {
+            reminderLists = lists
+        }
+        appendActivity(.init(
+            level: .success,
+            area: .reminders,
+            message: "Created the Apple Reminders list “\(list.title)”."
+        ))
+        return list
+    }
+
     func requestNotesAccess() async {
         do {
             notesFolders = try await notesStore.folders()

@@ -30,4 +30,14 @@ struct RecipeParserTests {
         #expect(recipe.ingredients == ["2 chicken breasts", "1 cup breadcrumbs", "Tomato sauce"])
         #expect(recipe.instructions == ["Prepare the chicken.", "Bake until cooked."])
     }
+
+    @Test("A title and description alone form a valid recipe draft")
+    func parsesDescriptionOnlyNote() throws {
+        let recipe = try RecipeParser.parse("Grandma's Soup\nA cozy classic.")
+
+        #expect(recipe.title == "Grandma's Soup")
+        #expect(recipe.description == "A cozy classic.")
+        #expect(recipe.ingredients.isEmpty)
+        #expect(recipe.instructions.isEmpty)
+    }
 }

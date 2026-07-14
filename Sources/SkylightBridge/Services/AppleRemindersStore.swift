@@ -8,6 +8,7 @@ enum AppleRemindersStoreError: Error, LocalizedError, Sendable {
     case readOnlyList(String)
     case invalidTitle
     case invalidPriority(Int)
+    case noWritableSource
     case eventKit(String)
 
     var errorDescription: String? {
@@ -24,6 +25,8 @@ enum AppleRemindersStoreError: Error, LocalizedError, Sendable {
             "A reminder title cannot be empty."
         case let .invalidPriority(priority):
             "Reminder priority \(priority) is outside the supported range of 0 through 9."
+        case .noWritableSource:
+            "No Reminders account accepts new lists on this Mac."
         case let .eventKit(message):
             "EventKit operation failed: \(message)"
         }
@@ -82,6 +85,44 @@ final class AppleRemindersStore {
                 )
             }
             .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+
+    @discardableResult
+    func createList(named title: String) throws -> AppleReminderListSnapshot {
+        try requireFullAccess()
+        let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            throw AppleRemindersStoreError.invalidTitle
+        }
+        guard let source = preferredListSource() else {
+            throw AppleRemindersStoreError.noWritableSource
+        }
+
+        let calendar = EKCalendar(for: .reminder, eventStore: eventStore)
+        calendar.title = name
+        calendar.source = source
+
+        do {
+            try eventStore.saveCalendar(calendar, commit: true)
+        } catch {
+            throw AppleRemindersStoreError.eventKit(error.localizedDescription)
+        }
+        return AppleReminderListSnapshot(
+            id: calendar.calendarIdentifier,
+            title: calendar.title,
+            sourceID: source.sourceIdentifier,
+            sourceTitle: source.title,
+            allowsContentModifications: calendar.allowsContentModifications
+        )
+    }
+
+    private func preferredListSource() -> EKSource? {
+        if let source = eventStore.defaultCalendarForNewReminders()?.source {
+            return source
+        }
+        let sources = eventStore.sources
+        return sources.first { $0.sourceType == .calDAV }
+            ?? sources.first { $0.sourceType == .local }
     }
 
     func reminders(in listID: String) async throws -> [AppleReminderSnapshot] {

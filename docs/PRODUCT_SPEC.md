@@ -4,7 +4,7 @@
 
 Skylight Bridge lets a person choose a narrow set of Apple content and mirror it to Skylight without turning every Apple list, note, or photo into household content.
 
-Apple remains the source of truth for Photos and Notes. Reminders can be one-way or two-way because completion naturally happens on either device.
+Apple remains the source of truth for Photos and meal-plan notes. Reminders and Recipes can be one-way or two-way because their content naturally changes on either device.
 
 ## Selection model
 
@@ -34,24 +34,35 @@ Default conversion behavior:
 
 ### Reminders
 
-A mapping starts with one selected Apple Reminders list. The user then chooses:
+A mapping links one Apple Reminders list with one Skylight list. Either side can be an existing list or a new one:
 
-- every reminder in that list, or selected reminders only
+- an existing Apple Reminders list, or a fresh list the bridge creates in Apple Reminders when the mapping is saved
+- an existing Skylight list, or a new destination list created during the first live sync
+- every reminder in the Apple list, or selected reminders only
 - Apple to Skylight, Skylight to Apple, or two-way sync
 - newest change, Apple, or Skylight as the conflict policy
-- an existing Skylight list or a new destination list
+
+Starting from a Skylight list is the "new Apple list" case: pick the Skylight list, create the Apple side fresh, and the first two-way sync populates it.
 
 Skylight does not expose equivalents for Apple due dates, notes, URLs, priorities, tags, subtasks, or attachments. Those fields remain in Apple and local metadata. Title and completion state are the portable fields.
 
-The bridge stores local and external Apple identifiers, the Skylight item identifier, content fingerprints, and last-seen modification times. Exact title and completion matches are linked during the first two-way sync to prevent avoidable duplicates.
+The bridge stores local and external Apple identifiers, the Skylight item identifier, content fingerprints, and last-seen modification times. On the first sync into an existing list, unlinked items whose title and completion state match are linked instead of duplicated, in deterministic identifier order.
 
 ### Recipes
 
 The user chooses an Apple Notes folder, then selects every note or individual recipe notes.
 
-The interface recommends a dedicated Recipes folder with one recipe per note. Structured notes can provide title, description, servings, prep time, cook time, ingredients, instructions, tags, and source URL. Password-protected notes are skipped. Embedded attachments remain in Apple Notes because the discovered private recipe API does not expose a stable image-write contract.
+The interface recommends a dedicated Recipes folder with one recipe per note. Structured notes can provide title, description, servings, prep time, cook time, ingredients, instructions, tags, and source URL. A note needs only a title; ingredients and instructions are optional so recipes created in the Skylight app survive the round trip. Password-protected notes are skipped. Embedded attachments remain in Apple Notes because the discovered private recipe API does not expose a stable image-write contract.
 
-The safe Skylight representation uses the recipe summary and freeform description. Structured ingredient fields are provisional because their private API behavior is less stable.
+Recipe sync is push-only by default. Two-way sync adds, with a per-selection conflict policy:
+
+- new Skylight recipes become notes in the mapped folder, when the selection covers the entire folder
+- Skylight edits rewrite the linked note when the note has not changed since the last sync
+- edits on both sides resolve by newest change, Apple, or Skylight preference
+- a recipe deleted on Skylight moves its linked note to Recently Deleted, which macOS keeps recoverable for 30 days
+- on the first two-way sync, unlinked notes and recipes with the same title are linked instead of duplicated
+
+The bridge writes notes in the same grammar its parser reads, so a pulled recipe produces no push on the following cycle. The safe Skylight representation uses the recipe summary and freeform description. Structured ingredient fields are provisional because their private API behavior is less stable.
 
 ### Meals
 
@@ -73,7 +84,8 @@ The underlying Skylight client still covers discovered calendar, chore, routine,
 
 - Dry Run is enabled by default.
 - A write requires an enabled mapping.
-- Managed deletion is limited to remote identifiers recorded as bridge-owned.
+- Managed deletion is limited to remote identifiers recorded as bridge-owned, including identifiers adopted by explicit title matching when the user links existing lists.
+- Two-way recipe sync never destroys a note outright; retirement moves it to Recently Deleted.
 - Manual Skylight content outside managed albums and lists is untouched.
 - The activity log records previews, applied changes, and errors by integration.
 - A failed or partial upload is reconciled before retrying a non-idempotent request.
@@ -83,7 +95,7 @@ The underlying Skylight client still covers discovered calendar, chore, routine,
 ## macOS architecture
 
 - macOS 26 deployment floor, with macOS 27 verification
-- native SwiftUI Liquid Glass materials and system navigation components
+- standard grouped-settings forms for all content areas, with Liquid Glass only in system chrome
 - SwiftUI `WindowGroup` for the main workspace
 - `MenuBarExtra` for quick sync and status
 - dedicated Settings scene

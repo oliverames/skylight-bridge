@@ -1,4 +1,5 @@
 import CoreGraphics
+import CryptoKit
 import Foundation
 import Testing
 @testable import SkylightBridge
@@ -95,17 +96,310 @@ struct SyncCoordinatorTests {
         #expect(await state.saveCount > 0)
     }
 
+    @Test("Syncing into an existing Skylight list adopts matching items instead of duplicating them")
+    func adoptionLinksMatchingReminderItems() async throws {
+        let api = CoordinatorAPIStub()
+        await api.configureLists(
+            [SkylightResource(
+                id: "remote-list",
+                attributes: SkylightListAttributes(
+                    label: "Groceries",
+                    color: nil,
+                    kind: .shopping,
+                    hideOnDevice: nil
+                )
+            )],
+            items: [SkylightResource(
+                id: "remote-milk",
+                attributes: SkylightListItemAttributes(
+                    label: "Milk",
+                    status: .pending,
+                    section: nil,
+                    position: nil
+                )
+            )]
+        )
+        let state = CoordinatorStateStore()
+        let reminders = [
+            reminder(id: "apple-bread", title: "Bread"),
+            reminder(id: "apple-milk", title: "Milk")
+        ]
+        let coordinator = makeCoordinator(api: api, reminders: reminders, state: state)
+        var configuration = configuredReminders(dryRun: false)
+        configuration.reminderMappings[0].destinationListID = "remote-list"
+        configuration.reminderMappings[0].direction = .twoWay
+
+        let summary = try await coordinator.sync(configuration: configuration)
+        let calls = await api.snapshot()
+        let persisted = try await state.loadSyncState()
+
+        #expect(summary.reminders.planned == 1)
+        #expect(calls.createdItems == 1)
+        #expect(persisted.reminders.count == 2)
+        let adopted = persisted.reminders.first { $0.appleReminderID == "apple-milk" }
+        #expect(adopted?.skylightItemID == "remote-milk")
+    }
+
+    @Test("Two-way recipes pull a new Skylight recipe into the notes folder")
+    func recipePullCreatesNote() async throws {
+        let api = CoordinatorAPIStub()
+        await api.configureRecipes([
+            remoteRecipe(
+                id: "recipe-1",
+                title: "Tacos",
+                description: "Family favorite",
+                ingredients: ["Shells"],
+                updatedAt: "rev-1"
+            )
+        ])
+        let notesSource = CoordinatorNotesSource()
+        let state = CoordinatorStateStore()
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            state: state,
+            notesSource: notesSource
+        )
+
+        let summary = try await coordinator.sync(configuration: configuredRecipes())
+        let created = await notesSource.createdBodies
+        let persisted = try await state.loadSyncState()
+
+        #expect(summary.recipes.planned == 1)
+        #expect(summary.recipes.applied == 1)
+        #expect(created.count == 1)
+        #expect(created[0].contains("Tacos"))
+        #expect(persisted.notes.count == 1)
+        #expect(persisted.notes[0].skylightID == "recipe-1")
+        #expect(persisted.notes[0].lastSkylightUpdatedAt == "rev-1")
+    }
+
+    @Test("A Skylight recipe edit rewrites the unchanged linked note")
+    func recipeRemoteEditRewritesNote() async throws {
+        let plaintext = "Tacos\n\nIngredients\n- Shells\n\nInstructions\n1. Fill"
+        let note = recipeNote(id: "note-1", plaintext: plaintext)
+        var initial = SyncState()
+        initial.notes = [recipeSyncRecord(
+            noteID: "note-1",
+            contentHash: sha(plaintext),
+            skylightID: "recipe-1",
+            remoteRevision: "rev-1"
+        )]
+        let api = CoordinatorAPIStub()
+        await api.configureRecipes([
+            remoteRecipe(
+                id: "recipe-1",
+                title: "Tacos",
+                description: "Ingredients\n- Shells\n- Cheese\n\nInstructions\n1. Fill",
+                ingredients: ["Shells", "Cheese"],
+                updatedAt: "rev-2"
+            )
+        ])
+        await api.configureMealCategories(mealCategories)
+        let notesSource = CoordinatorNotesSource(notes: [note])
+        let state = CoordinatorStateStore(state: initial)
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            state: state,
+            notesSource: notesSource
+        )
+
+        let summary = try await coordinator.sync(configuration: configuredRecipes())
+        let updated = await notesSource.updatedBodiesByNoteID
+        let calls = await api.snapshot()
+        let persisted = try await state.loadSyncState()
+
+        #expect(summary.recipes.applied == 1)
+        #expect(updated["note-1"]?.contains("Cheese") == true)
+        #expect(calls.updatedRecipes == 0)
+        #expect(persisted.notes[0].lastSkylightUpdatedAt == "rev-2")
+    }
+
+    @Test("Conflicting recipe edits follow the Apple-wins policy")
+    func recipeConflictAppleWins() async throws {
+        let plaintext = "Tacos\n\nIngredients\n- Shells\n\nInstructions\n1. Fill"
+        let note = recipeNote(id: "note-1", plaintext: plaintext)
+        var initial = SyncState()
+        initial.notes = [recipeSyncRecord(
+            noteID: "note-1",
+            contentHash: "stale-apple-hash",
+            skylightID: "recipe-1",
+            remoteRevision: "rev-1"
+        )]
+        let api = CoordinatorAPIStub()
+        await api.configureRecipes([
+            remoteRecipe(
+                id: "recipe-1",
+                title: "Tacos",
+                description: "Remote edit",
+                updatedAt: "rev-2"
+            )
+        ])
+        await api.configureMealCategories(mealCategories)
+        let notesSource = CoordinatorNotesSource(notes: [note])
+        let state = CoordinatorStateStore(state: initial)
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            state: state,
+            notesSource: notesSource
+        )
+        var configuration = configuredRecipes()
+        configuration.recipeSelection.conflictPolicy = .appleWins
+
+        let summary = try await coordinator.sync(configuration: configuration)
+        let updatedNotes = await notesSource.updatedBodiesByNoteID
+        let calls = await api.snapshot()
+        let updatedIDs = await api.updatedRecipeIDs
+        let persisted = try await state.loadSyncState()
+
+        #expect(summary.recipes.applied == 1)
+        #expect(calls.updatedRecipes == 1)
+        #expect(updatedIDs == ["recipe-1"])
+        #expect(updatedNotes.isEmpty)
+        #expect(persisted.notes[0].contentHash == sha(plaintext))
+        #expect(persisted.notes[0].lastSkylightUpdatedAt == "rev-update-1")
+    }
+
+    @Test("Conflicting recipe edits follow the Skylight-wins policy")
+    func recipeConflictSkylightWins() async throws {
+        let plaintext = "Tacos\n\nIngredients\n- Shells\n\nInstructions\n1. Fill"
+        let note = recipeNote(id: "note-1", plaintext: plaintext)
+        var initial = SyncState()
+        initial.notes = [recipeSyncRecord(
+            noteID: "note-1",
+            contentHash: "stale-apple-hash",
+            skylightID: "recipe-1",
+            remoteRevision: "rev-1"
+        )]
+        let api = CoordinatorAPIStub()
+        await api.configureRecipes([
+            remoteRecipe(
+                id: "recipe-1",
+                title: "Tacos",
+                description: "Remote edit",
+                updatedAt: "rev-2"
+            )
+        ])
+        await api.configureMealCategories(mealCategories)
+        let notesSource = CoordinatorNotesSource(notes: [note])
+        let state = CoordinatorStateStore(state: initial)
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            state: state,
+            notesSource: notesSource
+        )
+        var configuration = configuredRecipes()
+        configuration.recipeSelection.conflictPolicy = .skylightWins
+
+        let summary = try await coordinator.sync(configuration: configuration)
+        let updatedNotes = await notesSource.updatedBodiesByNoteID
+        let calls = await api.snapshot()
+
+        #expect(summary.recipes.applied == 1)
+        #expect(calls.updatedRecipes == 0)
+        #expect(updatedNotes["note-1"]?.contains("Remote edit") == true)
+    }
+
+    @Test("A recipe deleted on Skylight trashes its linked note")
+    func recipeRemoteDeletionTrashesNote() async throws {
+        let plaintext = "Tacos\n\nIngredients\n- Shells\n\nInstructions\n1. Fill"
+        let note = recipeNote(id: "note-1", plaintext: plaintext)
+        var initial = SyncState()
+        initial.notes = [recipeSyncRecord(
+            noteID: "note-1",
+            contentHash: sha(plaintext),
+            skylightID: "recipe-1",
+            remoteRevision: "rev-1"
+        )]
+        let api = CoordinatorAPIStub()
+        await api.configureMealCategories(mealCategories)
+        let notesSource = CoordinatorNotesSource(notes: [note])
+        let state = CoordinatorStateStore(state: initial)
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            state: state,
+            notesSource: notesSource
+        )
+
+        let summary = try await coordinator.sync(configuration: configuredRecipes())
+        let trashed = await notesSource.trashedNoteIDs
+        let calls = await api.snapshot()
+        let persisted = try await state.loadSyncState()
+
+        #expect(summary.recipes.applied == 1)
+        #expect(trashed == ["note-1"])
+        #expect(calls.deletedRecipes == 0)
+        #expect(persisted.notes.isEmpty)
+    }
+
+    @Test("Linking a folder adopts an identical Skylight recipe without changes")
+    func recipeAdoptionLinksIdenticalContent() async throws {
+        let draft = RecipeDraft(
+            title: "Tacos",
+            description: "Family favorite",
+            servings: "6",
+            ingredients: ["Shells", "Cheese"],
+            instructions: ["Fill the shells."],
+            tags: ["dinner"],
+            sourceURL: "https://example.com/tacos"
+        )
+        let note = recipeNote(id: "note-1", plaintext: RecipeNoteFormatter.plaintext(for: draft))
+        let api = CoordinatorAPIStub()
+        await api.configureRecipes([
+            SkylightResource(
+                id: "recipe-1",
+                attributes: SkylightRecipeAttributes(
+                    summary: draft.title,
+                    description: RecipeNoteFormatter.skylightDescription(for: draft),
+                    ingredients: draft.ingredients,
+                    url: draft.sourceURL,
+                    imageURL: nil,
+                    createdAt: nil,
+                    updatedAt: "rev-1"
+                )
+            )
+        ])
+        await api.configureMealCategories(mealCategories)
+        let notesSource = CoordinatorNotesSource(notes: [note])
+        let state = CoordinatorStateStore()
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            state: state,
+            notesSource: notesSource
+        )
+
+        let summary = try await coordinator.sync(configuration: configuredRecipes())
+        let calls = await api.snapshot()
+        let created = await notesSource.createdBodies
+        let updated = await notesSource.updatedBodiesByNoteID
+        let persisted = try await state.loadSyncState()
+
+        #expect(summary.recipes.planned == 0)
+        #expect(calls.createdRecipes == 0)
+        #expect(calls.updatedRecipes == 0)
+        #expect(created.isEmpty)
+        #expect(updated.isEmpty)
+        #expect(persisted.notes.count == 1)
+        #expect(persisted.notes[0].skylightID == "recipe-1")
+    }
+
     private func makeCoordinator(
         api: CoordinatorAPIStub,
         reminders: [AppleReminderSnapshot],
         photoSource: CoordinatorPhotoSource = CoordinatorPhotoSource(),
         imageConverter: CoordinatorImageConverter = CoordinatorImageConverter(),
-        state: CoordinatorStateStore = CoordinatorStateStore()
+        state: CoordinatorStateStore = CoordinatorStateStore(),
+        notesSource: CoordinatorNotesSource = CoordinatorNotesSource()
     ) -> SyncCoordinator {
         SyncCoordinator(
             photoSource: photoSource,
             reminderSource: CoordinatorReminderSource(reminders: reminders),
-            notesSource: CoordinatorNotesSource(),
+            notesSource: notesSource,
             imageConverter: imageConverter,
             api: api,
             stateStore: state
@@ -127,6 +421,83 @@ struct SyncCoordinatorTests {
             )
         ]
         return configuration
+    }
+
+    private func configuredRecipes(dryRun: Bool = false) -> AppConfiguration {
+        var configuration = AppConfiguration.empty
+        configuration.account.frameID = "frame-1"
+        configuration.dryRun = dryRun
+        configuration.recipeSelection.folderID = "folder-1"
+        configuration.recipeSelection.folderTitle = "Recipes"
+        configuration.recipeSelection.direction = .twoWay
+        configuration.recipeSelection.enabled = true
+        return configuration
+    }
+
+    private var mealCategories: [SkylightResource<SkylightMealCategoryAttributes>] {
+        [SkylightResource(
+            id: "category-1",
+            attributes: SkylightMealCategoryAttributes(label: "Dinner", color: nil)
+        )]
+    }
+
+    private func recipeNote(id: String, plaintext: String) -> AppleNoteSnapshot {
+        AppleNoteSnapshot(
+            id: id,
+            folderID: "folder-1",
+            title: plaintext.components(separatedBy: "\n").first ?? "",
+            bodyHTML: "",
+            plaintext: plaintext,
+            creationDate: Date(timeIntervalSince1970: 100),
+            modificationDate: Date(timeIntervalSince1970: 600),
+            isPasswordProtected: false,
+            isShared: false,
+            attachments: []
+        )
+    }
+
+    private func recipeSyncRecord(
+        noteID: String,
+        contentHash: String,
+        skylightID: String,
+        remoteRevision: String
+    ) -> NoteSyncRecord {
+        NoteSyncRecord(
+            kind: .recipes,
+            frameID: "frame-1",
+            appleNoteID: noteID,
+            contentHash: contentHash,
+            skylightID: skylightID,
+            lastSyncedAt: Date(timeIntervalSince1970: 100),
+            lastAppleModifiedAt: Date(timeIntervalSince1970: 100),
+            lastSkylightUpdatedAt: remoteRevision
+        )
+    }
+
+    private func remoteRecipe(
+        id: String,
+        title: String,
+        description: String?,
+        ingredients: [String] = [],
+        url: String? = nil,
+        updatedAt: String
+    ) -> SkylightResource<SkylightRecipeAttributes> {
+        SkylightResource(
+            id: id,
+            attributes: SkylightRecipeAttributes(
+                summary: title,
+                description: description,
+                ingredients: ingredients,
+                url: url,
+                imageURL: nil,
+                createdAt: nil,
+                updatedAt: updatedAt
+            )
+        )
+    }
+
+    private func sha(_ value: String) -> String {
+        SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
     private func reminder(id: String, title: String) -> AppleReminderSnapshot {
@@ -220,9 +591,91 @@ private final class CoordinatorReminderSource: ReminderSyncSource {
 }
 
 private actor CoordinatorNotesSource: NotesSyncSource {
-    func syncNoteSummaries(inFolderID folderID: String) async throws -> [AppleNoteSummarySnapshot] { [] }
+    private var notes: [AppleNoteSnapshot]
+    private(set) var createdBodies: [String] = []
+    private(set) var updatedBodiesByNoteID: [String: String] = [:]
+    private(set) var trashedNoteIDs: [String] = []
+    private var nextNoteNumber = 1
+
+    init(notes: [AppleNoteSnapshot] = []) {
+        self.notes = notes
+    }
+
+    func syncNoteSummaries(inFolderID folderID: String) async throws -> [AppleNoteSummarySnapshot] {
+        notes
+            .filter { $0.folderID == folderID }
+            .map {
+                AppleNoteSummarySnapshot(
+                    id: $0.id,
+                    folderID: $0.folderID,
+                    title: $0.title,
+                    creationDate: $0.creationDate,
+                    modificationDate: $0.modificationDate,
+                    isPasswordProtected: $0.isPasswordProtected,
+                    isShared: $0.isShared,
+                    attachmentCount: 0
+                )
+            }
+    }
+
     func syncNote(withID noteID: String, inFolderID folderID: String) async throws -> AppleNoteSnapshot {
-        throw CoordinatorStubError.unexpectedCall
+        guard let note = notes.first(where: { $0.id == noteID && $0.folderID == folderID }) else {
+            throw CoordinatorStubError.unexpectedCall
+        }
+        return note
+    }
+
+    func syncCreateNote(inFolderID folderID: String, bodyHTML: String) async throws -> String {
+        let noteID = "note-created-\(nextNoteNumber)"
+        nextNoteNumber += 1
+        createdBodies.append(bodyHTML)
+        notes.append(Self.note(id: noteID, folderID: folderID, bodyHTML: bodyHTML))
+        return noteID
+    }
+
+    func syncUpdateNote(
+        withID noteID: String,
+        inFolderID folderID: String,
+        bodyHTML: String
+    ) async throws {
+        guard let index = notes.firstIndex(where: { $0.id == noteID && $0.folderID == folderID }) else {
+            throw CoordinatorStubError.unexpectedCall
+        }
+        updatedBodiesByNoteID[noteID] = bodyHTML
+        notes[index] = Self.note(id: noteID, folderID: folderID, bodyHTML: bodyHTML)
+    }
+
+    func syncTrashNote(withID noteID: String, inFolderID folderID: String) async throws {
+        trashedNoteIDs.append(noteID)
+        notes.removeAll { $0.id == noteID }
+    }
+
+    private static func note(id: String, folderID: String, bodyHTML: String) -> AppleNoteSnapshot {
+        let plaintext = plaintext(fromBodyHTML: bodyHTML)
+        return AppleNoteSnapshot(
+            id: id,
+            folderID: folderID,
+            title: plaintext.components(separatedBy: "\n").first ?? "",
+            bodyHTML: bodyHTML,
+            plaintext: plaintext,
+            creationDate: Date(timeIntervalSince1970: 500),
+            modificationDate: Date(timeIntervalSince1970: 500),
+            isPasswordProtected: false,
+            isShared: false,
+            attachments: []
+        )
+    }
+
+    private static func plaintext(fromBodyHTML body: String) -> String {
+        body
+            .replacingOccurrences(of: "<div><br></div>", with: "\u{0}")
+            .replacingOccurrences(of: "</div>", with: "\n")
+            .replacingOccurrences(of: "<div>", with: "")
+            .replacingOccurrences(of: "\u{0}", with: "\n")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .trimmingCharacters(in: .newlines)
     }
 }
 
@@ -252,8 +705,12 @@ private actor CoordinatorImageConverter: SyncImageConverting {
 }
 
 private actor CoordinatorStateStore: SyncStatePersisting {
-    private var state = SyncState()
+    private var state: SyncState
     private(set) var saveCount = 0
+
+    init(state: SyncState = SyncState()) {
+        self.state = state
+    }
 
     func loadSyncState() async throws -> SyncState { state }
     func saveSyncState(_ state: SyncState) async throws {
@@ -268,16 +725,44 @@ private struct CoordinatorAPICalls: Equatable, Sendable {
     var createdItems = 0
     var albumCollections = 0
     var createdAlbums = 0
+    var recipeCollections = 0
+    var createdRecipes = 0
+    var updatedRecipes = 0
+    var deletedRecipes = 0
 }
 
 private actor CoordinatorAPIStub: SkylightSyncAPI {
     private var calls = CoordinatorAPICalls()
+    private var lists: [SkylightResource<SkylightListAttributes>] = []
+    private var listItems: [SkylightResource<SkylightListItemAttributes>] = []
+    private var recipes: [SkylightResource<SkylightRecipeAttributes>] = []
+    private var mealCategories: [SkylightResource<SkylightMealCategoryAttributes>] = []
+    private(set) var updatedRecipeIDs: [String] = []
+    private(set) var deletedRecipeIDs: [String] = []
 
     func snapshot() -> CoordinatorAPICalls { calls }
 
+    func configureLists(
+        _ lists: [SkylightResource<SkylightListAttributes>],
+        items: [SkylightResource<SkylightListItemAttributes>]
+    ) {
+        self.lists = lists
+        listItems = items
+    }
+
+    func configureRecipes(_ recipes: [SkylightResource<SkylightRecipeAttributes>]) {
+        self.recipes = recipes
+    }
+
+    func configureMealCategories(
+        _ categories: [SkylightResource<SkylightMealCategoryAttributes>]
+    ) {
+        mealCategories = categories
+    }
+
     func listLists(frameID: String) async throws -> SkylightListCollectionResponse {
         calls.listCollections += 1
-        return SkylightListCollectionResponse(data: [], included: nil)
+        return SkylightListCollectionResponse(data: lists, included: nil)
     }
 
     func createList(
@@ -299,7 +784,7 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
     func listListItems(
         frameID: String,
         listID: String
-    ) async throws -> [SkylightResource<SkylightListItemAttributes>] { [] }
+    ) async throws -> [SkylightResource<SkylightListItemAttributes>] { listItems }
 
     func createListItem(
         frameID: String,
@@ -335,11 +820,52 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
     func deleteMessage(frameID: String, messageID: String) async throws { throw CoordinatorStubError.unexpectedCall }
     func getMessage(frameID: String, messageID: String) async throws -> SkylightResource<SkylightPhotoMessageAttributes> { throw CoordinatorStubError.unexpectedCall }
     func listMessages(frameID: String, page: Int?, syncToken: String?, pageToken: String?) async throws -> SkylightPhotoMessagesResponse { throw CoordinatorStubError.unexpectedCall }
-    func createRecipe(frameID: String, request: SkylightRecipeRequest) async throws -> SkylightResource<SkylightRecipeAttributes> { throw CoordinatorStubError.unexpectedCall }
-    func updateRecipe(frameID: String, recipeID: String, request: SkylightRecipeRequest) async throws -> SkylightResource<SkylightRecipeAttributes> { throw CoordinatorStubError.unexpectedCall }
-    func listRecipes(frameID: String) async throws -> [SkylightResource<SkylightRecipeAttributes>] { [] }
-    func deleteRecipe(frameID: String, recipeID: String, applyToSittings: Bool) async throws { throw CoordinatorStubError.unexpectedCall }
-    func listMealCategories(frameID: String) async throws -> [SkylightResource<SkylightMealCategoryAttributes>] { [] }
+    func createRecipe(frameID: String, request: SkylightRecipeRequest) async throws -> SkylightResource<SkylightRecipeAttributes> {
+        calls.createdRecipes += 1
+        return recipeResource(
+            id: "recipe-created-\(calls.createdRecipes)",
+            request: request,
+            revision: "rev-create-\(calls.createdRecipes)"
+        )
+    }
+    func updateRecipe(frameID: String, recipeID: String, request: SkylightRecipeRequest) async throws -> SkylightResource<SkylightRecipeAttributes> {
+        calls.updatedRecipes += 1
+        updatedRecipeIDs.append(recipeID)
+        return recipeResource(
+            id: recipeID,
+            request: request,
+            revision: "rev-update-\(calls.updatedRecipes)"
+        )
+    }
+    func listRecipes(frameID: String) async throws -> [SkylightResource<SkylightRecipeAttributes>] {
+        calls.recipeCollections += 1
+        return recipes
+    }
+    func deleteRecipe(frameID: String, recipeID: String, applyToSittings: Bool) async throws {
+        calls.deletedRecipes += 1
+        deletedRecipeIDs.append(recipeID)
+        recipes.removeAll { $0.id == recipeID }
+    }
+    func listMealCategories(frameID: String) async throws -> [SkylightResource<SkylightMealCategoryAttributes>] { mealCategories }
+
+    private func recipeResource(
+        id: String,
+        request: SkylightRecipeRequest,
+        revision: String
+    ) -> SkylightResource<SkylightRecipeAttributes> {
+        SkylightResource(
+            id: id,
+            attributes: SkylightRecipeAttributes(
+                summary: request.summary,
+                description: request.description,
+                ingredients: request.ingredients,
+                url: request.url,
+                imageURL: nil,
+                createdAt: nil,
+                updatedAt: revision
+            )
+        )
+    }
     func createMealSitting(frameID: String, request: SkylightMealSittingRequest) async throws -> SkylightResource<SkylightMealSittingAttributes> { throw CoordinatorStubError.unexpectedCall }
     func updateMealInstance(frameID: String, mealID: String, instanceISO: String, request: SkylightMealInstanceUpdateRequest) async throws -> SkylightResource<SkylightMealSittingAttributes> { throw CoordinatorStubError.unexpectedCall }
     func deleteMealInstance(frameID: String, mealID: String, instanceISO: String, applyTo: String?) async throws { throw CoordinatorStubError.unexpectedCall }

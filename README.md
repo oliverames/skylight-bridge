@@ -6,10 +6,10 @@ The app keeps Apple Photos, Reminders, and Notes as the source systems. Nothing 
 
 ## Product scope
 
-- Photos: choose an album, folder, Favorites, or individual photos. The bridge renders the current edited appearance, converts it to sRGB JPEG, strips location metadata by default, uploads it, and manages only its own Skylight copies.
-- Reminders: choose individual Reminders lists, then include the whole list or selected reminders. Each mapping can be one-way or two-way.
-- Recipes: choose an Apple Notes folder, then synchronize every note or selected recipe notes.
-- Meals: choose a separate Notes folder, then synchronize every note or selected meal-plan notes.
+- Photos: choose an album, folder, Favorites, or individual photos. The bridge renders the current edited appearance, converts it to sRGB JPEG, strips location metadata by default, uploads it, and manages only its own Skylight copies. Photos always push one way to Skylight.
+- Reminders: link an Apple Reminders list with a Skylight list. Either side can be an existing list or created new, so a list that already lives on the Skylight can flow into a fresh Apple Reminders list. Each mapping is one-way or two-way with a per-mapping conflict policy, and the first sync into an existing list links items whose title and completion state match instead of duplicating them.
+- Recipes: choose an Apple Notes folder, then synchronize every note or selected recipe notes. Recipe sync can be push-only or two-way; two-way pulls Skylight recipe-box changes back into the folder as notes.
+- Meals: choose a separate Notes folder, then synchronize every note or selected meal-plan notes. Meal plans always push one way because rewriting freeform meal notes from parsed data would risk user text.
 - API coverage: typed clients cover the stable discovered resources, and a generic authenticated path covers live routes whose schemas remain provisional. Calendar, chores, routines, rewards, and Task Box resources do not appear as sync features in the product UI.
 
 There is intentionally no calendar sync interface. Google Calendar already covers that use case. There is also no chores, routines, or Task Box sync interface because Apple Reminders does not provide a faithful equivalent.
@@ -33,7 +33,7 @@ swift test
 
 The run script builds a Developer ID-signed local app bundle at `dist/Skylight Bridge.app` when the signing identity is available, validates the bundle, launches it, and verifies the process. The Codex Run action uses the same script.
 
-The interface uses the native macOS 26 SwiftUI navigation, toolbar, sheet, and Liquid Glass materials. There are no compatibility shims for older systems.
+The interface uses native macOS 26 SwiftUI navigation with standard grouped-settings forms for all content: flat cards, plain bordered controls, and capsule status badges. Liquid Glass appears only in system chrome such as the toolbar and sidebar. There are no compatibility shims for older systems.
 
 ## First run
 

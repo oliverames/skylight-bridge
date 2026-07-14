@@ -29,10 +29,18 @@ enum ReminderSyncDirection: String, Codable, CaseIterable, Equatable, Sendable {
     case twoWay
 }
 
-enum ReminderConflictPolicy: String, Codable, CaseIterable, Equatable, Sendable {
+enum SyncConflictPolicy: String, Codable, CaseIterable, Equatable, Sendable {
     case newestWins
     case appleWins
     case skylightWins
+
+    var label: String {
+        switch self {
+        case .newestWins: "Newest change wins"
+        case .appleWins: "Apple wins"
+        case .skylightWins: "Skylight wins"
+        }
+    }
 }
 
 enum ReminderSyncAction: Equatable, Sendable {

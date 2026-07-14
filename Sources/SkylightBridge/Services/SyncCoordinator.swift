@@ -106,6 +106,13 @@ protocol ReminderSyncSource: Sendable {
 protocol NotesSyncSource: Sendable {
     func syncNoteSummaries(inFolderID folderID: String) async throws -> [AppleNoteSummarySnapshot]
     func syncNote(withID noteID: String, inFolderID folderID: String) async throws -> AppleNoteSnapshot
+    func syncCreateNote(inFolderID folderID: String, bodyHTML: String) async throws -> String
+    func syncUpdateNote(
+        withID noteID: String,
+        inFolderID folderID: String,
+        bodyHTML: String
+    ) async throws
+    func syncTrashNote(withID noteID: String, inFolderID folderID: String) async throws
 }
 
 protocol SyncImageConverting: Sendable {
@@ -258,6 +265,22 @@ extension AppleNotesStore: NotesSyncSource {
 
     func syncNote(withID noteID: String, inFolderID folderID: String) async throws -> AppleNoteSnapshot {
         try note(withID: noteID, inFolderID: folderID)
+    }
+
+    func syncCreateNote(inFolderID folderID: String, bodyHTML: String) async throws -> String {
+        try createNote(inFolderID: folderID, bodyHTML: bodyHTML)
+    }
+
+    func syncUpdateNote(
+        withID noteID: String,
+        inFolderID folderID: String,
+        bodyHTML: String
+    ) async throws {
+        try updateNote(withID: noteID, inFolderID: folderID, bodyHTML: bodyHTML)
+    }
+
+    func syncTrashNote(withID noteID: String, inFolderID folderID: String) async throws {
+        try trashNote(withID: noteID, inFolderID: folderID)
     }
 }
 
@@ -779,14 +802,45 @@ actor SyncCoordinator {
                     modifiedAt: modifiedAt
                 )
             }
-            let links = records.map {
-                ReminderSyncLink(
-                    appleID: $0.appleReminderID,
-                    skylightID: $0.skylightItemID,
-                    lastAppleModifiedAt: $0.lastAppleModifiedAt,
-                    lastSkylightModifiedAt: $0.lastSkylightModifiedAt
+            var activeRecords = records
+            if let destinationID = destination.id {
+                let pairs = ReminderSyncPlanner.adoptionPairs(
+                    apple: appleSnapshots,
+                    skylight: remoteSnapshots,
+                    links: activeRecords.map(Self.link(for:))
                 )
+                let appleForAdoption = selectedApple.firstByID
+                let remoteForAdoption = remoteSnapshots.firstByID
+                for pair in pairs {
+                    guard let apple = appleForAdoption[pair.appleID],
+                          let remote = remoteForAdoption[pair.skylightID] else { continue }
+                    let adopted = ReminderSyncRecord(
+                        mappingID: mapping.id,
+                        frameID: frameID,
+                        skylightListID: destinationID,
+                        appleReminderID: apple.id,
+                        appleExternalID: apple.externalID,
+                        skylightItemID: remote.id,
+                        lastAppleModifiedAt: apple.modificationDate ?? apple.creationDate ?? .distantPast,
+                        lastSkylightModifiedAt: remote.modifiedAt,
+                        contentFingerprint: reminderFingerprint(
+                            title: apple.title,
+                            isCompleted: apple.isCompleted
+                        )
+                    )
+                    upsertReminderRecord(adopted, in: &state)
+                    activeRecords.removeAll {
+                        $0.appleReminderID == adopted.appleReminderID ||
+                            $0.skylightItemID == adopted.skylightItemID
+                    }
+                    activeRecords.append(adopted)
+                }
+                if !pairs.isEmpty {
+                    try await checkpoint(state, dryRun: dryRun)
+                }
             }
+
+            let links = activeRecords.map(Self.link(for:))
             let actions = ReminderSyncPlanner.plan(
                 apple: appleSnapshots,
                 skylight: remoteSnapshots,
@@ -967,6 +1021,12 @@ actor SyncCoordinator {
         return ReminderDestinationResolution(id: created.id, needsCreation: true)
     }
 
+    private struct ParsedRecipeNote {
+        let note: AppleNoteSnapshot
+        let draft: RecipeDraft
+        let contentHash: String
+    }
+
     private func syncRecipes(
         selection: NotesSelection,
         frameID: String,
@@ -974,6 +1034,10 @@ actor SyncCoordinator {
         state: inout SyncState
     ) async throws -> SyncDomainSummary {
         guard selection.enabled else { return SyncDomainSummary() }
+        guard let folderID = selection.folderID else {
+            throw SyncCoordinatorError.missingNotesFolder(selection.kind)
+        }
+        let twoWay = selection.direction == .twoWay
         let notes = try await selectedNotes(for: selection)
         let mealCategoryID = try await resolveMealCategoryID(
             selection: selection,
@@ -982,35 +1046,91 @@ actor SyncCoordinator {
         )
         var summary = SyncDomainSummary()
 
-        for note in notes {
-            let draft = try RecipeParser.parse(note.plaintext)
-            let contentHash = stableHash(note.plaintext)
-            let existing = state.notes.first {
-                $0.kind == .recipes && $0.frameID == frameID && $0.appleNoteID == note.id
+        var parsedNotes: [ParsedRecipeNote] = []
+        for note in notes.sorted(by: { $0.id < $1.id }) {
+            do {
+                parsedNotes.append(ParsedRecipeNote(
+                    note: note,
+                    draft: try RecipeParser.parse(note.plaintext),
+                    contentHash: stableHash(note.plaintext)
+                ))
+            } catch RecipeParserError.emptyNote {
+                // A blank note cannot become a recipe; leave it alone.
             }
-            guard existing?.contentHash != contentHash else { continue }
+        }
 
+        let remoteRecipes = twoWay
+            ? (try await api.listRecipes(frameID: frameID)).sorted(by: { $0.id < $1.id })
+            : []
+        let remoteByID = remoteRecipes.firstByID
+
+        var adoptedNoteIDs: Set<String> = []
+        var adoptedRemoteIDs: Set<String> = []
+        if twoWay {
+            try await adoptRecipes(
+                parsedNotes: parsedNotes,
+                remoteRecipes: remoteRecipes,
+                conflictPolicy: selection.conflictPolicy,
+                frameID: frameID,
+                folderID: folderID,
+                mealCategoryID: mealCategoryID,
+                dryRun: dryRun,
+                adoptedNoteIDs: &adoptedNoteIDs,
+                adoptedRemoteIDs: &adoptedRemoteIDs,
+                summary: &summary,
+                state: &state
+            )
+        }
+
+        var trashedNoteIDs: Set<String> = []
+        try await reconcileLinkedRecipes(
+            parsedNotes: parsedNotes,
+            remoteByID: remoteByID,
+            twoWay: twoWay,
+            conflictPolicy: selection.conflictPolicy,
+            frameID: frameID,
+            folderID: folderID,
+            mealCategoryID: mealCategoryID,
+            dryRun: dryRun,
+            trashedNoteIDs: &trashedNoteIDs,
+            summary: &summary,
+            state: &state
+        )
+
+        var createdNoteIDs: Set<String> = []
+        if twoWay, selection.selectionMode == .everything {
+            try await pullNewRecipes(
+                remoteRecipes: remoteRecipes,
+                adoptedRemoteIDs: adoptedRemoteIDs,
+                frameID: frameID,
+                folderID: folderID,
+                dryRun: dryRun,
+                createdNoteIDs: &createdNoteIDs,
+                summary: &summary,
+                state: &state
+            )
+        }
+
+        for parsed in parsedNotes {
+            guard !adoptedNoteIDs.contains(parsed.note.id),
+                  !trashedNoteIDs.contains(parsed.note.id),
+                  recipeRecord(forNote: parsed.note.id, frameID: frameID, in: state) == nil else {
+                continue
+            }
             summary.planned += 1
             guard !dryRun else { continue }
-            let request = recipeRequest(for: draft, categoryID: mealCategoryID)
-            let remote: SkylightResource<SkylightRecipeAttributes>
-            if let existing {
-                remote = try await api.updateRecipe(
-                    frameID: frameID,
-                    recipeID: existing.skylightID,
-                    request: request
-                )
-            } else {
-                remote = try await api.createRecipe(frameID: frameID, request: request)
-            }
+            let remote = try await api.createRecipe(
+                frameID: frameID,
+                request: recipeRequest(for: parsed.draft, categoryID: mealCategoryID)
+            )
             upsertNoteRecord(
-                NoteSyncRecord(
-                    kind: .recipes,
+                makeRecipeRecord(
+                    noteID: parsed.note.id,
                     frameID: frameID,
-                    appleNoteID: note.id,
-                    contentHash: contentHash,
+                    contentHash: parsed.contentHash,
                     skylightID: remote.id,
-                    lastSyncedAt: now()
+                    noteModifiedAt: parsed.note.modificationDate,
+                    remoteUpdatedAt: remote.attributes.updatedAt
                 ),
                 in: &state
             )
@@ -1019,11 +1139,14 @@ actor SyncCoordinator {
         }
 
         let desiredNoteIDs = Set(try await selectedNoteSummaries(for: selection).map(\.id))
-        let removedRecords = state.notes.filter {
-            $0.kind == .recipes &&
-                $0.frameID == frameID &&
-                !desiredNoteIDs.contains($0.appleNoteID)
-        }
+            .union(createdNoteIDs)
+        let removedRecords = state.notes
+            .filter {
+                $0.kind == .recipes &&
+                    $0.frameID == frameID &&
+                    !desiredNoteIDs.contains($0.appleNoteID)
+            }
+            .sorted { $0.appleNoteID < $1.appleNoteID }
         summary.planned += removedRecords.count
         if !dryRun {
             for record in removedRecords {
@@ -1038,6 +1161,349 @@ actor SyncCoordinator {
             }
         }
         return summary
+    }
+
+    /// Pairs unlinked notes with unlinked Skylight recipes that share a title, so
+    /// linking a folder to an existing recipe box never duplicates content. Pairs
+    /// whose content already matches become silent links; diverging pairs count as
+    /// one planned change resolved by the conflict policy.
+    private func adoptRecipes(
+        parsedNotes: [ParsedRecipeNote],
+        remoteRecipes: [SkylightResource<SkylightRecipeAttributes>],
+        conflictPolicy: SyncConflictPolicy,
+        frameID: String,
+        folderID: String,
+        mealCategoryID: String?,
+        dryRun: Bool,
+        adoptedNoteIDs: inout Set<String>,
+        adoptedRemoteIDs: inout Set<String>,
+        summary: inout SyncDomainSummary,
+        state: inout SyncState
+    ) async throws {
+        let linkedRemoteIDs = Set(
+            state.notes
+                .filter { $0.kind == .recipes && $0.frameID == frameID }
+                .map(\.skylightID)
+        )
+        var candidates = remoteRecipes.filter { !linkedRemoteIDs.contains($0.id) }
+
+        for parsed in parsedNotes
+        where recipeRecord(forNote: parsed.note.id, frameID: frameID, in: state) == nil {
+            let key = parsed.draft.title.trimmed.lowercased()
+            guard let index = candidates.firstIndex(where: {
+                ($0.attributes.summary ?? "").trimmed.lowercased() == key
+            }) else { continue }
+            let remote = candidates.remove(at: index)
+            adoptedNoteIDs.insert(parsed.note.id)
+            adoptedRemoteIDs.insert(remote.id)
+
+            let remoteDraft = RecipeNoteFormatter.draft(from: remote.attributes)
+            if remoteDraft == parsed.draft {
+                upsertNoteRecord(
+                    makeRecipeRecord(
+                        noteID: parsed.note.id,
+                        frameID: frameID,
+                        contentHash: parsed.contentHash,
+                        skylightID: remote.id,
+                        noteModifiedAt: parsed.note.modificationDate,
+                        remoteUpdatedAt: remote.attributes.updatedAt
+                    ),
+                    in: &state
+                )
+                try await checkpoint(state, dryRun: dryRun)
+                continue
+            }
+
+            summary.planned += 1
+            guard !dryRun else { continue }
+            if appleWinsConflict(
+                policy: conflictPolicy,
+                noteModifiedAt: parsed.note.modificationDate,
+                remoteUpdatedAt: remote.attributes.updatedAt
+            ) {
+                try await pushRecipeUpdate(
+                    parsed: parsed,
+                    recipeID: remote.id,
+                    frameID: frameID,
+                    mealCategoryID: mealCategoryID,
+                    state: &state
+                )
+            } else {
+                try await applyRemoteRecipe(
+                    remote,
+                    toNoteID: parsed.note.id,
+                    frameID: frameID,
+                    folderID: folderID,
+                    state: &state
+                )
+            }
+            summary.applied += 1
+        }
+    }
+
+    private func reconcileLinkedRecipes(
+        parsedNotes: [ParsedRecipeNote],
+        remoteByID: [String: SkylightResource<SkylightRecipeAttributes>],
+        twoWay: Bool,
+        conflictPolicy: SyncConflictPolicy,
+        frameID: String,
+        folderID: String,
+        mealCategoryID: String?,
+        dryRun: Bool,
+        trashedNoteIDs: inout Set<String>,
+        summary: inout SyncDomainSummary,
+        state: inout SyncState
+    ) async throws {
+        for parsed in parsedNotes {
+            guard let record = recipeRecord(
+                forNote: parsed.note.id,
+                frameID: frameID,
+                in: state
+            ) else { continue }
+
+            let remote = remoteByID[record.skylightID]
+            if twoWay, remote == nil {
+                // The linked recipe was deleted on Skylight. Retire the note to
+                // Recently Deleted so the deletion flows back to Apple Notes.
+                summary.planned += 1
+                guard !dryRun else { continue }
+                try await notesSource.syncTrashNote(
+                    withID: parsed.note.id,
+                    inFolderID: folderID
+                )
+                trashedNoteIDs.insert(parsed.note.id)
+                state.notes.removeAll { $0.id == record.id }
+                try await checkpoint(state, dryRun: dryRun)
+                summary.applied += 1
+                continue
+            }
+
+            let appleChanged = parsed.contentHash != record.contentHash
+            var remoteChanged = false
+            if twoWay, let remote {
+                if let lastSeen = record.lastSkylightUpdatedAt {
+                    remoteChanged = (remote.attributes.updatedAt ?? "") != lastSeen
+                } else {
+                    // Records written before two-way sync have no remote clock.
+                    // Seed it now instead of treating history as a fresh change.
+                    var seeded = record
+                    seeded.lastSkylightUpdatedAt = remote.attributes.updatedAt ?? ""
+                    seeded.lastAppleModifiedAt = parsed.note.modificationDate
+                    upsertNoteRecord(seeded, in: &state)
+                    try await checkpoint(state, dryRun: dryRun)
+                }
+            }
+
+            switch (appleChanged, remoteChanged, remote) {
+            case (false, false, _):
+                continue
+            case (true, false, _):
+                summary.planned += 1
+                guard !dryRun else { continue }
+                try await pushRecipeUpdate(
+                    parsed: parsed,
+                    recipeID: record.skylightID,
+                    frameID: frameID,
+                    mealCategoryID: mealCategoryID,
+                    state: &state
+                )
+                summary.applied += 1
+            case let (false, true, .some(remote)):
+                summary.planned += 1
+                guard !dryRun else { continue }
+                try await applyRemoteRecipe(
+                    remote,
+                    toNoteID: parsed.note.id,
+                    frameID: frameID,
+                    folderID: folderID,
+                    state: &state
+                )
+                summary.applied += 1
+            case let (true, true, .some(remote)):
+                summary.planned += 1
+                guard !dryRun else { continue }
+                if appleWinsConflict(
+                    policy: conflictPolicy,
+                    noteModifiedAt: parsed.note.modificationDate,
+                    remoteUpdatedAt: remote.attributes.updatedAt
+                ) {
+                    try await pushRecipeUpdate(
+                        parsed: parsed,
+                        recipeID: record.skylightID,
+                        frameID: frameID,
+                        mealCategoryID: mealCategoryID,
+                        state: &state
+                    )
+                } else {
+                    try await applyRemoteRecipe(
+                        remote,
+                        toNoteID: parsed.note.id,
+                        frameID: frameID,
+                        folderID: folderID,
+                        state: &state
+                    )
+                }
+                summary.applied += 1
+            case (_, true, .none):
+                continue
+            }
+        }
+    }
+
+    private func pullNewRecipes(
+        remoteRecipes: [SkylightResource<SkylightRecipeAttributes>],
+        adoptedRemoteIDs: Set<String>,
+        frameID: String,
+        folderID: String,
+        dryRun: Bool,
+        createdNoteIDs: inout Set<String>,
+        summary: inout SyncDomainSummary,
+        state: inout SyncState
+    ) async throws {
+        let linkedRemoteIDs = Set(
+            state.notes
+                .filter { $0.kind == .recipes && $0.frameID == frameID }
+                .map(\.skylightID)
+        )
+        for remote in remoteRecipes
+        where !linkedRemoteIDs.contains(remote.id) && !adoptedRemoteIDs.contains(remote.id) {
+            summary.planned += 1
+            guard !dryRun else { continue }
+            let draft = RecipeNoteFormatter.draft(from: remote.attributes)
+            let noteID = try await notesSource.syncCreateNote(
+                inFolderID: folderID,
+                bodyHTML: RecipeNoteFormatter.bodyHTML(for: draft)
+            )
+            let readback = try await notesSource.syncNote(withID: noteID, inFolderID: folderID)
+            upsertNoteRecord(
+                makeRecipeRecord(
+                    noteID: noteID,
+                    frameID: frameID,
+                    contentHash: stableHash(readback.plaintext),
+                    skylightID: remote.id,
+                    noteModifiedAt: readback.modificationDate,
+                    remoteUpdatedAt: remote.attributes.updatedAt
+                ),
+                in: &state
+            )
+            createdNoteIDs.insert(noteID)
+            try await checkpoint(state, dryRun: dryRun)
+            summary.applied += 1
+        }
+    }
+
+    private func pushRecipeUpdate(
+        parsed: ParsedRecipeNote,
+        recipeID: String,
+        frameID: String,
+        mealCategoryID: String?,
+        state: inout SyncState
+    ) async throws {
+        let remote = try await api.updateRecipe(
+            frameID: frameID,
+            recipeID: recipeID,
+            request: recipeRequest(for: parsed.draft, categoryID: mealCategoryID)
+        )
+        upsertNoteRecord(
+            makeRecipeRecord(
+                noteID: parsed.note.id,
+                frameID: frameID,
+                contentHash: parsed.contentHash,
+                skylightID: remote.id,
+                noteModifiedAt: parsed.note.modificationDate,
+                remoteUpdatedAt: remote.attributes.updatedAt
+            ),
+            in: &state
+        )
+        try await checkpoint(state, dryRun: false)
+    }
+
+    private func applyRemoteRecipe(
+        _ remote: SkylightResource<SkylightRecipeAttributes>,
+        toNoteID noteID: String,
+        frameID: String,
+        folderID: String,
+        state: inout SyncState
+    ) async throws {
+        let draft = RecipeNoteFormatter.draft(from: remote.attributes)
+        try await notesSource.syncUpdateNote(
+            withID: noteID,
+            inFolderID: folderID,
+            bodyHTML: RecipeNoteFormatter.bodyHTML(for: draft)
+        )
+        let readback = try await notesSource.syncNote(withID: noteID, inFolderID: folderID)
+        upsertNoteRecord(
+            makeRecipeRecord(
+                noteID: noteID,
+                frameID: frameID,
+                contentHash: stableHash(readback.plaintext),
+                skylightID: remote.id,
+                noteModifiedAt: readback.modificationDate,
+                remoteUpdatedAt: remote.attributes.updatedAt
+            ),
+            in: &state
+        )
+        try await checkpoint(state, dryRun: false)
+    }
+
+    private func recipeRecord(
+        forNote noteID: String,
+        frameID: String,
+        in state: SyncState
+    ) -> NoteSyncRecord? {
+        state.notes.first {
+            $0.kind == .recipes && $0.frameID == frameID && $0.appleNoteID == noteID
+        }
+    }
+
+    private func makeRecipeRecord(
+        noteID: String,
+        frameID: String,
+        contentHash: String,
+        skylightID: String,
+        noteModifiedAt: Date?,
+        remoteUpdatedAt: String?
+    ) -> NoteSyncRecord {
+        NoteSyncRecord(
+            kind: .recipes,
+            frameID: frameID,
+            appleNoteID: noteID,
+            contentHash: contentHash,
+            skylightID: skylightID,
+            lastSyncedAt: now(),
+            lastAppleModifiedAt: noteModifiedAt,
+            lastSkylightUpdatedAt: remoteUpdatedAt
+        )
+    }
+
+    private func appleWinsConflict(
+        policy: SyncConflictPolicy,
+        noteModifiedAt: Date?,
+        remoteUpdatedAt: String?
+    ) -> Bool {
+        switch policy {
+        case .appleWins:
+            return true
+        case .skylightWins:
+            return false
+        case .newestWins:
+            let apple = noteModifiedAt ?? .distantPast
+            let remote = Self.skylightDate(remoteUpdatedAt) ?? .distantPast
+            // Ties keep Apple as the source of truth.
+            return apple >= remote
+        }
+    }
+
+    private static func skylightDate(_ value: String?) -> Date? {
+        guard let value else { return nil }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: value) {
+            return date
+        }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: value)
     }
 
     private func syncMeals(
@@ -1267,37 +1733,12 @@ actor SyncCoordinator {
         for draft: RecipeDraft,
         categoryID: String?
     ) -> SkylightRecipeRequest {
-        var descriptionSections: [String] = []
-        if let description = draft.description, !description.isEmpty {
-            descriptionSections.append(description)
-        }
-        let details = [
-            draft.servings.map { "Servings: \($0)" },
-            draft.preparationTime.map { "Prep: \($0)" },
-            draft.cookingTime.map { "Cook: \($0)" }
-        ].compactMap { $0 }
-        if !details.isEmpty {
-            descriptionSections.append(details.joined(separator: "\n"))
-        }
-        if !draft.ingredients.isEmpty {
-            descriptionSections.append("Ingredients\n" + draft.ingredients.map { "- \($0)" }.joined(separator: "\n"))
-        }
-        if !draft.instructions.isEmpty {
-            let instructions = draft.instructions.enumerated().map { index, instruction in
-                "\(index + 1). \(instruction)"
-            }
-            descriptionSections.append("Instructions\n" + instructions.joined(separator: "\n"))
-        }
-        if !draft.tags.isEmpty {
-            descriptionSections.append("Tags: " + draft.tags.joined(separator: ", "))
-        }
-
-        return SkylightRecipeRequest(
+        // The description uses the same grammar the note formatter writes and the
+        // parser reads, so pulled recipes round-trip without spurious changes.
+        SkylightRecipeRequest(
             mealCategoryID: categoryID,
             summary: draft.title,
-            description: descriptionSections.isEmpty
-                ? nil
-                : descriptionSections.joined(separator: "\n\n"),
+            description: RecipeNoteFormatter.skylightDescription(for: draft),
             ingredients: draft.ingredients,
             url: draft.sourceURL
         )
@@ -1336,6 +1777,15 @@ actor SyncCoordinator {
 
     private func reminderFingerprint(title: String, isCompleted: Bool) -> String {
         stableHash("\(title)\u{0}\(isCompleted)")
+    }
+
+    private static func link(for record: ReminderSyncRecord) -> ReminderSyncLink {
+        ReminderSyncLink(
+            appleID: record.appleReminderID,
+            skylightID: record.skylightItemID,
+            lastAppleModifiedAt: record.lastAppleModifiedAt,
+            lastSkylightModifiedAt: record.lastSkylightModifiedAt
+        )
     }
 
     private func nonemptyTitle(_ value: String?) -> String {

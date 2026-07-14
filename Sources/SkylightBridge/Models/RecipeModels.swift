@@ -5,8 +5,6 @@ enum RecipeParserError: Error, Equatable, Sendable {
     case fieldTooLong
     case tooManyIngredients
     case tooManyInstructions
-    case missingIngredients
-    case missingInstructions
 }
 
 struct RecipeDraft: Equatable, Sendable {

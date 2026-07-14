@@ -21,7 +21,6 @@ struct ContentView: View {
                                 systemImage: "arrow.triangle.2.circlepath"
                             )
                         }
-                        .buttonStyle(.glassProminent)
                         .disabled(store.isSyncing || !store.configuration.hasEnabledSync)
                         .help(store.configuration.hasEnabledSync
                               ? "Synchronize enabled sources"

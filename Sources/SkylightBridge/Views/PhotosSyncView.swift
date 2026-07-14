@@ -11,62 +11,65 @@ struct PhotosSyncView: View {
     }
 
     var body: some View {
-        ScrollView {
-            GlassEffectContainer(spacing: 16) {
-                VStack(alignment: .leading, spacing: 22) {
-                PageHeader(
-                    title: "Photos",
-                    subtitle: "Mirror an album, Favorites, or hand-picked photos. No other photos are considered.",
-                    systemImage: "photo.on.rectangle.angled"
-                )
-
-                AccessCard(
-                    title: isAuthorized ? "Photos access granted" : "Allow Photos access",
+        Form {
+            Section {
+                AccessRow(
+                    title: "Photos access",
                     detail: isAuthorized
                         ? "\(store.photoCollections.count) albums, folders, and smart albums are available."
                         : "Skylight Bridge needs read access only to the sources you select.",
-                    systemImage: "photo.badge.plus",
-                    isAuthorized: isAuthorized,
-                    buttonTitle: "Allow Access"
+                    isAuthorized: isAuthorized
                 ) {
                     Task { await store.requestPhotosAccess() }
                 }
-
-                sectionHeader
-
-                if store.configuration.photoMappings.isEmpty {
-                    GlassCard {
-                        ContentUnavailableView(
-                            "No Photo Mappings",
-                            systemImage: "photo.badge.plus",
-                            description: Text("Add an album, Favorites, or selected photos to begin.")
-                        )
-                        .frame(minHeight: 210)
-                    }
-                } else {
-                    LazyVStack(spacing: 12) {
-                        ForEach($store.configuration.photoMappings) { $mapping in
-                            photoMappingCard(mapping: $mapping)
-                        }
-                    }
-                }
-                }
             }
-            .padding(24)
-            .frame(maxWidth: 980, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+
+            Section {
+                if store.configuration.photoMappings.isEmpty {
+                    EmptyConfigurationRow(
+                        text: "No photo mappings. Add an album, Favorites, or selected photos to begin."
+                    )
+                } else {
+                    ForEach($store.configuration.photoMappings) { $mapping in
+                        MappingRow(
+                            systemImage: sourceImage(for: mapping.sourceKind),
+                            title: mapping.name,
+                            subtitle: mappingDetail(mapping),
+                            caption: "JPEG, sRGB, up to \(mapping.maximumLongEdge.formatted()) px",
+                            isEnabled: savingBinding($mapping.enabled) {
+                                store.saveConfiguration()
+                            },
+                            onEdit: { editedMapping = mapping },
+                            onDelete: { mappingToDelete = mapping }
+                        )
+                    }
+                }
+                Button {
+                    editedMapping = PhotoMapping()
+                } label: {
+                    Label("Add Mapping…", systemImage: "plus")
+                }
+            } header: {
+                SectionHeader(
+                    title: "Photo mappings",
+                    subtitle: "Each source mirrors to one Skylight album."
+                )
+            } footer: {
+                TipFooter(text: "Photos always push one-way from Apple Photos to Skylight. The bridge never changes your Apple Photos library.")
+            }
         }
+        .formStyle(.grouped)
+        .frame(maxWidth: 800)
+        .frame(maxWidth: .infinity)
         .navigationTitle("Photos")
         .sheet(item: $editedMapping) { mapping in
-            NavigationStack {
-                PhotoMappingEditor(
-                    mapping: mapping,
-                    collections: store.photoCollections,
-                    skylightAlbums: store.skylightAlbums,
-                    onCancel: { editedMapping = nil },
-                    onSave: save
-                )
-            }
+            PhotoMappingEditor(
+                mapping: mapping,
+                collections: store.photoCollections,
+                skylightAlbums: store.skylightAlbums,
+                onCancel: { editedMapping = nil },
+                onSave: save
+            )
         }
         .alert(
             "Delete Photo Mapping?",
@@ -80,77 +83,6 @@ struct PhotosSyncView: View {
             Button("Delete", role: .destructive) { delete(mapping) }
         } message: { mapping in
             Text("This removes the “\(mapping.name)” configuration. It does not delete photos from Apple Photos or Skylight.")
-        }
-    }
-
-    private var sectionHeader: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Photo mappings")
-                    .font(.title2.bold())
-                Text("Each source mirrors to one Skylight album.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button {
-                editedMapping = PhotoMapping()
-            } label: {
-                Label("Add Mapping", systemImage: "plus")
-            }
-            .buttonStyle(.glassProminent)
-        }
-    }
-
-    private func photoMappingCard(mapping: Binding<PhotoMapping>) -> some View {
-        let value = mapping.wrappedValue
-        return GlassCard {
-            HStack(spacing: 15) {
-                Image(systemName: sourceImage(for: value.sourceKind))
-                    .font(.title2)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 34)
-                    .accessibilityHidden(true)
-
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 8) {
-                        Text(value.name)
-                            .font(.headline)
-                        StatusPill(
-                            title: value.enabled ? "Enabled" : "Paused",
-                            systemImage: value.enabled ? "checkmark.circle.fill" : "pause.circle",
-                            color: value.enabled ? .green : .secondary
-                        )
-                    }
-                    Text(mappingDetail(value))
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    Text("JPEG, sRGB, up to \(value.maximumLongEdge.formatted()) px")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-
-                Spacer(minLength: 12)
-
-                Toggle("Enabled", isOn: mapping.enabled)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .onChange(of: mapping.wrappedValue.enabled) { store.saveConfiguration() }
-                    .accessibilityLabel("Enable \(value.name)")
-
-                Button("Edit") { editedMapping = value }
-                    .buttonStyle(.glass)
-
-                Menu {
-                    Button("Delete Mapping", systemImage: "trash", role: .destructive) {
-                        mappingToDelete = value
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
-                }
-                .menuStyle(.borderlessButton)
-                .accessibilityLabel("More options for \(value.name)")
-            }
         }
     }
 
@@ -217,88 +149,86 @@ private struct PhotoMappingEditor: View {
     }
 
     var body: some View {
-        Form {
-            Section("Apple Photos source") {
-                Picker("Source", selection: sourceKindBinding) {
-                    ForEach(PhotoSourceKind.allCases, id: \.self) { kind in
-                        Text(kind.label).tag(kind)
-                    }
-                }
-                .pickerStyle(.segmented)
-
-                sourcePicker
-            }
-
-            Section("Skylight destination") {
-                TextField("Mapping name", text: $draft.name)
-
-                Picker("Album", selection: destinationAlbumBinding) {
-                    Text("Create a new album").tag("")
-                    ForEach(skylightAlbums) { album in
-                        Text(album.attributes.title ?? "Untitled Album").tag(album.id)
-                    }
-                }
-
-                if draft.destinationAlbumID == nil {
-                    TextField("New album name", text: $draft.destinationAlbumTitle)
-                    Text("The album will be created during the first live sync.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Section("Sync behavior") {
-                Picker("When a source photo is removed", selection: $draft.removalPolicy) {
-                    ForEach(ManagedRemovalPolicy.allCases, id: \.self) { policy in
-                        Text(policy.label).tag(policy)
-                    }
-                }
-
-                DisclosureGroup("Image conversion") {
-                    Stepper(
-                        "Maximum long edge: \(draft.maximumLongEdge.formatted()) px",
-                        value: $draft.maximumLongEdge,
-                        in: 1_080...7_680,
-                        step: 240
-                    )
-                    LabeledContent("JPEG quality") {
-                        HStack {
-                            Slider(value: $draft.jpegQuality, in: 0.6...1.0, step: 0.05)
-                                .frame(width: 180)
-                            Text(draft.jpegQuality.formatted(.percent.precision(.fractionLength(0))))
-                                .monospacedDigit()
-                                .frame(width: 40, alignment: .trailing)
+        NavigationStack {
+            Form {
+                Section {
+                    Picker("Source", selection: sourceKindBinding) {
+                        ForEach(PhotoSourceKind.allCases, id: \.self) { kind in
+                            Text(kind.label).tag(kind)
                         }
                     }
-                    Text("The current edited appearance is rendered as an sRGB JPEG. Location and extended metadata are removed.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    .pickerStyle(.segmented)
+
+                    sourcePicker
+                } header: {
+                    SectionHeader(title: "Apple Photos")
+                }
+
+                Section {
+                    TextField("Mapping name", text: $draft.name)
+
+                    Picker("Album", selection: destinationAlbumBinding) {
+                        Text("New Skylight album…").tag("")
+                        ForEach(skylightAlbums) { album in
+                            Text(album.attributes.title ?? "Untitled Album").tag(album.id)
+                        }
+                    }
+
+                    if draft.destinationAlbumID == nil {
+                        TextField("New album name", text: $draft.destinationAlbumTitle)
+                        Text("The album is created during the first live sync.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    SectionHeader(title: "Skylight")
+                }
+
+                Section {
+                    Picker("When a source photo is removed", selection: $draft.removalPolicy) {
+                        ForEach(ManagedRemovalPolicy.allCases, id: \.self) { policy in
+                            Text(policy.label).tag(policy)
+                        }
+                    }
+
+                    DisclosureGroup("Image conversion") {
+                        Stepper(
+                            "Maximum long edge: \(draft.maximumLongEdge.formatted()) px",
+                            value: $draft.maximumLongEdge,
+                            in: 1_080...7_680,
+                            step: 240
+                        )
+                        LabeledContent("JPEG quality") {
+                            HStack {
+                                Slider(value: $draft.jpegQuality, in: 0.6...1.0, step: 0.05)
+                                    .frame(width: 180)
+                                Text(draft.jpegQuality.formatted(.percent.precision(.fractionLength(0))))
+                                    .monospacedDigit()
+                                    .frame(width: 40, alignment: .trailing)
+                            }
+                        }
+                    }
+                } header: {
+                    SectionHeader(title: "Sync behavior")
+                } footer: {
+                    TipFooter(text: "The current edited appearance is rendered as an sRGB JPEG. Location and extended metadata are removed.")
                 }
             }
-        }
-        .formStyle(.grouped)
-        .navigationTitle("Photo Mapping")
-        .frame(width: 640, height: 620)
-        .safeAreaInset(edge: .bottom) {
-            HStack {
-                Button("Cancel", action: onCancel)
-                    .keyboardShortcut(.cancelAction)
-                Spacer()
-                Button("Save Mapping") { onSave(draft) }
-                    .buttonStyle(.glassProminent)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!canSave)
+            .formStyle(.grouped)
+            .navigationTitle("Photo Mapping")
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                EditorFooter(
+                    confirmTitle: "Save Mapping",
+                    canConfirm: canSave,
+                    onCancel: onCancel,
+                    onConfirm: { onSave(draft) }
+                )
             }
-            .padding()
-            .glassEffect(
-                .regular,
-                in: .rect(corners: .concentric(minimum: .fixed(16)))
-            )
-            .padding([.horizontal, .bottom])
+            .onChange(of: pickedPhotos) {
+                draft.selectedAssetIDs = Set(pickedPhotos.compactMap(\.itemIdentifier))
+            }
         }
-        .onChange(of: pickedPhotos) {
-            draft.selectedAssetIDs = Set(pickedPhotos.compactMap(\.itemIdentifier))
-        }
+        .frame(width: 640, height: 640)
     }
 
     @ViewBuilder
