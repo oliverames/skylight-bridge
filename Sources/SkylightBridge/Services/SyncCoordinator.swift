@@ -1025,6 +1025,7 @@ actor SyncCoordinator {
         let note: AppleNoteSnapshot
         let draft: RecipeDraft
         let contentHash: String
+        let hasAttachments: Bool
     }
 
     private func syncRecipes(
@@ -1038,21 +1039,28 @@ actor SyncCoordinator {
             throw SyncCoordinatorError.missingNotesFolder(selection.kind)
         }
         let twoWay = selection.direction == .twoWay
-        let notes = try await selectedNotes(for: selection)
+        let noteSummaries = try await selectedNoteSummaries(for: selection)
+            .filter { !$0.isPasswordProtected }
+            .sorted { $0.id < $1.id }
         let mealCategoryID = try await resolveMealCategoryID(
             selection: selection,
             frameID: frameID,
-            needed: !notes.isEmpty
+            needed: !noteSummaries.isEmpty
         )
         var summary = SyncDomainSummary()
 
         var parsedNotes: [ParsedRecipeNote] = []
-        for note in notes.sorted(by: { $0.id < $1.id }) {
+        for noteSummary in noteSummaries {
+            let note = try await notesSource.syncNote(
+                withID: noteSummary.id,
+                inFolderID: folderID
+            )
             do {
                 parsedNotes.append(ParsedRecipeNote(
                     note: note,
                     draft: try RecipeParser.parse(note.plaintext),
-                    contentHash: stableHash(note.plaintext)
+                    contentHash: stableHash(note.plaintext),
+                    hasAttachments: noteSummary.attachmentCount > 0
                 ))
             } catch RecipeParserError.emptyNote {
                 // A blank note cannot become a recipe; leave it alone.
@@ -1074,6 +1082,7 @@ actor SyncCoordinator {
                 frameID: frameID,
                 folderID: folderID,
                 mealCategoryID: mealCategoryID,
+                formattedNotes: selection.formattedNotes,
                 dryRun: dryRun,
                 adoptedNoteIDs: &adoptedNoteIDs,
                 adoptedRemoteIDs: &adoptedRemoteIDs,
@@ -1091,6 +1100,7 @@ actor SyncCoordinator {
             frameID: frameID,
             folderID: folderID,
             mealCategoryID: mealCategoryID,
+            formattedNotes: selection.formattedNotes,
             dryRun: dryRun,
             trashedNoteIDs: &trashedNoteIDs,
             summary: &summary,
@@ -1104,6 +1114,7 @@ actor SyncCoordinator {
                 adoptedRemoteIDs: adoptedRemoteIDs,
                 frameID: frameID,
                 folderID: folderID,
+                formattedNotes: selection.formattedNotes,
                 dryRun: dryRun,
                 createdNoteIDs: &createdNoteIDs,
                 summary: &summary,
@@ -1174,6 +1185,7 @@ actor SyncCoordinator {
         frameID: String,
         folderID: String,
         mealCategoryID: String?,
+        formattedNotes: Bool,
         dryRun: Bool,
         adoptedNoteIDs: inout Set<String>,
         adoptedRemoteIDs: inout Set<String>,
@@ -1216,7 +1228,9 @@ actor SyncCoordinator {
 
             summary.planned += 1
             guard !dryRun else { continue }
-            if appleWinsConflict(
+            // A note with attachments is never rewritten: updating a note body
+            // through automation can wipe its attachments.
+            if parsed.hasAttachments || appleWinsConflict(
                 policy: conflictPolicy,
                 noteModifiedAt: parsed.note.modificationDate,
                 remoteUpdatedAt: remote.attributes.updatedAt
@@ -1234,6 +1248,7 @@ actor SyncCoordinator {
                     toNoteID: parsed.note.id,
                     frameID: frameID,
                     folderID: folderID,
+                    formattedNotes: formattedNotes,
                     state: &state
                 )
             }
@@ -1249,6 +1264,7 @@ actor SyncCoordinator {
         frameID: String,
         folderID: String,
         mealCategoryID: String?,
+        formattedNotes: Bool,
         dryRun: Bool,
         trashedNoteIDs: inout Set<String>,
         summary: inout SyncDomainSummary,
@@ -1309,6 +1325,17 @@ actor SyncCoordinator {
                 )
                 summary.applied += 1
             case let (false, true, .some(remote)):
+                if parsed.hasAttachments {
+                    // Rewriting a note through automation can wipe attachments,
+                    // so acknowledge the remote revision and keep the note as
+                    // the Apple-authoritative copy.
+                    guard !dryRun else { continue }
+                    var acknowledged = record
+                    acknowledged.lastSkylightUpdatedAt = remote.attributes.updatedAt ?? ""
+                    upsertNoteRecord(acknowledged, in: &state)
+                    try await checkpoint(state, dryRun: dryRun)
+                    continue
+                }
                 summary.planned += 1
                 guard !dryRun else { continue }
                 try await applyRemoteRecipe(
@@ -1316,13 +1343,14 @@ actor SyncCoordinator {
                     toNoteID: parsed.note.id,
                     frameID: frameID,
                     folderID: folderID,
+                    formattedNotes: formattedNotes,
                     state: &state
                 )
                 summary.applied += 1
             case let (true, true, .some(remote)):
                 summary.planned += 1
                 guard !dryRun else { continue }
-                if appleWinsConflict(
+                if parsed.hasAttachments || appleWinsConflict(
                     policy: conflictPolicy,
                     noteModifiedAt: parsed.note.modificationDate,
                     remoteUpdatedAt: remote.attributes.updatedAt
@@ -1340,6 +1368,7 @@ actor SyncCoordinator {
                         toNoteID: parsed.note.id,
                         frameID: frameID,
                         folderID: folderID,
+                        formattedNotes: formattedNotes,
                         state: &state
                     )
                 }
@@ -1355,6 +1384,7 @@ actor SyncCoordinator {
         adoptedRemoteIDs: Set<String>,
         frameID: String,
         folderID: String,
+        formattedNotes: Bool,
         dryRun: Bool,
         createdNoteIDs: inout Set<String>,
         summary: inout SyncDomainSummary,
@@ -1372,7 +1402,7 @@ actor SyncCoordinator {
             let draft = RecipeNoteFormatter.draft(from: remote.attributes)
             let noteID = try await notesSource.syncCreateNote(
                 inFolderID: folderID,
-                bodyHTML: RecipeNoteFormatter.bodyHTML(for: draft)
+                bodyHTML: RecipeNoteFormatter.bodyHTML(for: draft, formatted: formattedNotes)
             )
             let readback = try await notesSource.syncNote(withID: noteID, inFolderID: folderID)
             upsertNoteRecord(
@@ -1423,13 +1453,14 @@ actor SyncCoordinator {
         toNoteID noteID: String,
         frameID: String,
         folderID: String,
+        formattedNotes: Bool,
         state: inout SyncState
     ) async throws {
         let draft = RecipeNoteFormatter.draft(from: remote.attributes)
         try await notesSource.syncUpdateNote(
             withID: noteID,
             inFolderID: folderID,
-            bodyHTML: RecipeNoteFormatter.bodyHTML(for: draft)
+            bodyHTML: RecipeNoteFormatter.bodyHTML(for: draft, formatted: formattedNotes)
         )
         let readback = try await notesSource.syncNote(withID: noteID, inFolderID: folderID)
         upsertNoteRecord(

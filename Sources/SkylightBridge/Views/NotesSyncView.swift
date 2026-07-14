@@ -294,8 +294,14 @@ private struct NotesSelectionEditor: View {
                             Text(policy.label).tag(policy)
                         }
                     }
+
+                    Toggle("Format notes automatically", isOn: $draft.formattedNotes)
+                    Text("Notes the bridge creates or rewrites use Apple Notes styling: a title heading, section headings, and native ingredient and instruction lists. Turn this off for plain single-style text.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
                     Label(
-                        "Two-way sync can create notes, rewrite linked notes, and move notes whose recipes were deleted on Skylight to Recently Deleted.",
+                        "Two-way sync can create notes, rewrite linked notes, and move notes whose recipes were deleted on Skylight to Recently Deleted. Notes containing attachments are never rewritten.",
                         systemImage: "exclamationmark.triangle"
                     )
                     .font(.caption)

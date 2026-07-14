@@ -168,10 +168,52 @@ struct SyncCoordinatorTests {
         #expect(summary.recipes.planned == 1)
         #expect(summary.recipes.applied == 1)
         #expect(created.count == 1)
-        #expect(created[0].contains("Tacos"))
+        #expect(created[0].contains("<h1>Tacos</h1>"))
         #expect(persisted.notes.count == 1)
         #expect(persisted.notes[0].skylightID == "recipe-1")
         #expect(persisted.notes[0].lastSkylightUpdatedAt == "rev-1")
+    }
+
+    @Test("A note with attachments is never rewritten by a Skylight edit")
+    func recipeAttachmentNoteIsNotRewritten() async throws {
+        let plaintext = "Tacos\n\nIngredients\n- Shells\n\nInstructions\n1. Fill"
+        let note = recipeNote(id: "note-1", plaintext: plaintext)
+        var initial = SyncState()
+        initial.notes = [recipeSyncRecord(
+            noteID: "note-1",
+            contentHash: sha(plaintext),
+            skylightID: "recipe-1",
+            remoteRevision: "rev-1"
+        )]
+        let api = CoordinatorAPIStub()
+        await api.configureRecipes([
+            remoteRecipe(
+                id: "recipe-1",
+                title: "Tacos",
+                description: "Remote edit",
+                updatedAt: "rev-2"
+            )
+        ])
+        await api.configureMealCategories(mealCategories)
+        let notesSource = CoordinatorNotesSource(
+            notes: [note],
+            attachmentCounts: ["note-1": 2]
+        )
+        let state = CoordinatorStateStore(state: initial)
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            state: state,
+            notesSource: notesSource
+        )
+
+        let summary = try await coordinator.sync(configuration: configuredRecipes())
+        let updated = await notesSource.updatedBodiesByNoteID
+        let persisted = try await state.loadSyncState()
+
+        #expect(summary.recipes.planned == 0)
+        #expect(updated.isEmpty)
+        #expect(persisted.notes[0].lastSkylightUpdatedAt == "rev-2")
     }
 
     @Test("A Skylight recipe edit rewrites the unchanged linked note")
@@ -592,13 +634,15 @@ private final class CoordinatorReminderSource: ReminderSyncSource {
 
 private actor CoordinatorNotesSource: NotesSyncSource {
     private var notes: [AppleNoteSnapshot]
+    private let attachmentCounts: [String: Int]
     private(set) var createdBodies: [String] = []
     private(set) var updatedBodiesByNoteID: [String: String] = [:]
     private(set) var trashedNoteIDs: [String] = []
     private var nextNoteNumber = 1
 
-    init(notes: [AppleNoteSnapshot] = []) {
+    init(notes: [AppleNoteSnapshot] = [], attachmentCounts: [String: Int] = [:]) {
         self.notes = notes
+        self.attachmentCounts = attachmentCounts
     }
 
     func syncNoteSummaries(inFolderID folderID: String) async throws -> [AppleNoteSummarySnapshot] {
@@ -613,7 +657,7 @@ private actor CoordinatorNotesSource: NotesSyncSource {
                     modificationDate: $0.modificationDate,
                     isPasswordProtected: $0.isPasswordProtected,
                     isShared: $0.isShared,
-                    attachmentCount: 0
+                    attachmentCount: attachmentCounts[$0.id] ?? 0
                 )
             }
     }
@@ -666,11 +710,25 @@ private actor CoordinatorNotesSource: NotesSyncSource {
         )
     }
 
+    // Approximates how Apple Notes renders bridge-written HTML back to the
+    // plaintext the parser reads on the next sync cycle.
     private static func plaintext(fromBodyHTML body: String) -> String {
         body
             .replacingOccurrences(of: "<div><br></div>", with: "\u{0}")
             .replacingOccurrences(of: "</div>", with: "\n")
             .replacingOccurrences(of: "<div>", with: "")
+            .replacingOccurrences(of: "</h1>", with: "\n")
+            .replacingOccurrences(of: "<h1>", with: "")
+            .replacingOccurrences(of: "</h2>", with: "\n")
+            .replacingOccurrences(of: "<h2>", with: "")
+            .replacingOccurrences(of: "</li>", with: "\n")
+            .replacingOccurrences(of: "<li>", with: "")
+            .replacingOccurrences(of: "<ul>", with: "")
+            .replacingOccurrences(of: "</ul>", with: "")
+            .replacingOccurrences(of: "<ol>", with: "")
+            .replacingOccurrences(of: "</ol>", with: "")
+            .replacingOccurrences(of: "<b>", with: "")
+            .replacingOccurrences(of: "</b>", with: "")
             .replacingOccurrences(of: "\u{0}", with: "\n")
             .replacingOccurrences(of: "&lt;", with: "<")
             .replacingOccurrences(of: "&gt;", with: ">")

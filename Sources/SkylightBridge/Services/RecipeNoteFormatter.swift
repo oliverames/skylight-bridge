@@ -22,13 +22,77 @@ enum RecipeNoteFormatter {
 
     /// Notes-flavored HTML for `createNote`/`updateNote`. Notes shows the first
     /// line as the note title.
-    static func bodyHTML(for draft: RecipeDraft) -> String {
+    ///
+    /// Formatted bodies follow the household Apple Notes conventions: an `<h1>`
+    /// title, `<h2>` section headings flowing straight into native `<ul>`/`<ol>`
+    /// lists, a `<div><br></div>` spacer after every closed list and between
+    /// sections, and bare URLs because Notes strips anchor tags on update. The
+    /// plain variant writes one `<div>` per line for users who prefer unstyled
+    /// notes.
+    static func bodyHTML(for draft: RecipeDraft, formatted: Bool) -> String {
+        formatted ? formattedBodyHTML(for: draft) : plainBodyHTML(for: draft)
+    }
+
+    private static func plainBodyHTML(for draft: RecipeDraft) -> String {
         plaintext(for: draft)
             .components(separatedBy: "\n")
             .map { line in
                 line.isEmpty ? "<div><br></div>" : "<div>\(escapedHTML(line))</div>"
             }
             .joined()
+    }
+
+    private static func formattedBodyHTML(for draft: RecipeDraft) -> String {
+        let spacer = "<div><br></div>"
+        var blocks: [String] = []
+        blocks.append("<h1>\(escapedHTML(draft.title))</h1>")
+
+        let descriptionLines = (draft.description ?? "")
+            .components(separatedBy: .newlines)
+            .map(\.trimmed)
+            .filter { !$0.isEmpty }
+        if !descriptionLines.isEmpty {
+            blocks.append(descriptionLines.map { "<div>\(escapedHTML($0))</div>" }.joined())
+        }
+
+        var details: [String] = []
+        if let servings = draft.servings {
+            details.append(detailRow(key: "Servings", value: servings))
+        }
+        if let preparationTime = draft.preparationTime {
+            details.append(detailRow(key: "Prep", value: preparationTime))
+        }
+        if let cookingTime = draft.cookingTime {
+            details.append(detailRow(key: "Cook", value: cookingTime))
+        }
+        if !draft.tags.isEmpty {
+            details.append(detailRow(key: "Tags", value: draft.tags.joined(separator: ", ")))
+        }
+        if let sourceURL = draft.sourceURL {
+            details.append(detailRow(key: "Source", value: sourceURL))
+        }
+        if !details.isEmpty {
+            blocks.append(details.joined())
+        }
+
+        if !draft.ingredients.isEmpty {
+            let items = draft.ingredients
+                .map { "<li>\(escapedHTML($0))</li>" }
+                .joined()
+            blocks.append("<h2>Ingredients</h2><ul>\(items)</ul>")
+        }
+        if !draft.instructions.isEmpty {
+            let items = draft.instructions
+                .map { "<li>\(escapedHTML($0))</li>" }
+                .joined()
+            blocks.append("<h2>Instructions</h2><ol>\(items)</ol>")
+        }
+
+        return blocks.joined(separator: spacer)
+    }
+
+    private static func detailRow(key: String, value: String) -> String {
+        "<div><b>\(key):</b> \(escapedHTML(value))</div>"
     }
 
     /// Decodes Skylight recipe attributes into a normalized draft. Bridge-written

@@ -97,6 +97,7 @@ struct NotesSelection: Identifiable, Codable, Sendable, Hashable {
     var destinationCategoryID: String?
     var direction: NotesSyncDirection = .appleToSkylight
     var conflictPolicy: SyncConflictPolicy = .newestWins
+    var formattedNotes = true
     var enabled = false
 
     init(kind: NotesContentKind) {
@@ -125,6 +126,10 @@ struct NotesSelection: Identifiable, Codable, Sendable, Hashable {
             SyncConflictPolicy.self,
             forKey: .conflictPolicy
         ) ?? .newestWins
+        formattedNotes = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .formattedNotes
+        ) ?? true
         enabled = try container.decode(Bool.self, forKey: .enabled)
     }
 }

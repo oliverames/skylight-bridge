@@ -62,7 +62,9 @@ Recipe sync is push-only by default. Two-way sync adds, with a per-selection con
 - a recipe deleted on Skylight moves its linked note to Recently Deleted, which macOS keeps recoverable for 30 days
 - on the first two-way sync, unlinked notes and recipes with the same title are linked instead of duplicated
 
-The bridge writes notes in the same grammar its parser reads, so a pulled recipe produces no push on the following cycle. The safe Skylight representation uses the recipe summary and freeform description. Structured ingredient fields are provisional because their private API behavior is less stable.
+The bridge writes notes in the same grammar its parser reads, so a pulled recipe produces no push on the following cycle. By default it writes rich Apple Notes HTML: an `h1` title, `h2` section headings flowing directly into native bullet and numbered lists, a spacer line after every list and between sections, escaped entities, and bare source URLs because Notes strips anchor tags on update. A per-selection toggle falls back to plain single-style text. Notes that contain attachments are never rewritten, because updating a note body through automation can wipe its attachments; those notes stay Apple-authoritative and remote edits to them are acknowledged without being applied.
+
+The safe Skylight representation uses the recipe summary and freeform description. Structured ingredient fields are provisional because their private API behavior is less stable.
 
 ### Meals
 

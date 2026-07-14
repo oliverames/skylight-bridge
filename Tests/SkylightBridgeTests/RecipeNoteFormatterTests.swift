@@ -71,17 +71,39 @@ struct RecipeNoteFormatterTests {
         #expect(RecipeNoteFormatter.draft(from: attributes) == original)
     }
 
-    @Test("Note bodies escape HTML and keep one line per div")
-    func rendersBodyHTML() {
+    @Test("Plain note bodies escape HTML and keep one line per div")
+    func rendersPlainBodyHTML() {
         let draft = RecipeDraft(
             title: "Chips & Dip",
             ingredients: ["<b>Chips</b>"]
         )
 
-        let body = RecipeNoteFormatter.bodyHTML(for: draft)
+        let body = RecipeNoteFormatter.bodyHTML(for: draft, formatted: false)
 
         #expect(body.hasPrefix("<div>Chips &amp; Dip</div>"))
         #expect(body.contains("&lt;b&gt;Chips&lt;/b&gt;"))
         #expect(!body.contains("\n"))
+    }
+
+    @Test("Formatted note bodies follow the Apple Notes conventions")
+    func rendersFormattedBodyHTML() {
+        let draft = RecipeDraft(
+            title: "Tacos & Chips",
+            description: "Family favorite",
+            servings: "6",
+            ingredients: ["Shells"],
+            instructions: ["Fill the shells."],
+            sourceURL: "https://example.com/tacos"
+        )
+
+        let body = RecipeNoteFormatter.bodyHTML(for: draft, formatted: true)
+
+        #expect(body.hasPrefix("<h1>Tacos &amp; Chips</h1><div><br></div>"))
+        #expect(body.contains("<div><b>Servings:</b> 6</div>"))
+        #expect(body.contains("<h2>Ingredients</h2><ul><li>Shells</li></ul><div><br></div>"))
+        #expect(body.contains("<h2>Instructions</h2><ol><li>Fill the shells.</li></ol>"))
+        // Bare URLs, because Notes strips anchor tags on update.
+        #expect(body.contains("<div><b>Source:</b> https://example.com/tacos</div>"))
+        #expect(!body.contains("<a href"))
     }
 }
