@@ -5,8 +5,23 @@ enum NavigationSection: String, CaseIterable, Identifiable, Sendable {
     case recipes
     case meals
     case activity
+    case account
+    case sync
+    case diagnostics
 
     var id: Self { self }
+
+    /// Sync-source sections, shown as the top sidebar group.
+    static let sources: [NavigationSection] = [
+        .overview, .photos, .reminders, .recipes, .meals, .activity
+    ]
+
+    /// Account and configuration sections, shown as the lower sidebar group.
+    /// Bringing these into the main window keeps everything, including sign-in,
+    /// in one place instead of a separate Settings pane.
+    static let configuration: [NavigationSection] = [
+        .account, .sync, .diagnostics
+    ]
 
     var title: String {
         switch self {
@@ -16,6 +31,9 @@ enum NavigationSection: String, CaseIterable, Identifiable, Sendable {
         case .recipes: "Recipes"
         case .meals: "Meals"
         case .activity: "Activity"
+        case .account: "Account"
+        case .sync: "Sync"
+        case .diagnostics: "Diagnostics"
         }
     }
 
@@ -27,6 +45,9 @@ enum NavigationSection: String, CaseIterable, Identifiable, Sendable {
         case .recipes: "book.closed"
         case .meals: "fork.knife"
         case .activity: "clock.arrow.circlepath"
+        case .account: "person.crop.circle"
+        case .sync: "arrow.triangle.2.circlepath"
+        case .diagnostics: "stethoscope"
         }
     }
 }

@@ -29,8 +29,10 @@ struct MenuBarView: View {
 
         Divider()
 
-        SettingsLink {
-            Text("Settings…")
+        Button("Account & Settings…") {
+            store.selection = .account
+            openWindow(id: "main")
+            NSApp.activate(ignoringOtherApps: true)
         }
 
         Button("Quit") {

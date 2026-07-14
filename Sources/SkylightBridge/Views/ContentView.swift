@@ -54,6 +54,12 @@ private struct DetailView: View {
                 NotesSyncView(store: store, kind: .meals)
             case .activity:
                 ActivityView(store: store)
+            case .account:
+                AccountView(store: store)
+            case .sync:
+                SyncSettingsView(store: store)
+            case .diagnostics:
+                DiagnosticsView(store: store)
             }
         }
     }

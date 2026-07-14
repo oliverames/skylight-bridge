@@ -106,9 +106,8 @@ The underlying Skylight client still covers discovered calendar, chore, routine,
 
 - macOS 26 deployment floor, with macOS 27 verification
 - standard grouped-settings forms for all content areas, with Liquid Glass only in system chrome
-- SwiftUI `WindowGroup` for the main workspace
-- `MenuBarExtra` for quick sync and status
-- dedicated Settings scene
+- SwiftUI `WindowGroup` for the main workspace, with account, sync, and diagnostics in the sidebar rather than a separate Settings scene, so sign-in and every setting stay in one window
+- `MenuBarExtra` for quick sync and status; the standard Settings shortcut and menu open the main window on the Account section
 - PhotoKit adapter isolated on the main actor
 - EventKit adapter isolated on the main actor
 - Apple Notes automation through `NSAppleScript`

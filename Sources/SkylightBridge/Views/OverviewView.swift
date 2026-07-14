@@ -2,7 +2,6 @@ import AppKit
 import SwiftUI
 
 struct OverviewView: View {
-    @Environment(\.openSettings) private var openSettings
     @Bindable var store: AppStore
 
     private var enabledPhotoMappingCount: Int {
@@ -112,7 +111,7 @@ struct OverviewView: View {
                 tone: store.isSkylightConnected ? .positive : .warning
             )
             if !store.isSkylightConnected {
-                Button("Open Settings…") { openSettings() }
+                Button("Sign In…") { store.selection = .account }
             }
         }
         .padding(.vertical, 2)

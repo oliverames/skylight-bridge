@@ -1,48 +1,15 @@
-import AppKit
 import SwiftUI
 
-struct SettingsView: View {
-    @Environment(\.openWindow) private var openWindow
+/// Account, Sync, and Diagnostics live directly in the main window's sidebar so
+/// that sign-in and every setting are reachable without a separate Settings
+/// pane. Skylight Bridge is a menu-bar-first app, so one window holds it all.
+
+struct AccountView: View {
     @Bindable var store: AppStore
-    @State private var selection: SettingsSection = .account
     @State private var email = ""
     @State private var password = ""
 
     var body: some View {
-        NavigationSplitView {
-            List(SettingsSection.allCases, selection: $selection) { section in
-                Label(section.label, systemImage: section.systemImage)
-                    .tag(section)
-            }
-            .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 220)
-        } detail: {
-            settingsContent
-                .navigationTitle(selection.label)
-        }
-        .navigationSplitViewStyle(.prominentDetail)
-        .toolbarBackground(.bar, for: .windowToolbar)
-        .toolbarBackgroundVisibility(.visible, for: .windowToolbar)
-        .frame(minWidth: 760, minHeight: 520)
-        .task {
-            email = await store.storedAccountEmail()
-            await store.restoreAccountConnection()
-        }
-    }
-
-    @ViewBuilder
-    private var settingsContent: some View {
-        switch selection {
-        case .account:
-            accountSettings
-        case .sync:
-            syncSettings
-        case .diagnostics:
-            diagnosticsSettings
-        }
-    }
-
-    private var accountSettings: some View {
         Form {
             Section("Skylight") {
                 LabeledContent("Status") {
@@ -68,18 +35,15 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Sign in") {
+            Section {
                 TextField("Skylight email", text: $email)
                     .textContentType(.username)
                 SecureField("Skylight password", text: $password)
                     .textContentType(.password)
-                Text("Credentials and OAuth tokens are stored in the macOS Keychain. They are never written to app logs or configuration files.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
 
                 HStack {
                     Spacer()
-                    Button(store.isConnecting ? "Connecting" : "Connect and Save") {
+                    Button(store.isConnecting ? "Connecting…" : (store.isSkylightConnected ? "Reconnect" : "Sign In")) {
                         Task {
                             await store.saveAccountCredentials(email: email, password: password)
                             password = ""
@@ -87,8 +51,19 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(store.isConnecting || email.trimmed.isEmpty || password.isEmpty)
-                    .accessibilityIdentifier("settings.connect")
+                    .accessibilityIdentifier("account.connect")
                 }
+            } header: {
+                SectionHeader(
+                    title: "Sign in to Skylight",
+                    subtitle: store.isSkylightConnected
+                        ? "You are connected. Enter your password to reconnect or switch accounts."
+                        : "Enter your Skylight email and password to connect."
+                )
+            } footer: {
+                Text("Credentials and OAuth tokens are stored in the macOS Keychain. They are never written to app logs or configuration files.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Apple access") {
@@ -110,10 +85,35 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .frame(maxWidth: 800)
+        .frame(maxWidth: .infinity)
         .scrollEdgeEffectStyle(.soft, for: .top)
+        .navigationTitle("Account")
+        .task {
+            if email.isEmpty {
+                email = await store.storedAccountEmail()
+            }
+        }
     }
 
-    private var syncSettings: some View {
+    @ViewBuilder
+    private func accessRow(title: String, isAuthorized: Bool, detail: String) -> some View {
+        LabeledContent(title) {
+            HStack(spacing: 6) {
+                Image(systemName: isAuthorized ? "checkmark.circle.fill" : "circle.dashed")
+                    .foregroundStyle(isAuthorized ? Color.green : Color.secondary)
+                Text(isAuthorized ? "Authorized" : detail.capitalized)
+                    .foregroundStyle(.primary)
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+}
+
+struct SyncSettingsView: View {
+    @Bindable var store: AppStore
+
+    var body: some View {
         Form {
             Section("Schedule") {
                 Stepper(
@@ -148,13 +148,20 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .frame(maxWidth: 800)
+        .frame(maxWidth: .infinity)
         .scrollEdgeEffectStyle(.soft, for: .top)
+        .navigationTitle("Sync")
     }
+}
 
-    private var diagnosticsSettings: some View {
+struct DiagnosticsView: View {
+    @Bindable var store: AppStore
+
+    var body: some View {
         Form {
             Section("App") {
-                LabeledContent("Version", value: versionDescription)
+                LabeledContent("Version", value: AppVersion.description)
                 LabeledContent("Minimum system", value: "macOS 26")
                 LabeledContent("Status", value: store.statusMessage)
             }
@@ -182,59 +189,19 @@ struct SettingsView: View {
                 .disabled(!store.isSkylightConnected)
                 Button("Open Activity") {
                     store.selection = .activity
-                    openWindow(id: "main")
-                    NSApp.activate(ignoringOtherApps: true)
                 }
             }
         }
         .formStyle(.grouped)
+        .frame(maxWidth: 800)
+        .frame(maxWidth: .infinity)
         .scrollEdgeEffectStyle(.soft, for: .top)
-    }
-
-    @ViewBuilder
-    private func accessRow(title: String, isAuthorized: Bool, detail: String) -> some View {
-        LabeledContent(title) {
-            HStack(spacing: 6) {
-                Image(systemName: isAuthorized ? "checkmark.circle.fill" : "circle.dashed")
-                    .foregroundStyle(isAuthorized ? Color.green : Color.secondary)
-                Text(isAuthorized ? "Authorized" : detail.capitalized)
-                    .foregroundStyle(.primary)
-            }
-            .accessibilityElement(children: .combine)
-        }
-    }
-
-    private var versionDescription: String {
-        AppVersion.description
+        .navigationTitle("Diagnostics")
     }
 
     private func redacted(_ value: String) -> String {
         guard value.count > 8 else { return value.isEmpty ? "Not selected" : "••••" }
         return "\(value.prefix(4))…\(value.suffix(4))"
-    }
-}
-
-private enum SettingsSection: String, CaseIterable, Identifiable {
-    case account
-    case sync
-    case diagnostics
-
-    var id: Self { self }
-
-    var label: String {
-        switch self {
-        case .account: "Account"
-        case .sync: "Sync"
-        case .diagnostics: "Diagnostics"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .account: "person.crop.circle"
-        case .sync: "arrow.triangle.2.circlepath"
-        case .diagnostics: "stethoscope"
-        }
     }
 }
 

@@ -37,8 +37,8 @@ The interface uses native macOS 26 SwiftUI navigation with standard grouped-sett
 
 ## First run
 
-1. Open Settings and connect the Skylight account. The app discovers its frames and devices automatically.
-2. Keep Dry Run enabled.
+1. Open the Account section in the sidebar and sign in to Skylight. The app discovers its frames and devices automatically.
+2. Keep Dry Run enabled (Sync section).
 3. Open Photos, Reminders, Recipes, and Meals to grant only the source permissions you need.
 4. Add source mappings. No unselected list, reminder, folder, note, album, or photo is considered.
 5. Run a sync preview and inspect Activity.

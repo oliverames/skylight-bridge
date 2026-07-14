@@ -1,3 +1,17 @@
+## 2026-07-14 - Skylight Bridge 1.2.1: settings consolidated into the main window
+
+**What changed**: Sign-in was hard to find because Account, Sync, and Diagnostics lived in a separate Settings/Preferences scene. Since Skylight Bridge is a menu-bar-first app, those three now live in the main window's sidebar under a "Configuration" group, and the separate `Settings` scene is gone. `AccountView`/`SyncSettingsView`/`DiagnosticsView` were extracted from the old `SettingsView` into `ConfigurationViews.swift`. The standard Settings shortcut (⌘,), the menu bar "Account & Settings…" item, and the Overview "Sign In…" button all navigate to the in-window Account section and bring the main window forward. The sign-in section leads with a clear header and a Sign In / Reconnect button.
+
+**Decisions made**: Kept ⌘, working by replacing the app-settings command group with one that opens the main window on Account, rather than dropping the shortcut. The sidebar uses two `List` sections (sources, then configuration) for visual grouping. Account/Sync/Diagnostics forms are verbatim extractions of the previously shipped Settings tabs, so behavior is unchanged, only their location.
+
+**Verification**: 61 tests pass normally, under AddressSanitizer, and under ThreadSanitizer (no logic changed, so coverage is unchanged). `./script/build_and_run.sh --verify` produced a signed bundle that launched cleanly; a screenshot confirmed the new "Configuration" sidebar group with Account, Sync, and Diagnostics. Bumped to 1.2.1 (4).
+
+**Left off at**: 1.2.1 pending the notarized release.
+
+**Open questions**: None.
+
+---
+
 ## 2026-07-14 - Skylight Bridge 1.2.0: cleanup flows, field-level merge, auto-sync
 
 **What changed**: Eight issues from testing the 1.1.0 build. (1) The "Selected Photos" picker now passes `photoLibrary: .shared()` so `PhotosPickerItem.itemIdentifier` resolves instead of returning nil and reporting zero selected. (2) Deleting a photo mapping now purges the Skylight copies it created, since Apple Photos is never touched. (3) Deleting a reminder mapping opens a confirmation dialog asking whether to also remove the synced items from Skylight, from Apple Reminders, or from neither. (4) Two-way reminder merge became field-aware: separate additions on both sides are preserved, and simultaneous edits merge title and completion independently, using the conflict policy only when the same field changed on both sides (new `.merge` action; last-synced title/completion baseline stored on the record). (5) Adding, editing, or enabling a mapping now triggers an automatic sync (a preview under Dry Run) so changes land in Activity immediately. Confirmed already-correct and left as-is: Skylight albums are real (API evidence), RAW/ProRAW already convert to sRGB JPEG before upload, and recipes pulled from Skylight already write formatted Apple Notes.
