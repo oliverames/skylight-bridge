@@ -90,14 +90,8 @@ struct NotesSyncView: View {
 
             Spacer(minLength: 12)
 
-            StatusBadge(
-                title: selection.enabled ? "Enabled" : "Paused",
-                tone: selection.enabled ? .positive : .neutral
-            )
-
-            Button("Edit") { editedSelection = selection }
-                .buttonStyle(.bordered)
-
+            // The switch carries the state and the "…" menu holds edit, same
+            // row grammar as MappingRow.
             Toggle(
                 "Enabled",
                 isOn: savingBinding(enabledBinding) { store.saveConfiguration(triggerSync: true) }
@@ -106,8 +100,22 @@ struct NotesSyncView: View {
             .toggleStyle(.switch)
             .controlSize(.small)
             .accessibilityLabel("Enable \(kind.label) sync")
+            .accessibilityValue(selection.enabled ? "Enabled" : "Paused")
+
+            Menu {
+                Button("Edit…", systemImage: "pencil") { editedSelection = selection }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .accessibilityLabel("Actions for \(kind.label) sync")
         }
         .padding(.vertical, 4)
+        .contextMenu {
+            Button("Edit…") { editedSelection = selection }
+        }
     }
 
     private var enabledBinding: Binding<Bool> {

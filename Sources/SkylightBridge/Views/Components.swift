@@ -188,33 +188,33 @@ struct MappingRow: View {
 
             Spacer(minLength: 12)
 
-            StatusBadge(
-                title: isEnabled ? "Enabled" : "Paused",
-                tone: isEnabled ? .positive : .neutral
-            )
-
-            // An inline Button in a Form/List row needs an explicit style, or
-            // macOS routes the click to the row and the button never fires.
-            Button("Edit", action: onEdit)
-                .buttonStyle(.bordered)
-
+            // System Settings row grammar: the switch carries the state (no
+            // redundant status text) and a single "…" menu holds the row's
+            // secondary actions, like the Wi-Fi known-networks list.
             Toggle("Enabled", isOn: $isEnabled)
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.small)
                 .accessibilityLabel("Enable \(title)")
+                .accessibilityValue(isEnabled ? "Enabled" : "Paused")
 
             Menu {
-                Button("Delete Mapping", systemImage: "trash", role: .destructive, action: onDelete)
+                Button("Edit…", systemImage: "pencil", action: onEdit)
+                Divider()
+                Button("Delete Mapping…", systemImage: "trash", role: .destructive, action: onDelete)
             } label: {
-                Image(systemName: "ellipsis")
+                Image(systemName: "ellipsis.circle")
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
-            .accessibilityLabel("More options for \(title)")
+            .accessibilityLabel("Actions for \(title)")
         }
         .padding(.vertical, 4)
+        .contextMenu {
+            Button("Edit…", action: onEdit)
+            Button("Delete Mapping…", role: .destructive, action: onDelete)
+        }
     }
 }
 
