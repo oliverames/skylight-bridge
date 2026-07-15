@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// First-run welcome sheet: what the bridge does, what it never touches, and
-/// a single call to action that lands on the Account screen to sign in.
+/// First-run setup guide that explains the real path to a first safe sync,
+/// then hands off to Account for Skylight sign-in.
 struct OnboardingView: View {
     let onGetStarted: () -> Void
     let onSkip: () -> Void
@@ -24,38 +24,52 @@ struct OnboardingView: View {
                             .multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.horizontal, 32)
-                    }
-                    .padding(.top, 40)
-                    .padding(.bottom, 32)
 
-                    VStack(alignment: .leading, spacing: 20) {
-                        OnboardingFeatureRow(
-                            icon: "photo.on.rectangle.angled",
-                            title: "Photos on the Frame",
-                            description: "Mirror albums, Favorites, or hand-picked photos to your Skylight. Your Apple Photos library is never changed."
+                        Text("Bring the photos, lists, chores, and recipes your household already uses to Skylight.")
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 44)
+                    }
+                    .padding(.top, 36)
+                    .padding(.bottom, 28)
+
+                    VStack(alignment: .leading, spacing: 18) {
+                        Text("A simple, safe setup")
+                            .font(.headline)
+
+                        OnboardingStepRow(
+                            number: 1,
+                            title: "Connect your Skylight",
+                            description: "Sign in and choose the frame you want to manage. Connection details stay in your Mac’s Keychain."
                         )
-                        OnboardingFeatureRow(
-                            icon: "checklist",
-                            title: "Lists That Stay in Sync",
-                            description: "Reminders and recipe notes sync both ways, so a task checked off on the frame is checked off on your iPhone too."
+                        OnboardingStepRow(
+                            number: 2,
+                            title: "Choose your first source",
+                            description: "Start with Photos, Reminders, Chores, or recipes. You can add more whenever you are ready."
                         )
-                        OnboardingFeatureRow(
-                            icon: "lock.shield",
-                            title: "Private by Design",
-                            description: "Credentials live in the macOS Keychain, only content you map is ever read, and Preview mode shows every change before it happens."
+                        OnboardingStepRow(
+                            number: 3,
+                            title: "Preview before you sync",
+                            description: "Preview mode is on by default. Review the planned changes in Activity before making anything live."
                         )
                     }
                     .padding(.horizontal, 32)
 
                     HStack(alignment: .top, spacing: 12) {
-                        Image(systemName: "info.circle.fill")
+                        Image(systemName: "lock.shield.fill")
                             .foregroundStyle(.secondary)
                             .padding(.top, 2)
                             .accessibilityHidden(true)
-                        Text("Setup takes about two minutes: sign in to Skylight, allow access to the Apple apps you want to sync, then add your first mapping.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("You stay in control")
+                                .font(.callout.weight(.semibold))
+                            Text("Nothing is turned on automatically. Skylight Bridge reads only the sources you map, and you can stay in Preview mode until you are comfortable going live.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                        .fixedSize(horizontal: false, vertical: true)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding()
@@ -71,38 +85,39 @@ struct OnboardingView: View {
                 Button {
                     onGetStarted()
                 } label: {
-                    Text("Get Started")
+                    Text("Connect Skylight")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
                 .keyboardShortcut(.defaultAction)
-                .accessibilityIdentifier("onboarding.getStarted")
+                .accessibilityIdentifier("onboarding.connectSkylight")
 
-                Button("Explore on My Own") {
+                Button("Set Up Later") {
                     onSkip()
                 }
                 .buttonStyle(.borderless)
                 .controlSize(.small)
                 .foregroundStyle(.secondary)
+                .accessibilityIdentifier("onboarding.setUpLater")
             }
             .padding(.top, 20)
             .padding(.horizontal, 32)
             .padding(.bottom, 28)
         }
-        .frame(minWidth: 480, idealWidth: 500, minHeight: 560, idealHeight: 600)
+        .frame(minWidth: 500, idealWidth: 540, minHeight: 580, idealHeight: 620)
         .background(.regularMaterial)
     }
 }
 
-private struct OnboardingFeatureRow: View {
-    let icon: String
+private struct OnboardingStepRow: View {
+    let number: Int
     let title: String
     let description: String
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
-            Image(systemName: icon)
+            Image(systemName: "\(number).circle.fill")
                 .font(.title2)
                 .foregroundStyle(.tint)
                 .frame(width: 30)
@@ -117,6 +132,7 @@ private struct OnboardingFeatureRow: View {
             }
         }
         .accessibilityElement(children: .combine)
+        .accessibilityLabel("Step \(number): \(title). \(description)")
     }
 }
 
