@@ -26,6 +26,23 @@ There is intentionally no calendar sync interface. Google Calendar already cover
 
 Skylight does not publish a supported public API. The private API client can break when Skylight changes its service.
 
+## Current project status
+
+The latest published Mac release is **1.4.0**. `main` also contains the tested,
+unreleased Chore Chart synchronization, cross-device selected-photo
+reconciliation, and Relay Ribbon app icon work completed on July 15, 2026.
+Those changes still need normal provisioning, notarization, and release
+packaging before distribution.
+
+The native iPhone companion lives in the separate private
+[`skylight-bridge-ios`](https://github.com/oliverames/skylight-bridge-ios)
+repository. It configures shared preferences and individual-photo mappings;
+the Mac remains responsible for Skylight authentication and synchronization.
+Simulator builds intentionally report iCloud as unavailable. The remaining
+release gate is a physical-device CloudKit round trip after both app IDs have
+the shared `iCloud.com.oliverames.SkylightBridge` container and regenerated
+provisioning profiles.
+
 ## Build and test
 
 ```bash
