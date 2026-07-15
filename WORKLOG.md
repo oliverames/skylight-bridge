@@ -1,3 +1,15 @@
+## 2026-07-15 - Skylight Bridge 1.5.0 release
+
+**What changed**: Published the CloudKit-enabled Mac release as 1.5.0 (10). The regenerated Developer ID profile authorizes `com.oliverames.SkylightBridge` and the shared `iCloud.com.oliverames.SkylightBridge` container, and the release script embeds it before signing.
+
+**Verification**: The release DMG and app are notarized, stapled, accepted by Gatekeeper, and the mounted DMG passed signature verification. A fresh launch of the released app stayed running. The Mac test suite passed 103 tests, the companion shared package passed 11 tests, and a signed generic iOS build verified the same team, app identifier, and CloudKit container. GitHub's downloaded SHA-256 file matches the local DMG checksum.
+
+**Left off at**: Version 1.5.0 is published privately at https://github.com/oliverames/skylight-bridge/releases/tag/v1.5.0. The tag points to `dfc1b0d` and includes the notarized DMG plus its SHA-256 checksum.
+
+**Open questions**: The physical iPhone CloudKit add, offline-edit, and removal round trip remains pending. The paired iPhone must be unlocked, connected, and placed in Developer Mode before it can accept the signed build.
+
+---
+
 ## 2026-07-15 - Release validation and CloudKit provisioning gate
 
 **What changed**: Prepared the next Mac release as 1.5.0 (10) and corrected the release script's universal build invocation. The shared companion package deliberately suppresses warnings, which conflicted with the script's global warnings-as-errors flag under Swift 6.2. The script now builds both architectures without that contradictory option. It also requires a readable Developer ID provisioning profile, verifies that the profile authorizes `com.oliverames.SkylightBridge` and `iCloud.com.oliverames.SkylightBridge`, and embeds it at `Contents/embedded.provisionprofile` before signing.
