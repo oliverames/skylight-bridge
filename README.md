@@ -28,23 +28,20 @@ Skylight does not publish a supported public API. The private API client can bre
 
 ## Current project status
 
-The latest published Mac release is **1.4.0**. `main` also contains the tested,
-unreleased Chore Chart synchronization, cross-device selected-photo
-reconciliation, and Relay Ribbon app icon work completed on July 15, 2026.
-An initial 1.5.0 Developer ID package was accepted and stapled by Apple, but it
-is not distributable yet: CloudKit is a restricted macOS entitlement and the
-machine has no matching Developer ID provisioning profile to embed. Without
-that profile, LaunchServices rejects the app before it starts with launchd error
-163. The release script now refuses to create that invalid package.
+The latest published Mac release is
+[**1.5.0**](https://github.com/oliverames/skylight-bridge/releases/tag/v1.5.0).
+It includes two-way Chore Chart synchronization, cross-device selected-photo
+reconciliation, and the Relay Ribbon app icon. Its Developer ID build embeds
+the CloudKit provisioning profile, is notarized and stapled, and is accepted by
+Gatekeeper.
 
 The native iPhone companion lives in the separate private
 [`skylight-bridge-ios`](https://github.com/oliverames/skylight-bridge-ios)
 repository. It configures shared preferences and individual-photo mappings;
 the Mac remains responsible for Skylight authentication and synchronization.
-Simulator builds intentionally report iCloud as unavailable. The remaining
-release gate is a physical-device CloudKit round trip after both app IDs have
-the shared `iCloud.com.oliverames.SkylightBridge` container and regenerated
-provisioning profiles.
+Simulator builds intentionally report iCloud as unavailable. Both app IDs now
+have the shared `iCloud.com.oliverames.SkylightBridge` container and matching
+profiles. The remaining validation is the physical-device CloudKit round trip.
 
 ## Build and test
 
