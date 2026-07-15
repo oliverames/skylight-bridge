@@ -20,6 +20,7 @@ APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 ENTITLEMENTS="$ROOT_DIR/Resources/SkylightBridge.entitlements"
+RESOLVED_ENTITLEMENTS="$RELEASE_DIR/SkylightBridge.resolved.entitlements"
 ICON_SOURCE="$ROOT_DIR/Resources/AppIcon.icon"
 APP_ZIP="$RELEASE_DIR/$DISPLAY_NAME-$VERSION.zip"
 DMG_PATH="$RELEASE_DIR/$DISPLAY_NAME-$VERSION.dmg"
@@ -106,6 +107,12 @@ cp "$DEVELOPER_ID_PROFILE" "$APP_CONTENTS/embedded.provisionprofile"
 
 plutil -lint "$INFO_PLIST" >/dev/null
 plutil -lint "$ENTITLEMENTS" >/dev/null
+"$ROOT_DIR/script/resolve_cloudkit_entitlements.sh" \
+  "$ENTITLEMENTS" \
+  "$DEVELOPER_ID_PROFILE" \
+  "$RESOLVED_ENTITLEMENTS" \
+  "$APP_BUNDLE_IDENTIFIER" \
+  "$CLOUDKIT_CONTAINER_IDENTIFIER"
 lipo "$APP_BINARY" -verify_arch arm64
 lipo "$APP_BINARY" -verify_arch x86_64
 
@@ -114,16 +121,28 @@ codesign \
   --sign "$SIGN_IDENTITY" \
   --options runtime \
   --timestamp \
-  --entitlements "$ENTITLEMENTS" \
+  --entitlements "$RESOLVED_ENTITLEMENTS" \
   "$APP_BUNDLE"
 
 codesign --verify --deep --strict --verbose=4 "$APP_BUNDLE"
-codesign -d --entitlements - "$APP_BUNDLE" 2>&1 \
-  | tee "$RELEASE_DIR/entitlements.txt" >/dev/null
-if rg -q "get-task-allow" "$RELEASE_DIR/entitlements.txt"; then
+codesign -d --entitlements :- "$APP_BUNDLE" 2>/dev/null > "$RELEASE_DIR/runtime-entitlements.plist"
+if /usr/libexec/PlistBuddy -c 'Print :com.apple.security.get-task-allow' \
+  "$RELEASE_DIR/runtime-entitlements.plist" 2>/dev/null | rg -Fxq true; then
   echo "release app contains get-task-allow" >&2
   exit 1
 fi
+
+for entitlement_key in \
+  com.apple.application-identifier \
+  com.apple.developer.team-identifier \
+  com.apple.developer.icloud-container-environment; do
+  expected_value="$(/usr/libexec/PlistBuddy -c "Print :$entitlement_key" "$RESOLVED_ENTITLEMENTS")"
+  actual_value="$(/usr/libexec/PlistBuddy -c "Print :$entitlement_key" "$RELEASE_DIR/runtime-entitlements.plist")"
+  if [[ "$actual_value" != "$expected_value" ]]; then
+    echo "release app entitlement mismatch for $entitlement_key" >&2
+    exit 1
+  fi
+done
 
 ditto -c -k --keepParent "$APP_BUNDLE" "$APP_ZIP"
 

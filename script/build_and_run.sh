@@ -5,6 +5,8 @@ MODE="${1:-run}"
 APP_NAME="SkylightBridge"
 DISPLAY_NAME="Skylight Bridge"
 BUNDLE_ID="com.oliverames.SkylightBridge"
+CLOUDKIT_CONTAINER_IDENTIFIER="iCloud.com.oliverames.SkylightBridge"
+DEVELOPER_ID_PROFILE="${DEVELOPER_ID_PROFILE:-}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$ROOT_DIR/dist"
@@ -16,7 +18,15 @@ APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 ICON_FILE="$ROOT_DIR/Resources/AppIcon.icon"
 ENTITLEMENTS_FILE="$ROOT_DIR/Resources/SkylightBridge.entitlements"
+RESOLVED_ENTITLEMENTS_FILE="$DIST_DIR/SkylightBridge.resolved.entitlements"
 INFO_PLIST_TEMPLATE="$ROOT_DIR/Resources/Info.plist"
+
+if [[ -z "$DEVELOPER_ID_PROFILE" ]]; then
+  installed_profile="/Applications/$DISPLAY_NAME.app/Contents/embedded.provisionprofile"
+  if [[ -r "$installed_profile" ]]; then
+    DEVELOPER_ID_PROFILE="$installed_profile"
+  fi
+fi
 
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 
@@ -42,12 +52,27 @@ if [[ -z "$CODESIGN_IDENTITY" ]] && security find-identity -v -p codesigning | r
 fi
 
 if [[ -n "$CODESIGN_IDENTITY" ]]; then
+  if [[ -z "$DEVELOPER_ID_PROFILE" ]]; then
+    echo "Developer ID signing with CloudKit requires DEVELOPER_ID_PROFILE." >&2
+    exit 1
+  fi
+  if [[ ! -r "$DEVELOPER_ID_PROFILE" ]]; then
+    echo "Developer ID provisioning profile is not readable: $DEVELOPER_ID_PROFILE" >&2
+    exit 1
+  fi
+  cp "$DEVELOPER_ID_PROFILE" "$APP_CONTENTS/embedded.provisionprofile"
+  "$ROOT_DIR/script/resolve_cloudkit_entitlements.sh" \
+    "$ENTITLEMENTS_FILE" \
+    "$DEVELOPER_ID_PROFILE" \
+    "$RESOLVED_ENTITLEMENTS_FILE" \
+    "$BUNDLE_ID" \
+    "$CLOUDKIT_CONTAINER_IDENTIFIER"
   codesign \
     --force \
     --sign "$CODESIGN_IDENTITY" \
     --options runtime \
     --timestamp \
-    --entitlements "$ENTITLEMENTS_FILE" \
+    --entitlements "$RESOLVED_ENTITLEMENTS_FILE" \
     "$APP_BUNDLE" >/dev/null
 else
   codesign --force --deep --sign - --timestamp=none "$APP_BUNDLE" >/dev/null
