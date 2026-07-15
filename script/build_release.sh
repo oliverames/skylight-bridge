@@ -41,14 +41,36 @@ require_developer_id_profile() {
   fi
 
   local profile_app_identifier
-  profile_app_identifier="$(security cms -D -i "$DEVELOPER_ID_PROFILE" | plutil -extract Entitlements.application-identifier raw -o - -)"
+  profile_app_identifier="$(
+    security cms -D -i "$DEVELOPER_ID_PROFILE" | /usr/bin/python3 -c '
+import plistlib
+import sys
+
+entitlements = plistlib.loads(sys.stdin.buffer.read())["Entitlements"]
+print(
+    entitlements.get("com.apple.application-identifier")
+    or entitlements.get("application-identifier", "")
+)
+'
+  )"
   if [[ "$profile_app_identifier" != *."$APP_BUNDLE_IDENTIFIER" ]]; then
     echo "Developer ID provisioning profile does not authorize $APP_BUNDLE_IDENTIFIER" >&2
     exit 1
   fi
 
   local profile_cloudkit_container
-  profile_cloudkit_container="$(security cms -D -i "$DEVELOPER_ID_PROFILE" | plutil -extract Entitlements.com.apple.developer.icloud-container-identifiers.0 raw -o - -)"
+  profile_cloudkit_container="$(
+    security cms -D -i "$DEVELOPER_ID_PROFILE" | /usr/bin/python3 -c '
+import plistlib
+import sys
+
+container_identifier = sys.argv[1]
+entitlements = plistlib.loads(sys.stdin.buffer.read())["Entitlements"]
+containers = entitlements.get("com.apple.developer.icloud-container-identifiers", [])
+if container_identifier in containers:
+    print(container_identifier)
+' "$CLOUDKIT_CONTAINER_IDENTIFIER"
+  )"
   if [[ "$profile_cloudkit_container" != "$CLOUDKIT_CONTAINER_IDENTIFIER" ]]; then
     echo "Developer ID provisioning profile does not authorize $CLOUDKIT_CONTAINER_IDENTIFIER" >&2
     exit 1
