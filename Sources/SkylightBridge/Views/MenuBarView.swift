@@ -7,31 +7,18 @@ struct MenuBarView: View {
 
     var body: some View {
         Button("Open Skylight Bridge") {
-            openWindow(id: "main")
-            NSApp.activate(ignoringOtherApps: true)
+            openMainWindow()
         }
 
-        Button(store.configuration.dryRun ? "Run Sync Preview" : "Sync Now") {
-            Task { await store.syncNow() }
+        Button(action: performSyncAction) {
+            Label(syncControl.title, systemImage: syncControl.symbol)
         }
-        .disabled(store.isSyncing
-            || !store.configuration.hasEnabledSync
-            || !store.isSkylightConnected)
-
-        Divider()
-
-        Label(statusTitle, systemImage: statusSymbol)
-
-        if let lastSyncAt = store.lastSyncAt {
-            Text("Last sync \(lastSyncAt.formatted(.relative(presentation: .named)))")
-        }
+        .disabled(syncControl.isDisabled)
 
         Divider()
 
         Button("Account & Settings…") {
-            store.selection = .account
-            openWindow(id: "main")
-            NSApp.activate(ignoringOtherApps: true)
+            openMainWindow(selection: .account)
         }
 
         Button("Quit") {
@@ -39,17 +26,84 @@ struct MenuBarView: View {
         }
     }
 
-    private var statusTitle: String {
-        if store.isSyncing { return "Syncing…" }
-        if store.lastSyncFailed { return "Last sync failed — open Activity for details" }
-        if !store.isSkylightConnected { return "Not signed in to Skylight" }
-        return store.configuration.dryRun ? "Preview Mode" : "Live Sync"
+    private var syncControl: SyncControlState {
+        if store.isSyncing { return .syncing }
+        if store.lastSyncFailed { return .failed }
+        if !store.isSkylightConnected { return .signInRequired }
+        if !store.configuration.hasEnabledSync { return .mappingRequired }
+        return .ready(
+            isPreview: store.configuration.dryRun,
+            lastSyncAt: store.lastSyncAt
+        )
     }
 
-    private var statusSymbol: String {
-        if store.isSyncing { return "arrow.triangle.2.circlepath" }
-        if store.lastSyncFailed { return "exclamationmark.triangle" }
-        if !store.isSkylightConnected { return "person.crop.circle.badge.questionmark" }
-        return store.configuration.dryRun ? "eye" : "checkmark.circle"
+    private func performSyncAction() {
+        switch syncControl {
+        case .syncing:
+            break
+        case .failed:
+            openMainWindow(selection: .activity)
+        case .signInRequired:
+            openMainWindow(selection: .account)
+        case .mappingRequired:
+            openMainWindow()
+        case .ready:
+            Task { await store.syncNow() }
+        }
+    }
+
+    private func openMainWindow(selection: NavigationSection? = nil) {
+        if let selection {
+            store.selection = selection
+        }
+        openWindow(id: "main")
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+/// The menu bar has one sync control. Its label describes what happens next
+/// rather than separating the command, mode, and last-run status into rows.
+private enum SyncControlState {
+    case syncing
+    case failed
+    case signInRequired
+    case mappingRequired
+    case ready(isPreview: Bool, lastSyncAt: Date?)
+
+    var title: String {
+        switch self {
+        case .syncing:
+            return "Syncing…"
+        case .failed:
+            return "Sync Failed: View Activity"
+        case .signInRequired:
+            return "Sign In to Sync…"
+        case .mappingRequired:
+            return "Set Up a Sync…"
+        case let .ready(isPreview, lastSyncAt):
+            let action = isPreview ? "Run Sync Preview" : "Sync Now"
+            guard let lastSyncAt else { return action }
+            return "\(action) (last synced \(lastSyncAt.formatted(.relative(presentation: .named))))"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .syncing:
+            "arrow.triangle.2.circlepath"
+        case .failed:
+            "exclamationmark.triangle"
+        case .signInRequired:
+            "person.crop.circle.badge.questionmark"
+        case .mappingRequired:
+            "slider.horizontal.3"
+        case .ready(let isPreview, _):
+            isPreview ? "eye" : "arrow.triangle.2.circlepath"
+        }
+    }
+
+    var isDisabled: Bool {
+        if case .syncing = self { return true }
+        return false
     }
 }
