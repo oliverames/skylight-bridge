@@ -14,8 +14,9 @@ enum AppVersion {
     }
 }
 
-/// Flat capsule badge, like the "Disabled" and "Shown as fallback" chips in
-/// native grouped settings.
+/// Row status the macOS way: a small colored SF symbol plus secondary text
+/// (like System Settings), never a capsule chip that mimics a button. The
+/// neutral tone stays a quiet tag capsule for counts and mode labels only.
 struct StatusBadge: View {
     enum Tone {
         case neutral
@@ -27,28 +28,31 @@ struct StatusBadge: View {
     var tone: Tone = .neutral
 
     var body: some View {
-        HStack(spacing: 5) {
-            if let dotColor {
-                Circle()
-                    .fill(dotColor)
-                    .frame(width: 6, height: 6)
-            }
+        switch tone {
+        case .neutral:
             Text(title)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(.quaternary.opacity(0.6), in: Capsule())
+        case .positive:
+            statusLabel(systemImage: "checkmark.circle.fill", color: .green)
+        case .warning:
+            statusLabel(systemImage: "exclamationmark.triangle.fill", color: .orange)
         }
-        .font(.caption.weight(.medium))
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .background(.quaternary.opacity(0.6), in: Capsule())
-        .accessibilityElement(children: .combine)
     }
 
-    private var dotColor: Color? {
-        switch tone {
-        case .neutral: nil
-        case .positive: .green
-        case .warning: .orange
+    private func statusLabel(systemImage: String, color: Color) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: systemImage)
+                .foregroundStyle(color)
+                .imageScale(.small)
+            Text(title)
+                .foregroundStyle(.secondary)
         }
+        .font(.callout)
+        .accessibilityElement(children: .combine)
     }
 }
 
