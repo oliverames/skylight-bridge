@@ -11,17 +11,27 @@ extension AppStore {
 
         do {
             let cloudPreferences = CloudPreferencesStore()
+            let localPreferences = sharedPreferences()
+            let resolvedPreferences: SharedPreferences
             if let remote = try await cloudPreferences.load() {
-                let merged = sharedPreferences().merging(remote)
-                storeSharedPreferences(merged)
-                applySharedPreferences(merged)
+                let merged = localPreferences.merging(remote)
+                // A preference saved while this Mac was offline must be
+                // written back after the field-wise merge. Otherwise it would
+                // look correct locally but never reach the iPhone.
+                resolvedPreferences = merged == remote
+                    ? merged
+                    : try await cloudPreferences.save(merged)
             } else {
-                let saved = try await cloudPreferences.save(sharedPreferences())
-                storeSharedPreferences(saved)
-                applySharedPreferences(saved)
+                resolvedPreferences = try await cloudPreferences.save(localPreferences)
             }
-            try await publishLocalSelectedPhotoMappings()
+            storeSharedPreferences(resolvedPreferences)
+            applySharedPreferences(resolvedPreferences)
+
+            // Import explicit removes before publishing local selections. If a
+            // phone removed a photo while this Mac was offline, publishing
+            // first would create a newer add record and silently resurrect it.
             try await importSharedPhotoMappings()
+            try await publishLocalSelectedPhotoMappings()
             statusMessage = "Shared preferences and selected photos are up to date with iCloud."
         } catch {
             appendActivity(.init(
