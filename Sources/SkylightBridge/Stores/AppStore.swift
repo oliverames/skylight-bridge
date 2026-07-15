@@ -47,10 +47,11 @@ final class AppStore {
     }
     var statusMessage = "Choose sources to begin."
     private var hasStarted = false
+    var hasLoadedSharediCloudState = false
 
     private let persistence: ConfigurationStore
     @ObservationIgnored private let scheduler = BackgroundSyncScheduler()
-    @ObservationIgnored private let photoLibrary = ApplePhotoLibrary()
+    @ObservationIgnored let photoLibrary = ApplePhotoLibrary()
     @ObservationIgnored private let remindersStore = AppleRemindersStore()
     @ObservationIgnored private let notesStore = AppleNotesStore()
     @ObservationIgnored private let sessionManager = SkylightSessionManager()
@@ -78,6 +79,7 @@ final class AppStore {
         async let sources: Void = refreshSources()
         async let account: Void = restoreAccountConnection()
         _ = await (sources, account)
+        await refreshSharediCloudState()
     }
 
     func saveConfiguration(triggerSync: Bool = false) {
@@ -87,6 +89,9 @@ final class AppStore {
             try applyLaunchAtLoginPreference()
             applyDockIconPreference()
             statusMessage = "Configuration saved."
+            if hasLoadedSharediCloudState {
+                Task { await publishSharediCloudState() }
+            }
         } catch {
             appendActivity(.init(
                 level: .error,

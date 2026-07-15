@@ -31,7 +31,10 @@ struct ContentView: View {
         .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 260)
         .onChange(of: scenePhase) {
             guard scenePhase == .active else { return }
-            Task { await store.refreshSources() }
+            Task {
+                await store.refreshSources()
+                await store.refreshSharediCloudState()
+            }
         }
         .sheet(isPresented: $store.isOnboardingPresented) {
             OnboardingView(

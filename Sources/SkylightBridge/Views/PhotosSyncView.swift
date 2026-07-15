@@ -88,12 +88,7 @@ struct PhotosSyncView: View {
     }
 
     private func save(_ mapping: PhotoMapping) {
-        if let index = store.configuration.photoMappings.firstIndex(where: { $0.id == mapping.id }) {
-            store.configuration.photoMappings[index] = mapping
-        } else {
-            store.configuration.photoMappings.append(mapping)
-        }
-        store.saveConfiguration(triggerSync: true)
+        store.savePhotoMapping(mapping, triggerSync: true)
         editedMapping = nil
     }
 
@@ -125,6 +120,7 @@ struct PhotosSyncView: View {
 private struct PhotoMappingEditor: View {
     @State private var draft: PhotoMapping
     @State private var pickedPhotos: [PhotosPickerItem] = []
+    @State private var selectedAssetToRemove: String?
     let collections: [ApplePhotoCollectionSnapshot]
     let skylightAlbums: [SkylightResource<SkylightAlbumAttributes>]
     let onCancel: () -> Void
@@ -226,7 +222,25 @@ private struct PhotoMappingEditor: View {
                 )
             }
             .onChange(of: pickedPhotos) {
-                draft.selectedAssetIDs = Set(pickedPhotos.compactMap(\.itemIdentifier))
+                draft.selectedAssetIDs.formUnion(pickedPhotos.compactMap(\.itemIdentifier))
+                pickedPhotos = []
+            }
+            .alert(
+                "Remove Selected Photo?",
+                isPresented: Binding(
+                    get: { selectedAssetToRemove != nil },
+                    set: { if !$0 { selectedAssetToRemove = nil } }
+                )
+            ) {
+                Button("Cancel", role: .cancel) { selectedAssetToRemove = nil }
+                Button("Remove", role: .destructive) {
+                    if let selectedAssetToRemove {
+                        draft.selectedAssetIDs.remove(selectedAssetToRemove)
+                    }
+                    selectedAssetToRemove = nil
+                }
+            } message: {
+                Text("This removes the photo from the shared selected-photos list on your Mac and iPhone. It does not delete the original from Apple Photos.")
             }
         }
         .frame(width: 640, height: 640)
@@ -264,6 +278,20 @@ private struct PhotoMappingEditor: View {
             Text("\(draft.selectedAssetIDs.count) photos selected")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if !draft.selectedAssetIDs.isEmpty {
+                ForEach(Array(draft.selectedAssetIDs).sorted(), id: \.self) { assetID in
+                    HStack {
+                        Label("Selected photo", systemImage: "photo")
+                        Spacer()
+                        Button("Remove", role: .destructive) {
+                            selectedAssetToRemove = assetID
+                        }
+                    }
+                }
+                Text("New choices are added to the existing list. Use Remove for the deliberate, shared removal action.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 

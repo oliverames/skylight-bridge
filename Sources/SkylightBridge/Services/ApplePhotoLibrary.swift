@@ -183,6 +183,33 @@ final class ApplePhotoLibrary: NSObject, PHPhotoLibraryChangeObserver {
         return snapshot(for: asset)
     }
 
+    /// Converts the Photos-local IDs used by this Mac into the portable
+    /// identifiers required by the shared selected-photos CloudKit records.
+    /// Apple recommends doing this conversion only at persistence boundaries.
+    func cloudAssetIdentifiers(for localIdentifiers: [String]) throws -> [String: String] {
+        try requireAccess()
+        let mappings = photoLibrary.cloudIdentifierMappings(
+            forLocalIdentifiers: localIdentifiers
+        )
+        return mappings.reduce(into: [:]) { result, entry in
+            guard case let .success(cloudIdentifier) = entry.value else { return }
+            result[entry.key] = cloudIdentifier.archivalStringValue
+        }
+    }
+
+    /// Resolves shared portable identifiers back to the local IDs this Mac's
+    /// existing photo sync pipeline requires. Photos that have not downloaded
+    /// to this library remain pending instead of being silently dropped.
+    func localAssetIdentifiers(for cloudIdentifiers: [String]) throws -> [String: String] {
+        try requireAccess()
+        let identifiers = cloudIdentifiers.compactMap(PHCloudIdentifier.init(archivalStringValue:))
+        let mappings = photoLibrary.localIdentifierMappings(for: identifiers)
+        return mappings.reduce(into: [:]) { result, entry in
+            guard case let .success(localIdentifier) = entry.value else { return }
+            result[entry.key.archivalStringValue] = localIdentifier
+        }
+    }
+
     func renderedPhoto(
         withID assetID: String,
         maximumLongEdge: Int = 3_840
