@@ -31,8 +31,11 @@ Skylight does not publish a supported public API. The private API client can bre
 The latest published Mac release is **1.4.0**. `main` also contains the tested,
 unreleased Chore Chart synchronization, cross-device selected-photo
 reconciliation, and Relay Ribbon app icon work completed on July 15, 2026.
-Those changes still need normal provisioning, notarization, and release
-packaging before distribution.
+An initial 1.5.0 Developer ID package was accepted and stapled by Apple, but it
+is not distributable yet: CloudKit is a restricted macOS entitlement and the
+machine has no matching Developer ID provisioning profile to embed. Without
+that profile, LaunchServices rejects the app before it starts with launchd error
+163. The release script now refuses to create that invalid package.
 
 The native iPhone companion lives in the separate private
 [`skylight-bridge-ios`](https://github.com/oliverames/skylight-bridge-ios)
@@ -94,6 +97,7 @@ SKYLIGHT_LIVE_CHORE_MUTATIONS=1 swift test --filter liveRecurringChoreLifecycle
 The release script produces a universal Developer ID-signed DMG, submits both the app and DMG for notarization, staples both tickets, mounts the finished image read-only, re-verifies the nested app, and writes a SHA-256 checksum:
 
 ```bash
+DEVELOPER_ID_PROFILE="/path/to/SkylightBridge.provisionprofile" \
 NOTARY_KEY_FILE="/path/to/AuthKey.p8" \
 NOTARY_KEY_ID="..." \
 NOTARY_ISSUER_ID="..." \

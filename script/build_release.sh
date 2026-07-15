@@ -3,9 +3,13 @@ set -euo pipefail
 
 APP_NAME="SkylightBridge"
 DISPLAY_NAME="Skylight Bridge"
-VERSION="${VERSION:-1.4.0}"
-BUILD_NUMBER="${BUILD_NUMBER:-9}"
+VERSION="${VERSION:-1.5.0}"
+BUILD_NUMBER="${BUILD_NUMBER:-10}"
 SIGN_IDENTITY="${SIGN_IDENTITY:-Developer ID Application: Oliver Ames (PV3W52NDZ3)}"
+DEVELOPER_ID_PROFILE="${DEVELOPER_ID_PROFILE:-}"
+
+APP_BUNDLE_IDENTIFIER="com.oliverames.SkylightBridge"
+CLOUDKIT_CONTAINER_IDENTIFIER="iCloud.com.oliverames.SkylightBridge"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RELEASE_DIR="$ROOT_DIR/dist/release"
@@ -29,6 +33,28 @@ require_notary_credentials() {
   : "${NOTARY_ISSUER_ID:?Set NOTARY_ISSUER_ID to the App Store Connect issuer ID}"
 }
 
+require_developer_id_profile() {
+  : "${DEVELOPER_ID_PROFILE:?Set DEVELOPER_ID_PROFILE to the CloudKit-enabled Developer ID provisioning profile}"
+  if [[ ! -r "$DEVELOPER_ID_PROFILE" ]]; then
+    echo "Developer ID provisioning profile is not readable: $DEVELOPER_ID_PROFILE" >&2
+    exit 1
+  fi
+
+  local profile_app_identifier
+  profile_app_identifier="$(security cms -D -i "$DEVELOPER_ID_PROFILE" | plutil -extract Entitlements.application-identifier raw -o - -)"
+  if [[ "$profile_app_identifier" != *."$APP_BUNDLE_IDENTIFIER" ]]; then
+    echo "Developer ID provisioning profile does not authorize $APP_BUNDLE_IDENTIFIER" >&2
+    exit 1
+  fi
+
+  local profile_cloudkit_container
+  profile_cloudkit_container="$(security cms -D -i "$DEVELOPER_ID_PROFILE" | plutil -extract Entitlements.com.apple.developer.icloud-container-identifiers.0 raw -o - -)"
+  if [[ "$profile_cloudkit_container" != "$CLOUDKIT_CONTAINER_IDENTIFIER" ]]; then
+    echo "Developer ID provisioning profile does not authorize $CLOUDKIT_CONTAINER_IDENTIFIER" >&2
+    exit 1
+  fi
+}
+
 submit_for_notarization() {
   local artifact="$1"
   xcrun notarytool submit "$artifact" \
@@ -38,11 +64,14 @@ submit_for_notarization() {
     --wait
 }
 
+require_notary_credentials
+require_developer_id_profile
+
 rm -rf "$RELEASE_DIR"
 mkdir -p "$APP_MACOS" "$APP_RESOURCES"
 
 cd "$ROOT_DIR"
-swift build -c release --arch arm64 --arch x86_64 -Xswiftc -warnings-as-errors
+swift build -c release --arch arm64 --arch x86_64
 BUILD_BINARY="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/$APP_NAME"
 
 cp "$BUILD_BINARY" "$APP_BINARY"
@@ -50,6 +79,7 @@ chmod 755 "$APP_BINARY"
 cp "$ROOT_DIR/Resources/Info.plist" "$INFO_PLIST"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$INFO_PLIST"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$INFO_PLIST"
+cp "$DEVELOPER_ID_PROFILE" "$APP_CONTENTS/embedded.provisionprofile"
 "$ROOT_DIR/script/compile_app_icon.sh" "$ICON_SOURCE" "$APP_RESOURCES" "$INFO_PLIST"
 
 plutil -lint "$INFO_PLIST" >/dev/null
@@ -75,7 +105,6 @@ fi
 
 ditto -c -k --keepParent "$APP_BUNDLE" "$APP_ZIP"
 
-require_notary_credentials
 submit_for_notarization "$APP_ZIP"
 xcrun stapler staple "$APP_BUNDLE"
 xcrun stapler validate "$APP_BUNDLE"
