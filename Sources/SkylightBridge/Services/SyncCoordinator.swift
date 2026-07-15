@@ -10,15 +10,16 @@ struct SyncRunSummary: Equatable, Sendable {
     let dryRun: Bool
     var photos = SyncDomainSummary()
     var reminders = SyncDomainSummary()
+    var chores = SyncDomainSummary()
     var recipes = SyncDomainSummary()
     var meals = SyncDomainSummary()
 
     var totalPlanned: Int {
-        photos.planned + reminders.planned + recipes.planned + meals.planned
+        photos.planned + reminders.planned + chores.planned + recipes.planned + meals.planned
     }
 
     var totalApplied: Int {
-        photos.applied + reminders.applied + recipes.applied + meals.applied
+        photos.applied + reminders.applied + chores.applied + recipes.applied + meals.applied
     }
 }
 
@@ -42,6 +43,8 @@ enum SyncCoordinatorError: Error, LocalizedError, Sendable {
     case ambiguousReminderDestination(String)
     case missingMealCategory(NotesContentKind)
     case invalidMealCategory(NotesContentKind)
+    case missingChoreReminderSource
+    case missingChoreList(String)
 
     var errorDescription: String? {
         switch self {
@@ -83,6 +86,10 @@ enum SyncCoordinatorError: Error, LocalizedError, Sendable {
             "Skylight does not have a meal category available for \(kind.rawValue)."
         case let .invalidMealCategory(kind):
             "The selected Skylight meal category is not available for \(kind.rawValue)."
+        case .missingChoreReminderSource:
+            "Apple Reminders is not available for chore synchronization."
+        case let .missingChoreList(title):
+            "The Apple Reminders list ‘\(title)’ could not be resolved."
         }
     }
 }
@@ -101,6 +108,35 @@ protocol ReminderSyncSource: Sendable {
     func syncCreateReminder(in listID: String, draft: AppleReminderDraft) async throws -> AppleReminderSnapshot
     func syncUpdateReminder(withID reminderID: String, patch: AppleReminderPatch) async throws -> AppleReminderSnapshot
     func syncRemoveReminder(withID reminderID: String) async throws
+}
+
+@MainActor
+protocol ChoreReminderSource: Sendable {
+    func syncReminderLists() throws -> [AppleReminderListSnapshot]
+    func syncCreateReminderList(named title: String) throws -> AppleReminderListSnapshot
+    func syncChoreReminders(in listID: String, memberKey: String) async throws -> [ChoreReminderSnapshot]
+    func syncCreateChoreReminder(
+        in listID: String,
+        draft: ChoreReminderDraft,
+        memberKey: String
+    ) throws -> ChoreReminderSnapshot
+    func syncUpdateChoreReminder(
+        withID reminderID: String,
+        patch: ChoreReminderPatch,
+        memberKey: String
+    ) throws -> ChoreReminderSnapshot
+    func syncSetChoreReminderCompletion(
+        withID reminderID: String,
+        completed: Bool,
+        dueDate: Date?,
+        memberKey: String
+    ) throws -> ChoreReminderSnapshot
+    func syncMoveChoreReminder(
+        withID reminderID: String,
+        toListID listID: String,
+        memberKey: String
+    ) throws -> ChoreReminderSnapshot
+    func syncRemoveChoreReminder(withID reminderID: String) throws
 }
 
 protocol NotesSyncSource: Sendable {
@@ -182,6 +218,35 @@ protocol SkylightSyncAPI: Sendable {
     ) async throws -> SkylightResource<SkylightListItemAttributes>
     func deleteListItem(frameID: String, listID: String, itemID: String) async throws
 
+    func listCategories(
+        frameID: String
+    ) async throws -> [SkylightResource<SkylightCategoryAttributes>]
+    func listAllChores(
+        frameID: String
+    ) async throws -> [SkylightResource<SkylightChoreAttributes>]
+    func listChores(
+        frameID: String,
+        before: String?,
+        after: String?,
+        includeLate: Bool?,
+        filter: String?
+    ) async throws -> [SkylightResource<SkylightChoreAttributes>]
+    func createChore(
+        frameID: String,
+        request: SkylightChoreRequest
+    ) async throws -> SkylightResource<SkylightChoreAttributes>
+    func updateChore(
+        frameID: String,
+        choreID: String,
+        request: SkylightChoreRequest
+    ) async throws -> SkylightResource<SkylightChoreAttributes>
+    func deleteChore(frameID: String, choreID: String) async throws
+    func setChoreCompletion(
+        frameID: String,
+        seriesID: String,
+        request: SkylightChoreCompletionRequest
+    ) async throws
+
     func createRecipe(
         frameID: String,
         request: SkylightRecipeRequest
@@ -213,6 +278,54 @@ protocol SkylightSyncAPI: Sendable {
         instanceISO: String,
         applyTo: String?
     ) async throws
+}
+
+// Existing test and preview APIs predate the optional chores domain. Empty
+// read defaults preserve those conformances; writes fail loudly if a caller
+// enables chores without implementing the concrete Skylight endpoints.
+extension SkylightSyncAPI {
+    func listCategories(
+        frameID _: String
+    ) async throws -> [SkylightResource<SkylightCategoryAttributes>] { [] }
+
+    func listAllChores(
+        frameID _: String
+    ) async throws -> [SkylightResource<SkylightChoreAttributes>] { [] }
+
+    func listChores(
+        frameID _: String,
+        before _: String?,
+        after _: String?,
+        includeLate _: Bool?,
+        filter _: String?
+    ) async throws -> [SkylightResource<SkylightChoreAttributes>] { [] }
+
+    func createChore(
+        frameID _: String,
+        request _: SkylightChoreRequest
+    ) async throws -> SkylightResource<SkylightChoreAttributes> {
+        throw SyncCoordinatorError.missingChoreReminderSource
+    }
+
+    func updateChore(
+        frameID _: String,
+        choreID _: String,
+        request _: SkylightChoreRequest
+    ) async throws -> SkylightResource<SkylightChoreAttributes> {
+        throw SyncCoordinatorError.missingChoreReminderSource
+    }
+
+    func deleteChore(frameID _: String, choreID _: String) async throws {
+        throw SyncCoordinatorError.missingChoreReminderSource
+    }
+
+    func setChoreCompletion(
+        frameID _: String,
+        seriesID _: String,
+        request _: SkylightChoreCompletionRequest
+    ) async throws {
+        throw SyncCoordinatorError.missingChoreReminderSource
+    }
 }
 
 extension ApplePhotoLibrary: PhotoSyncSource {
@@ -256,6 +369,63 @@ extension AppleRemindersStore: ReminderSyncSource {
     }
 
     func syncRemoveReminder(withID reminderID: String) async throws {
+        try removeReminder(withID: reminderID)
+    }
+}
+
+extension AppleRemindersStore: ChoreReminderSource {
+    func syncReminderLists() throws -> [AppleReminderListSnapshot] { try lists() }
+
+    func syncCreateReminderList(named title: String) throws -> AppleReminderListSnapshot {
+        try createList(named: title)
+    }
+
+    func syncChoreReminders(
+        in listID: String,
+        memberKey: String
+    ) async throws -> [ChoreReminderSnapshot] {
+        try await choreReminders(in: listID, memberKey: memberKey)
+    }
+
+    func syncCreateChoreReminder(
+        in listID: String,
+        draft: ChoreReminderDraft,
+        memberKey: String
+    ) throws -> ChoreReminderSnapshot {
+        try createChoreReminder(in: listID, draft: draft, memberKey: memberKey)
+    }
+
+    func syncUpdateChoreReminder(
+        withID reminderID: String,
+        patch: ChoreReminderPatch,
+        memberKey: String
+    ) throws -> ChoreReminderSnapshot {
+        try updateChoreReminder(withID: reminderID, patch: patch, memberKey: memberKey)
+    }
+
+    func syncSetChoreReminderCompletion(
+        withID reminderID: String,
+        completed: Bool,
+        dueDate: Date?,
+        memberKey: String
+    ) throws -> ChoreReminderSnapshot {
+        try setChoreReminderCompletion(
+            withID: reminderID,
+            completed: completed,
+            dueDate: dueDate,
+            memberKey: memberKey
+        )
+    }
+
+    func syncMoveChoreReminder(
+        withID reminderID: String,
+        toListID listID: String,
+        memberKey: String
+    ) throws -> ChoreReminderSnapshot {
+        try moveChoreReminder(withID: reminderID, toListID: listID, memberKey: memberKey)
+    }
+
+    func syncRemoveChoreReminder(withID reminderID: String) throws {
         try removeReminder(withID: reminderID)
     }
 }
@@ -374,6 +544,7 @@ struct DefaultMealDateResolver: MealDateResolving {
 actor SyncCoordinator {
     private let photoSource: any PhotoSyncSource
     private let reminderSource: any ReminderSyncSource
+    private let choreReminderSource: (any ChoreReminderSource)?
     private let notesSource: any NotesSyncSource
     private let imageConverter: any SyncImageConverting
     private let api: any SkylightSyncAPI
@@ -385,6 +556,7 @@ actor SyncCoordinator {
     init(
         photoSource: any PhotoSyncSource,
         reminderSource: any ReminderSyncSource,
+        choreReminderSource: (any ChoreReminderSource)? = nil,
         notesSource: any NotesSyncSource,
         imageConverter: any SyncImageConverting,
         api: any SkylightSyncAPI,
@@ -395,6 +567,7 @@ actor SyncCoordinator {
     ) {
         self.photoSource = photoSource
         self.reminderSource = reminderSource
+        self.choreReminderSource = choreReminderSource ?? reminderSource as? any ChoreReminderSource
         self.notesSource = notesSource
         self.imageConverter = imageConverter
         self.api = api
@@ -409,9 +582,11 @@ actor SyncCoordinator {
         apiClient: SkylightAPIClient,
         stateStore: SyncStateStore = SyncStateStore()
     ) -> SyncCoordinator {
-        SyncCoordinator(
+        let remindersStore = AppleRemindersStore()
+        return SyncCoordinator(
             photoSource: ApplePhotoLibrary(),
-            reminderSource: AppleRemindersStore(),
+            reminderSource: remindersStore,
+            choreReminderSource: remindersStore,
             notesSource: AppleNotesStore(),
             imageConverter: ImageConversionService(),
             api: apiClient,
@@ -441,6 +616,15 @@ actor SyncCoordinator {
         try await checkpoint(state, dryRun: configuration.dryRun)
         summary.reminders = try await syncReminders(
             mappings: configuration.reminderMappings.filter(\.enabled),
+            frameID: frameID,
+            dryRun: configuration.dryRun,
+            state: &state
+        )
+        try await checkpoint(state, dryRun: configuration.dryRun)
+        summary.chores = try await syncChores(
+            mappings: configuration.choreMappings.filter {
+                $0.isEnabled && ($0.frameID.isEmpty || $0.frameID == frameID)
+            },
             frameID: frameID,
             dryRun: configuration.dryRun,
             state: &state
@@ -547,6 +731,37 @@ actor SyncCoordinator {
                 break
             }
             state.reminders.removeAll { $0.id == record.id }
+            try await stateStore.saveSyncState(state)
+        }
+        return affected
+    }
+
+    /// Forgets a chore mapping's identity links and optionally removes the
+    /// linked series from one side. The Reminders lists themselves are kept.
+    func purgeChoreMapping(
+        mappingID: UUID,
+        frameID: String,
+        side: ReminderMappingCleanupSide = .none
+    ) async throws -> Int {
+        var state = try await stateStore.loadSyncState()
+        let records = state.chores
+            .filter { $0.mappingID == mappingID && $0.frameID == frameID }
+            .sorted { $0.appleReminderID < $1.appleReminderID }
+        var affected = 0
+        for record in records {
+            switch side {
+            case .skylight:
+                try? await api.deleteChore(frameID: frameID, choreID: record.skylightSeriesID)
+                affected += 1
+            case .appleReminders:
+                try? await choreReminderSource?.syncRemoveChoreReminder(
+                    withID: record.appleReminderID
+                )
+                affected += 1
+            case .none:
+                break
+            }
+            state.chores.removeAll { $0.id == record.id }
             try await stateStore.saveSyncState(state)
         }
         return affected
@@ -1153,6 +1368,372 @@ actor SyncCoordinator {
             request: SkylightListRequest(label: title, kind: mapping.destinationKind)
         )
         return ReminderDestinationResolution(id: created.id, needsCreation: true)
+    }
+
+    private func syncChores(
+        mappings: [ChoreMapping],
+        frameID: String,
+        dryRun: Bool,
+        state: inout SyncState
+    ) async throws -> SyncDomainSummary {
+        guard !mappings.isEmpty else { return SyncDomainSummary() }
+        guard let choreReminderSource else {
+            throw SyncCoordinatorError.missingChoreReminderSource
+        }
+        var summary = SyncDomainSummary()
+        let todayDate = Calendar.current.startOfDay(for: now())
+        let today = Self.isoDay(todayDate)
+        let yesterday = Self.isoDay(Calendar.current.date(byAdding: .day, value: -1, to: todayDate)!)
+        let tomorrow = Self.isoDay(Calendar.current.date(byAdding: .day, value: 1, to: todayDate)!)
+
+        for mapping in mappings {
+            let enabledLinks = mapping.memberLinks.filter(\.isEnabled)
+            let enabledKeys = Set(enabledLinks.map(\.memberKey))
+            state.chores.removeAll {
+                $0.mappingID == mapping.id && $0.frameID == frameID && !enabledKeys.contains($0.memberKey)
+            }
+            guard !enabledLinks.isEmpty else { continue }
+
+            var listIDByMember: [String: String] = [:]
+            var appleSnapshots: [ChoreReminderSnapshot] = []
+            var availableLists = try await choreReminderSource.syncReminderLists()
+                .filter(\.allowsContentModifications)
+            for link in enabledLinks {
+                let configuredID = link.appleListID?.trimmed ?? ""
+                let resolvedByID = configuredID.isEmpty
+                    ? nil
+                    : availableLists.first(where: { $0.id == configuredID })
+                let resolved = resolvedByID ?? availableLists.first(where: {
+                        $0.title.localizedCaseInsensitiveCompare(link.appleListTitle) == .orderedSame
+                    })
+                if let resolved {
+                    listIDByMember[link.memberKey] = resolved.id
+                    appleSnapshots += try await choreReminderSource.syncChoreReminders(
+                        in: resolved.id,
+                        memberKey: link.memberKey
+                    )
+                } else {
+                    summary.planned += 1
+                    guard !dryRun else { continue }
+                    let created = try await choreReminderSource.syncCreateReminderList(
+                        named: link.appleListTitle
+                    )
+                    availableLists.append(created)
+                    listIDByMember[link.memberKey] = created.id
+                    summary.applied += 1
+                }
+            }
+
+            let allResources = try await api.listAllChores(frameID: frameID)
+            let todayResources = try await api.listChores(
+                frameID: frameID,
+                before: tomorrow,
+                after: yesterday,
+                includeLate: true,
+                filter: nil
+            )
+            let todayByID = todayResources.reduce(into: [String: SkylightResource<SkylightChoreAttributes>]()) {
+                let seriesID = Self.choreSeriesID($1)
+                if $0[seriesID] == nil || $1.attributes.start == today {
+                    $0[seriesID] = $1
+                }
+            }
+            let records = state.chores.filter { $0.mappingID == mapping.id && $0.frameID == frameID }
+            let syncTime = now()
+            let remoteSnapshots = allResources.compactMap { resource -> SkylightChoreSnapshot? in
+                let memberKey = Self.choreMemberKey(resource, links: enabledLinks)
+                guard enabledKeys.contains(memberKey) else { return nil }
+                let recurrence = Self.choreRecurrence(resource.attributes.recurrenceSet)
+                let seriesID = Self.choreSeriesID(resource)
+                let todayResource = todayByID[seriesID]
+                let status = todayResource?.attributes.status ?? resource.attributes.status
+                let fingerprint = Self.choreFingerprint(
+                    resource: resource,
+                    memberKey: memberKey,
+                    todayStatus: status
+                )
+                let record = records.first { $0.skylightSeriesID == seriesID }
+                let modifiedAt = record?.contentFingerprint == fingerprint
+                    ? record!.lastSkylightModifiedAt
+                    : syncTime
+                return SkylightChoreSnapshot(
+                    id: seriesID,
+                    title: resource.attributes.summary ?? "Untitled Chore",
+                    notes: resource.attributes.description,
+                    memberKey: memberKey,
+                    recurrenceRaw: resource.attributes.recurrenceSet ?? [],
+                    recurrence: recurrence.rule,
+                    recurrenceUnsupported: recurrence.unsupported,
+                    todayStatus: status,
+                    startDate: Self.parseChoreDueDate(
+                        day: resource.attributes.start,
+                        time: resource.attributes.startTime,
+                        recurrence: recurrence.rule
+                    ),
+                    modifiedAt: modifiedAt
+                )
+            }
+
+            // EventKit may represent the next occurrence of a completed
+            // repeating reminder with a new calendar item identifier. Rebind
+            // that occurrence by the mapping's stable title/member identity
+            // before the planner interprets the old identifier as a deletion.
+            var activeRecords = records
+            let liveAppleIDs = Set(appleSnapshots.map(\.id))
+            var claimedAppleIDs = Set(activeRecords.compactMap {
+                liveAppleIDs.contains($0.appleReminderID) ? $0.appleReminderID : nil
+            })
+            var reboundCount = 0
+            for index in activeRecords.indices
+            where !liveAppleIDs.contains(activeRecords[index].appleReminderID) {
+                let record = activeRecords[index]
+                let candidates = appleSnapshots.filter {
+                    !claimedAppleIDs.contains($0.id) &&
+                        $0.memberKey == record.memberKey &&
+                        $0.title.trimmed.localizedCaseInsensitiveCompare(
+                            record.lastSyncedTitle?.trimmed ?? ""
+                        ) == .orderedSame
+                }
+                guard candidates.count == 1, let replacement = candidates.first else { continue }
+                activeRecords[index].appleReminderID = replacement.id
+                activeRecords[index].lastAppleModifiedAt = replacement.modifiedAt
+                claimedAppleIDs.insert(replacement.id)
+                Self.upsertChoreRecord(activeRecords[index], state: &state)
+                reboundCount += 1
+            }
+            let adoptionPairs = ChoreSyncPlanner.adoptionPairs(
+                apple: appleSnapshots,
+                skylight: remoteSnapshots,
+                links: activeRecords.map(Self.choreLink)
+            )
+            let appleForAdoption = Dictionary(uniqueKeysWithValues: appleSnapshots.map { ($0.id, $0) })
+            let remoteForAdoption = Dictionary(uniqueKeysWithValues: remoteSnapshots.map { ($0.id, $0) })
+            for pair in adoptionPairs {
+                guard let apple = appleForAdoption[pair.appleID],
+                      let remote = remoteForAdoption[pair.skylightID] else { continue }
+                let adopted = Self.choreRecord(
+                    mappingID: mapping.id,
+                    frameID: frameID,
+                    apple: apple,
+                    remote: remote,
+                    today: today
+                )
+                Self.upsertChoreRecord(adopted, state: &state)
+                activeRecords.removeAll {
+                    $0.appleReminderID == pair.appleID || $0.skylightSeriesID == pair.skylightID
+                }
+                activeRecords.append(adopted)
+            }
+            if !adoptionPairs.isEmpty || reboundCount > 0 {
+                try await checkpoint(state, dryRun: dryRun)
+            }
+
+            let actions = ChoreSyncPlanner.plan(
+                apple: appleSnapshots,
+                skylight: remoteSnapshots,
+                links: activeRecords.map(Self.choreLink),
+                direction: mapping.direction,
+                conflictPolicy: mapping.conflictPolicy,
+                today: today,
+                todayDate: todayDate
+            )
+
+            // When both sides independently reached the same occurrence state,
+            // there is no completion action to execute. Advance the persisted
+            // baseline anyway so the next sync can distinguish a later reopen
+            // from the already-reconciled occurrence.
+            for record in activeRecords {
+                guard let apple = appleForAdoption[record.appleReminderID],
+                      let remote = remoteForAdoption[record.skylightSeriesID] else { continue }
+                let remoteCompleted = remote.todayStatus == .complete || remote.todayStatus == .skipped
+                let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: todayDate)
+                    ?? .distantFuture
+                let appleRolledForward = if let baseline = record.baselineDueDate,
+                                             let due = apple.dueDate {
+                    due > baseline && baseline < tomorrow
+                } else {
+                    false
+                }
+                let appleCompleted = apple.isCompleted || appleRolledForward
+                guard appleCompleted == remoteCompleted,
+                      let index = state.chores.firstIndex(where: { $0.id == record.id }) else { continue }
+                state.chores[index].baselineCompletedInstanceDate = remoteCompleted ? today : nil
+                state.chores[index].baselineDueDate = apple.dueDate
+                state.chores[index].lastAppleModifiedAt = apple.modifiedAt
+                state.chores[index].lastSkylightModifiedAt = remote.modifiedAt
+                state.chores[index].contentFingerprint = Self.choreFingerprint(snapshot: remote)
+            }
+            summary.planned += actions.count
+            guard !dryRun else { continue }
+
+            let appleByID = Dictionary(uniqueKeysWithValues: appleSnapshots.map { ($0.id, $0) })
+            let remoteByID = Dictionary(uniqueKeysWithValues: remoteSnapshots.map { ($0.id, $0) })
+
+            for action in actions {
+                switch action {
+                case let .createRemote(appleID):
+                    guard let apple = appleByID[appleID] else { continue }
+                    let created = try await api.createChore(
+                        frameID: frameID,
+                        request: Self.choreRequest(apple: apple, today: today)
+                    )
+                    let remote = Self.remoteSnapshot(
+                        created,
+                        memberKey: apple.memberKey,
+                        status: apple.isCompleted ? .complete : .pending,
+                        modifiedAt: now()
+                    )
+                    Self.upsertChoreRecord(Self.choreRecord(
+                        mappingID: mapping.id,
+                        frameID: frameID,
+                        apple: apple,
+                        remote: remote,
+                        today: today
+                    ), state: &state)
+
+                case let .createApple(seriesID):
+                    guard let remote = remoteByID[seriesID],
+                          let listID = listIDByMember[remote.memberKey] else { continue }
+                    let apple = try await choreReminderSource.syncCreateChoreReminder(
+                        in: listID,
+                        draft: ChoreReminderDraft(
+                            title: remote.title,
+                            notes: remote.notes,
+                            dueDate: remote.startDate ?? todayDate,
+                            recurrence: remote.recurrence
+                        ),
+                        memberKey: remote.memberKey
+                    )
+                    Self.upsertChoreRecord(Self.choreRecord(
+                        mappingID: mapping.id,
+                        frameID: frameID,
+                        apple: apple,
+                        remote: remote,
+                        today: today
+                    ), state: &state)
+
+                case let .updateRemote(appleID, seriesID):
+                    guard let apple = appleByID[appleID], let remote = remoteByID[seriesID] else { continue }
+                    _ = try await api.updateChore(
+                        frameID: frameID,
+                        choreID: seriesID,
+                        request: Self.choreRequest(
+                            apple: apple,
+                            today: today,
+                            preserveRecurrence: apple.recurrenceUnsupported ||
+                                (state.chores.first {
+                                    $0.mappingID == mapping.id && $0.skylightSeriesID == seriesID
+                                }?.recurrenceDegraded == true)
+                        )
+                    )
+                    let updatedRemote = SkylightChoreSnapshot(
+                        id: remote.id,
+                        title: apple.title,
+                        notes: apple.notes,
+                        memberKey: apple.memberKey,
+                        recurrenceRaw: apple.recurrence.map { [RecurrenceRuleConverter.format($0)] }
+                            ?? remote.recurrenceRaw,
+                        recurrence: apple.recurrence ?? remote.recurrence,
+                        recurrenceUnsupported: apple.recurrenceUnsupported,
+                        todayStatus: remote.todayStatus,
+                        startDate: apple.dueDate,
+                        modifiedAt: now()
+                    )
+                    Self.upsertChoreRecord(Self.choreRecord(
+                        mappingID: mapping.id, frameID: frameID,
+                        apple: apple, remote: updatedRemote, today: today
+                    ), state: &state)
+
+                case let .updateApple(appleID, seriesID):
+                    guard var apple = appleByID[appleID], let remote = remoteByID[seriesID] else { continue }
+                    if apple.memberKey != remote.memberKey,
+                       let listID = listIDByMember[remote.memberKey] {
+                        apple = try await choreReminderSource.syncMoveChoreReminder(
+                            withID: appleID, toListID: listID, memberKey: remote.memberKey
+                        )
+                    }
+                    apple = try await choreReminderSource.syncUpdateChoreReminder(
+                        withID: appleID,
+                        patch: ChoreReminderPatch(
+                            title: remote.title,
+                            notes: remote.notes,
+                            dueDate: remote.startDate ?? apple.dueDate,
+                            recurrence: remote.recurrence,
+                            replaceRecurrence: !remote.recurrenceUnsupported
+                        ),
+                        memberKey: remote.memberKey
+                    )
+                    Self.upsertChoreRecord(Self.choreRecord(
+                        mappingID: mapping.id, frameID: frameID,
+                        apple: apple, remote: remote, today: today
+                    ), state: &state)
+
+                case let .completeRemote(seriesID, status):
+                    try await api.setChoreCompletion(
+                        frameID: frameID,
+                        seriesID: seriesID,
+                        request: SkylightChoreCompletionRequest(
+                            status: status,
+                            instanceDate: today,
+                            instanceTime: remoteByID[seriesID]?.startDate.map(Self.choreTime) ?? "06:00"
+                        )
+                    )
+                    if let index = state.chores.firstIndex(where: {
+                        $0.mappingID == mapping.id && $0.skylightSeriesID == seriesID
+                    }) {
+                        state.chores[index].baselineCompletedInstanceDate = status == .pending ? nil : today
+                        state.chores[index].lastSkylightModifiedAt = now()
+                        if let apple = appleByID[state.chores[index].appleReminderID] {
+                            state.chores[index].baselineDueDate = apple.dueDate
+                            state.chores[index].lastAppleModifiedAt = apple.modifiedAt
+                        }
+                        if let remote = remoteByID[seriesID] {
+                            state.chores[index].contentFingerprint = Self.choreFingerprint(
+                                snapshot: remote,
+                                todayStatus: status
+                            )
+                        }
+                    }
+
+                case let .completeApple(appleID, completed):
+                    guard let remoteRecord = state.chores.first(where: {
+                        $0.mappingID == mapping.id && $0.appleReminderID == appleID
+                    }) else { continue }
+                    let apple = try await choreReminderSource.syncSetChoreReminderCompletion(
+                        withID: appleID,
+                        completed: completed,
+                        dueDate: completed ? nil : todayDate,
+                        memberKey: remoteRecord.memberKey
+                    )
+                    if let index = state.chores.firstIndex(where: { $0.id == remoteRecord.id }) {
+                        state.chores[index].baselineCompletedInstanceDate = completed ? today : nil
+                        state.chores[index].baselineDueDate = apple.dueDate
+                        state.chores[index].lastAppleModifiedAt = apple.modifiedAt
+                        if let remote = remoteByID[remoteRecord.skylightSeriesID] {
+                            state.chores[index].lastSkylightModifiedAt = remote.modifiedAt
+                            state.chores[index].contentFingerprint = Self.choreFingerprint(
+                                snapshot: remote
+                            )
+                        }
+                    }
+
+                case let .deleteRemote(seriesID):
+                    try await api.deleteChore(frameID: frameID, choreID: seriesID)
+                    state.chores.removeAll {
+                        $0.mappingID == mapping.id && $0.skylightSeriesID == seriesID
+                    }
+
+                case let .deleteApple(appleID):
+                    try await choreReminderSource.syncRemoveChoreReminder(withID: appleID)
+                    state.chores.removeAll {
+                        $0.mappingID == mapping.id && $0.appleReminderID == appleID
+                    }
+                }
+                summary.applied += 1
+                try await checkpoint(state, dryRun: dryRun)
+            }
+        }
+        return summary
     }
 
     private struct ParsedRecipeNote {
@@ -2142,6 +2723,262 @@ actor SyncCoordinator {
 
     private func reminderFingerprint(title: String, isCompleted: Bool) -> String {
         stableHash("\(title)\u{0}\(isCompleted)")
+    }
+
+    private static func choreLink(_ record: ChoreSyncRecord) -> ChoreSyncLink {
+        ChoreSyncLink(
+            appleID: record.appleReminderID,
+            skylightID: record.skylightSeriesID,
+            memberKey: record.memberKey,
+            lastAppleModifiedAt: record.lastAppleModifiedAt,
+            lastSkylightModifiedAt: record.lastSkylightModifiedAt,
+            baselineTitle: record.lastSyncedTitle,
+            baselineNotes: record.lastSyncedNotes,
+            baselineRecurrence: record.lastSyncedRecurrence,
+            baselineDueDate: record.baselineDueDate,
+            baselineCompletedInstanceDate: record.baselineCompletedInstanceDate,
+            recurrenceDegraded: record.recurrenceDegraded
+        )
+    }
+
+    private static func choreRecord(
+        mappingID: UUID,
+        frameID: String,
+        apple: ChoreReminderSnapshot,
+        remote: SkylightChoreSnapshot,
+        today: String
+    ) -> ChoreSyncRecord {
+        ChoreSyncRecord(
+            mappingID: mappingID,
+            frameID: frameID,
+            appleReminderID: apple.id,
+            skylightSeriesID: remote.id,
+            memberKey: remote.memberKey,
+            lastAppleModifiedAt: apple.modifiedAt,
+            lastSkylightModifiedAt: remote.modifiedAt,
+            contentFingerprint: choreFingerprint(snapshot: remote),
+            lastSyncedTitle: remote.title,
+            lastSyncedNotes: remote.notes,
+            lastSyncedRecurrence: remote.recurrence.map(RecurrenceRuleConverter.format),
+            baselineDueDate: apple.dueDate,
+            baselineCompletedInstanceDate: remote.todayStatus == .complete || remote.todayStatus == .skipped
+                ? today
+                : nil,
+            recurrenceDegraded: remote.recurrenceUnsupported || apple.recurrenceUnsupported
+        )
+    }
+
+    private static func upsertChoreRecord(_ record: ChoreSyncRecord, state: inout SyncState) {
+        state.chores.removeAll {
+            $0.mappingID == record.mappingID &&
+                ($0.appleReminderID == record.appleReminderID ||
+                    $0.skylightSeriesID == record.skylightSeriesID)
+        }
+        state.chores.append(record)
+    }
+
+    private static func choreRequest(
+        apple: ChoreReminderSnapshot,
+        today: String,
+        preserveRecurrence: Bool = false
+    ) -> SkylightChoreRequest {
+        let upForGrabs = apple.memberKey == ChoreMemberLink.upForGrabsKey
+        return SkylightChoreRequest(
+            summary: apple.title,
+            description: apple.notes,
+            start: apple.dueDate.map(isoDay) ?? today,
+            startTime: apple.recurrence == nil ? apple.dueDate.map(choreTime) : nil,
+            status: apple.isCompleted ? .complete : .pending,
+            categoryID: upForGrabs ? nil : apple.memberKey,
+            categoryIDs: upForGrabs ? [] : [apple.memberKey],
+            recurring: preserveRecurrence ? nil : apple.recurrence != nil,
+            recurrenceSet: preserveRecurrence
+                ? nil
+                : apple.recurrence.map { [skylightRecurrence($0, dueDate: apple.dueDate)] },
+            upForGrabs: upForGrabs,
+            routine: apple.recurrence != nil
+        )
+    }
+
+    private static func choreMemberKey(
+        _ resource: SkylightResource<SkylightChoreAttributes>,
+        links: [ChoreMemberLink]
+    ) -> String {
+        if resource.attributes.upForGrabs == true {
+            return ChoreMemberLink.upForGrabsKey
+        }
+        for relationshipName in ["categories", "category", "assignees"] {
+            guard let data = resource.relationships?[relationshipName]?.data else { continue }
+            switch data {
+            case let .one(category): return category.id
+            case let .many(categories):
+                if let first = categories.first { return first.id }
+            }
+        }
+        if let group = resource.attributes.group?.trimmed, !group.isEmpty,
+           let match = links.first(where: {
+               $0.memberKey == group ||
+                   $0.memberLabel.localizedCaseInsensitiveCompare(group) == .orderedSame
+           }) {
+            return match.memberKey
+        }
+        return ""
+    }
+
+    private static func choreSeriesID(
+        _ resource: SkylightResource<SkylightChoreAttributes>
+    ) -> String {
+        let series = resource.attributes.series?.trimmed ?? ""
+        return series.isEmpty ? resource.id : series
+    }
+
+    private static func choreRecurrence(
+        _ recurrenceSet: [String]?
+    ) -> (rule: ParsedRecurrenceRule?, unsupported: Bool) {
+        guard let recurrenceSet, !recurrenceSet.isEmpty else { return (nil, false) }
+        let ruleStrings = recurrenceSet.filter {
+            let value = $0.trimmed.uppercased()
+            return value.hasPrefix("RRULE:") || value.hasPrefix("FREQ=")
+        }
+        guard let first = ruleStrings.first else { return (nil, true) }
+        do {
+            let parsed = try RecurrenceRuleConverter.parse(first)
+            return (
+                parsed,
+                ruleStrings.count != recurrenceSet.count ||
+                    ruleStrings.count > 1 ||
+                    !parsed.byHours.isEmpty
+            )
+        } catch {
+            return (nil, true)
+        }
+    }
+
+    private static func remoteSnapshot(
+        _ resource: SkylightResource<SkylightChoreAttributes>,
+        memberKey: String,
+        status: SkylightChoreStatus?,
+        modifiedAt: Date
+    ) -> SkylightChoreSnapshot {
+        let recurrence = choreRecurrence(resource.attributes.recurrenceSet)
+        return SkylightChoreSnapshot(
+            id: choreSeriesID(resource),
+            title: resource.attributes.summary ?? "Untitled Chore",
+            notes: resource.attributes.description,
+            memberKey: memberKey,
+            recurrenceRaw: resource.attributes.recurrenceSet ?? [],
+            recurrence: recurrence.rule,
+            recurrenceUnsupported: recurrence.unsupported,
+            todayStatus: status,
+            startDate: parseChoreDueDate(
+                day: resource.attributes.start,
+                time: resource.attributes.startTime,
+                recurrence: recurrence.rule
+            ),
+            modifiedAt: modifiedAt
+        )
+    }
+
+    private static func choreFingerprint(
+        resource: SkylightResource<SkylightChoreAttributes>,
+        memberKey: String,
+        todayStatus: SkylightChoreStatus?
+    ) -> String {
+        let recurrence = resource.attributes.recurrenceSet?.joined(separator: "|") ?? ""
+        return hash([
+            resource.attributes.summary ?? "",
+            resource.attributes.description ?? "",
+            recurrence,
+            memberKey,
+            todayStatus?.rawValue ?? "",
+            String(resource.attributes.upForGrabs ?? false)
+        ].joined(separator: "\u{0}"))
+    }
+
+    private static func choreFingerprint(snapshot: SkylightChoreSnapshot) -> String {
+        choreFingerprint(snapshot: snapshot, todayStatus: snapshot.todayStatus)
+    }
+
+    private static func choreFingerprint(
+        snapshot: SkylightChoreSnapshot,
+        todayStatus: SkylightChoreStatus?
+    ) -> String {
+        hash([
+            snapshot.title,
+            snapshot.notes ?? "",
+            snapshot.recurrenceRaw.joined(separator: "|"),
+            snapshot.memberKey,
+            todayStatus?.rawValue ?? "",
+            String(snapshot.memberKey == ChoreMemberLink.upForGrabsKey)
+        ].joined(separator: "\u{0}"))
+    }
+
+    private static func hash(_ value: String) -> String {
+        SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func isoDay(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar.current
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = Calendar.current.timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
+    }
+
+    private static func parseISODate(_ value: String?) -> Date? {
+        guard let value else { return nil }
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar.current
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = Calendar.current.timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.date(from: value)
+    }
+
+    private static func parseChoreDueDate(
+        day: String?,
+        time: String?,
+        recurrence: ParsedRecurrenceRule? = nil
+    ) -> Date? {
+        guard let date = parseISODate(day) else { return nil }
+        let parts = time?.split(separator: ":").compactMap { Int($0) } ?? []
+        let hour = parts.first ?? recurrence?.byHours.first
+        guard let hour else { return date }
+        let minute = parts.count >= 2 ? parts[1] : 0
+        return Calendar.current.date(
+            bySettingHour: hour,
+            minute: minute,
+            second: 0,
+            of: date
+        )
+    }
+
+    private static func choreTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar.current
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = Calendar.current.timeZone
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: date)
+    }
+
+    private static func skylightRecurrence(
+        _ rule: ParsedRecurrenceRule,
+        dueDate: Date?
+    ) -> String {
+        var rule = rule
+        if rule.byHours.isEmpty {
+            let hour = dueDate.map { Calendar.current.component(.hour, from: $0) } ?? 6
+            rule.byHours = [nearestSkylightChoreHour(hour)]
+        } else if rule.byHours.count > 1 || ![6, 14, 20].contains(rule.byHours[0]) {
+            rule.byHours = [nearestSkylightChoreHour(rule.byHours[0])]
+        }
+        return "RRULE:\(RecurrenceRuleConverter.format(rule))"
+    }
+
+    private static func nearestSkylightChoreHour(_ hour: Int) -> Int {
+        [6, 14, 20].min { abs($0 - hour) < abs($1 - hour) } ?? 6
     }
 
     private static func link(for record: ReminderSyncRecord) -> ReminderSyncLink {

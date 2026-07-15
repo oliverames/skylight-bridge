@@ -111,6 +111,74 @@ struct ReminderSyncRecord: Identifiable, Codable, Sendable, Hashable {
     }
 }
 
+struct ChoreSyncRecord: Identifiable, Codable, Sendable, Hashable {
+    var id: String { "\(mappingID.uuidString):\(appleReminderID)" }
+    let mappingID: UUID
+    var frameID: String
+    var appleReminderID: String
+    var skylightSeriesID: String
+    var memberKey: String
+    var lastAppleModifiedAt: Date
+    var lastSkylightModifiedAt: Date
+    var contentFingerprint: String
+    var lastSyncedTitle: String?
+    var lastSyncedNotes: String?
+    var lastSyncedRecurrence: String?
+    var baselineDueDate: Date?
+    var baselineCompletedInstanceDate: String?
+    var recurrenceDegraded: Bool
+
+    init(
+        mappingID: UUID,
+        frameID: String,
+        appleReminderID: String,
+        skylightSeriesID: String,
+        memberKey: String,
+        lastAppleModifiedAt: Date,
+        lastSkylightModifiedAt: Date,
+        contentFingerprint: String,
+        lastSyncedTitle: String? = nil,
+        lastSyncedNotes: String? = nil,
+        lastSyncedRecurrence: String? = nil,
+        baselineDueDate: Date? = nil,
+        baselineCompletedInstanceDate: String? = nil,
+        recurrenceDegraded: Bool = false
+    ) {
+        self.mappingID = mappingID
+        self.frameID = frameID
+        self.appleReminderID = appleReminderID
+        self.skylightSeriesID = skylightSeriesID
+        self.memberKey = memberKey
+        self.lastAppleModifiedAt = lastAppleModifiedAt
+        self.lastSkylightModifiedAt = lastSkylightModifiedAt
+        self.contentFingerprint = contentFingerprint
+        self.lastSyncedTitle = lastSyncedTitle
+        self.lastSyncedNotes = lastSyncedNotes
+        self.lastSyncedRecurrence = lastSyncedRecurrence
+        self.baselineDueDate = baselineDueDate
+        self.baselineCompletedInstanceDate = baselineCompletedInstanceDate
+        self.recurrenceDegraded = recurrenceDegraded
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        mappingID = try container.decode(UUID.self, forKey: .mappingID)
+        frameID = try container.decodeIfPresent(String.self, forKey: .frameID) ?? ""
+        appleReminderID = try container.decode(String.self, forKey: .appleReminderID)
+        skylightSeriesID = try container.decodeIfPresent(String.self, forKey: .skylightSeriesID) ?? ""
+        memberKey = try container.decodeIfPresent(String.self, forKey: .memberKey) ?? ""
+        lastAppleModifiedAt = try container.decodeIfPresent(Date.self, forKey: .lastAppleModifiedAt) ?? .distantPast
+        lastSkylightModifiedAt = try container.decodeIfPresent(Date.self, forKey: .lastSkylightModifiedAt) ?? .distantPast
+        contentFingerprint = try container.decodeIfPresent(String.self, forKey: .contentFingerprint) ?? ""
+        lastSyncedTitle = try container.decodeIfPresent(String.self, forKey: .lastSyncedTitle)
+        lastSyncedNotes = try container.decodeIfPresent(String.self, forKey: .lastSyncedNotes)
+        lastSyncedRecurrence = try container.decodeIfPresent(String.self, forKey: .lastSyncedRecurrence)
+        baselineDueDate = try container.decodeIfPresent(Date.self, forKey: .baselineDueDate)
+        baselineCompletedInstanceDate = try container.decodeIfPresent(String.self, forKey: .baselineCompletedInstanceDate)
+        recurrenceDegraded = try container.decodeIfPresent(Bool.self, forKey: .recurrenceDegraded) ?? false
+    }
+}
+
 struct NoteSyncRecord: Identifiable, Codable, Sendable, Hashable {
     var id: String { "\(kind.rawValue):\(appleNoteID)" }
     let kind: NotesContentKind
@@ -197,6 +265,7 @@ struct PhotoAlbumRecord: Identifiable, Codable, Sendable, Hashable {
 struct SyncState: Codable, Sendable {
     var photos: [PhotoSyncRecord] = []
     var reminders: [ReminderSyncRecord] = []
+    var chores: [ChoreSyncRecord] = []
     var notes: [NoteSyncRecord] = []
     // Absent in state files written before album tracking existed.
     var photoAlbums: [PhotoAlbumRecord] = []
@@ -212,6 +281,7 @@ struct SyncState: Codable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         photos = try container.decodeIfPresent([PhotoSyncRecord].self, forKey: .photos) ?? []
         reminders = try container.decodeIfPresent([ReminderSyncRecord].self, forKey: .reminders) ?? []
+        chores = try container.decodeIfPresent([ChoreSyncRecord].self, forKey: .chores) ?? []
         notes = try container.decodeIfPresent([NoteSyncRecord].self, forKey: .notes) ?? []
         photoAlbums = try container.decodeIfPresent([PhotoAlbumRecord].self, forKey: .photoAlbums) ?? []
         recipeFallbackCacheClearedFrameIDs = try container.decodeIfPresent(

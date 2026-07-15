@@ -6,6 +6,162 @@ import UniformTypeIdentifiers
 @testable import SkylightBridge
 
 struct LiveSkylightIntegrationTests {
+    @Test("Live recurring chore create, complete, reopen, and delete lifecycle")
+    func liveRecurringChoreLifecycle() async throws {
+        guard ProcessInfo.processInfo.environment["SKYLIGHT_LIVE_CHORE_MUTATIONS"] == "1" else {
+            return
+        }
+        let manager = SkylightSessionManager()
+        let client = try await manager.client(
+            configuration: SkylightAccountConfiguration(),
+            validateFrame: false
+        )
+        let frame = try #require(try await client.listFrames().first)
+        let category = try #require(
+            try await client.listCategories(frameID: frame.id).first {
+                $0.attributes.selectedForChoreChart == true
+            }
+        )
+        for leftover in try await client.listAllChores(frameID: frame.id)
+        where (leftover.attributes.summary ?? "").hasPrefix("Skylight Bridge Verification") {
+            try await client.deleteChore(
+                frameID: frame.id,
+                choreID: leftover.attributes.series ?? leftover.id
+            )
+        }
+        let today = currentISODate()
+        var seriesID: String?
+        do {
+            let created = try await client.createRoutineChore(
+                frameID: frame.id,
+                request: SkylightChoreRequest(
+                    summary: "Skylight Bridge Verification \(UUID().uuidString.prefix(8))",
+                    description: "Temporary integration test; safe to delete.",
+                    start: today,
+                    categoryID: category.id,
+                    categoryIDs: [category.id],
+                    recurring: true,
+                    recurrenceSet: ["RRULE:FREQ=DAILY;INTERVAL=1;BYHOUR=6"],
+                    upForGrabs: false,
+                    routine: true
+                )
+            )
+            seriesID = created.attributes.series ?? created.id
+            let resolvedID = try #require(seriesID)
+            _ = try await client.updateChore(
+                frameID: frame.id,
+                choreID: resolvedID,
+                request: SkylightChoreRequest(
+                    summary: "Skylight Bridge Verification Updated",
+                    description: "Temporary integration test; safe to delete.",
+                    start: today,
+                    categoryID: category.id,
+                    categoryIDs: [category.id],
+                    recurring: true,
+                    recurrenceSet: ["RRULE:FREQ=DAILY;INTERVAL=1;BYHOUR=6"],
+                    upForGrabs: false,
+                    routine: true
+                )
+            )
+            let inventory = try await client.listAllChores(frameID: frame.id)
+            #expect(inventory.contains { ($0.attributes.series ?? $0.id) == resolvedID })
+            try await client.setChoreCompletion(
+                frameID: frame.id,
+                seriesID: resolvedID,
+                request: SkylightChoreCompletionRequest(
+                    status: .complete,
+                    instanceDate: today,
+                    instanceTime: "06:00"
+                )
+            )
+            try await client.setChoreCompletion(
+                frameID: frame.id,
+                seriesID: resolvedID,
+                request: SkylightChoreCompletionRequest(
+                    status: .pending,
+                    instanceDate: today,
+                    instanceTime: "06:00"
+                )
+            )
+            try await client.deleteChore(frameID: frame.id, choreID: resolvedID)
+            try await waitForChoreDeletion(
+                client: client,
+                frameID: frame.id,
+                seriesID: resolvedID
+            )
+            try await waitForChoreVerificationCleanup(client: client, frameID: frame.id)
+            seriesID = nil
+        } catch {
+            if let seriesID {
+                try? await client.deleteChore(frameID: frame.id, choreID: seriesID)
+            }
+            throw error
+        }
+    }
+
+    @Test("Live chore inventory matches the sync decoder contract")
+    func liveChoreInventoryContract() async throws {
+        guard ProcessInfo.processInfo.environment["SKYLIGHT_LIVE_READS"] == "1" else {
+            return
+        }
+        let manager = SkylightSessionManager()
+        let client = try await manager.client(
+            configuration: SkylightAccountConfiguration(),
+            validateFrame: false
+        )
+        let frame = try #require(try await client.listFrames().first)
+        let categories = try await client.listCategories(frameID: frame.id)
+        let chores: [SkylightResource<SkylightChoreAttributes>]
+        do {
+            chores = try await client.listAllChores(frameID: frame.id)
+        } catch {
+            let raw: SkylightJSONValue = try await client.authenticatedRequest(
+                method: "GET",
+                path: ["frames", frame.id, "chores", "all"]
+            )
+            print("CHORE_RAW_SHAPE \(Self.jsonShape(raw))")
+            throw error
+        }
+        let relationshipKeys = Set(chores.flatMap { $0.relationships?.keys ?? [:].keys })
+        let recurrenceSamples = chores.compactMap(\.attributes.recurrenceSet).flatMap { $0 }
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: Date())
+        let before = currentISODate(calendar.date(byAdding: .day, value: 1, to: start)!)
+        let after = currentISODate(calendar.date(byAdding: .day, value: -1, to: start)!)
+        let datedChores = try await client.listChores(
+            frameID: frame.id,
+            before: before,
+            after: after
+        )
+
+        print("CHORE_CONTRACT categories=\(categories.count) chores=\(chores.count) dated=\(datedChores.count) relationshipKeys=\(relationshipKeys.sorted()) recurrenceSamples=\(recurrenceSamples.prefix(3))")
+        #expect(categories.contains { $0.attributes.selectedForChoreChart == true })
+        if chores.contains(where: { $0.attributes.upForGrabs != true }) {
+            #expect(
+                relationshipKeys.contains("category")
+                    || relationshipKeys.contains("categories")
+                    || chores.contains { ($0.attributes.group ?? "").isEmpty == false }
+            )
+        }
+        for rule in recurrenceSamples where rule.uppercased().hasPrefix("RRULE:")
+            || rule.uppercased().hasPrefix("FREQ=") {
+            _ = try RecurrenceRuleConverter.parse(rule)
+        }
+    }
+
+    private static func jsonShape(_ value: SkylightJSONValue) -> String {
+        switch value {
+        case let .object(object):
+            return "object(keys=\(object.keys.sorted()), children=\(object.mapValues(jsonShape)))"
+        case let .array(array):
+            return "array(count=\(array.count), first=\(array.first.map(jsonShape) ?? "none"))"
+        case .string: return "string"
+        case .number: return "number"
+        case .bool: return "bool"
+        case .null: return "null"
+        }
+    }
+
     @Test("Live account supports authentication, read, list, and photo lifecycle")
     func liveAccountLifecycle() async throws {
         guard ProcessInfo.processInfo.environment["SKYLIGHT_LIVE_TESTS"] == "1",
@@ -215,13 +371,44 @@ struct LiveSkylightIntegrationTests {
         return data as Data
     }
 
-    private func currentISODate() -> String {
+    private func currentISODate(_ date: Date = Date()) -> String {
         let formatter = DateFormatter()
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = .current
         formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: Date())
+        return formatter.string(from: date)
+    }
+
+    private func waitForChoreDeletion(
+        client: SkylightAPIClient,
+        frameID: String,
+        seriesID: String
+    ) async throws {
+        for _ in 0 ..< 20 {
+            let inventory = try await client.listAllChores(frameID: frameID)
+            if !inventory.contains(where: { ($0.attributes.series ?? $0.id) == seriesID }) {
+                return
+            }
+            try await ContinuousClock().sleep(for: .milliseconds(250))
+        }
+        throw LiveTestError.choreDeletionTimedOut(seriesID)
+    }
+
+    private func waitForChoreVerificationCleanup(
+        client: SkylightAPIClient,
+        frameID: String
+    ) async throws {
+        for _ in 0 ..< 20 {
+            let leftovers = try await client.listAllChores(frameID: frameID).filter {
+                ($0.attributes.summary ?? "").hasPrefix("Skylight Bridge Verification")
+            }
+            if leftovers.isEmpty {
+                return
+            }
+            try await ContinuousClock().sleep(for: .milliseconds(250))
+        }
+        throw LiveTestError.choreVerificationCleanupTimedOut
     }
 
     private func waitForMessage(
@@ -269,6 +456,8 @@ struct LiveSkylightIntegrationTests {
 }
 
 private enum LiveTestError: Error {
+    case choreDeletionTimedOut(String)
+    case choreVerificationCleanupTimedOut
     case imageCreationFailed
     case processingTimedOut(String?)
     case albumMembershipTimedOut

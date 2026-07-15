@@ -18,6 +18,7 @@ final class AppStore {
     var skylightAlbums: [SkylightResource<SkylightAlbumAttributes>] = []
     var skylightLists: [SkylightResource<SkylightListAttributes>] = []
     var skylightMealCategories: [SkylightResource<SkylightMealCategoryAttributes>] = []
+    var skylightChoreCategories: [SkylightResource<SkylightCategoryAttributes>] = []
     var photosAuthorizationStatus: ApplePhotosAuthorizationStatus = .notDetermined
     var remindersAuthorizationStatus: AppleRemindersAuthorizationStatus = .notDetermined
     var notesAccessGranted = false
@@ -27,6 +28,7 @@ final class AppStore {
     var connectionError: String?
     var isRefreshingSources = false
     var isSyncing = false
+    var isSettingUpChoreLists = false
     var lastSyncAt: Date?
     /// True after a sync attempt fails, until the next attempt succeeds. Drives
     /// the menu bar's error state so background failures aren't invisible.
@@ -203,6 +205,116 @@ final class AppStore {
             message: "Created the Apple Reminders list “\(list.title)”."
         ))
         return list
+    }
+
+    /// Creates or reuses one Apple Reminders list for each person already
+    /// enabled in Skylight's Chore Chart, plus the shared Up for Grabs list.
+    /// Skylight is deliberately the source of setup truth, so the frame must
+    /// be configured before this action is available.
+    func setupChoreListsFromSkylight() async {
+        guard !isSettingUpChoreLists else { return }
+        guard isSkylightConnected else {
+            statusMessage = "Configure Skylight first, then set up chore lists."
+            appendActivity(.init(
+                level: .warning,
+                area: .chores,
+                message: "Chore setup needs a connected Skylight frame with its Chore Chart configured first."
+            ))
+            return
+        }
+        guard remindersAuthorizationStatus == .fullAccess else {
+            statusMessage = "Allow Reminders access before setting up chore lists."
+            return
+        }
+        isSettingUpChoreLists = true
+        defer { isSettingUpChoreLists = false }
+
+        do {
+            let frameID = configuration.account.frameID.trimmed
+            let client = try await sessionManager.client(configuration: configuration.account)
+            let categories = try await client.listCategories(frameID: frameID)
+                .filter { $0.attributes.selectedForChoreChart == true }
+                .sorted {
+                    ($0.attributes.label ?? "").localizedStandardCompare($1.attributes.label ?? "")
+                        == .orderedAscending
+                }
+            guard !categories.isEmpty else {
+                statusMessage = "Set up people in Skylight's Chore Chart first."
+                appendActivity(.init(
+                    level: .warning,
+                    area: .chores,
+                    message: "Skylight has no people selected for its Chore Chart. Configure the Chore Chart on Skylight, then try again."
+                ))
+                return
+            }
+
+            var availableLists = try remindersStore.lists()
+                .filter(\.allowsContentModifications)
+            var existingMapping = configuration.choreMappings.first {
+                $0.frameID == frameID || ($0.frameID.isEmpty && configuration.choreMappings.count == 1)
+            } ?? ChoreMapping()
+            let oldLinks = Dictionary(uniqueKeysWithValues: existingMapping.memberLinks.map {
+                ($0.memberKey, $0)
+            })
+            var links: [ChoreMemberLink] = categories.map { category in
+                let trimmedLabel = category.attributes.label?.trimmed ?? ""
+                let label = trimmedLabel.isEmpty ? "Person" : trimmedLabel
+                return ChoreMemberLink(
+                    memberKey: category.id,
+                    memberLabel: label,
+                    appleListTitle: oldLinks[category.id]?.appleListTitle ?? "\(label) Chores",
+                    isEnabled: oldLinks[category.id]?.isEnabled ?? true
+                )
+            }
+            links.append(ChoreMemberLink(
+                memberKey: ChoreMemberLink.upForGrabsKey,
+                memberLabel: "Up for Grabs",
+                appleListTitle: oldLinks[ChoreMemberLink.upForGrabsKey]?.appleListTitle
+                    ?? "Up for Grabs",
+                isEnabled: oldLinks[ChoreMemberLink.upForGrabsKey]?.isEnabled ?? true
+            ))
+
+            var createdCount = 0
+            for index in links.indices {
+                let oldID = oldLinks[links[index].memberKey]?.appleListID
+                let foundByID = oldID.flatMap { id in availableLists.first { $0.id == id } }
+                let found = foundByID ?? availableLists.first {
+                    $0.title.localizedCaseInsensitiveCompare(links[index].appleListTitle) == .orderedSame
+                }
+                let list: AppleReminderListSnapshot
+                if let found {
+                    list = found
+                } else {
+                    list = try remindersStore.createList(named: links[index].appleListTitle)
+                    availableLists.append(list)
+                    createdCount += 1
+                }
+                links[index].appleListID = list.id
+            }
+
+            existingMapping.frameID = frameID
+            existingMapping.frameName = skylightFrames.first(where: { $0.id == frameID })?
+                .attributes.name ?? "Skylight"
+            existingMapping.memberLinks = links
+            existingMapping.isEnabled = true
+            if let index = configuration.choreMappings.firstIndex(where: { $0.id == existingMapping.id }) {
+                configuration.choreMappings[index] = existingMapping
+            } else {
+                configuration.choreMappings.append(existingMapping)
+            }
+            reminderLists = try remindersStore.lists()
+            skylightChoreCategories = categories
+            saveConfiguration(triggerSync: true)
+            let reused = links.count - createdCount
+            statusMessage = "Chore lists are ready."
+            appendActivity(.init(
+                level: .success,
+                area: .chores,
+                message: "Chore setup created \(createdCount) Apple Reminders list\(createdCount == 1 ? "" : "s") and reused \(reused)."
+            ))
+        } catch {
+            recordSourceError(error, area: .chores)
+        }
     }
 
     /// Reads the Automation permission for Notes from TCC so the status rows
@@ -435,6 +547,7 @@ final class AppStore {
             try await refreshSkylightDestinations(using: client)
             record(summary.photos, area: .photos, dryRun: summary.dryRun)
             record(summary.reminders, area: .reminders, dryRun: summary.dryRun)
+            record(summary.chores, area: .chores, dryRun: summary.dryRun)
             record(summary.recipes, area: .recipes, dryRun: summary.dryRun)
             record(summary.meals, area: .meals, dryRun: summary.dryRun)
             lastSyncAt = .now
@@ -552,6 +665,27 @@ final class AppStore {
         saveConfiguration()
     }
 
+    func removeChoreMapping(_ mapping: ChoreMapping) async {
+        let frameID = mapping.frameID.trimmed.isEmpty
+            ? configuration.account.frameID.trimmed
+            : mapping.frameID.trimmed
+        if !frameID.isEmpty, isSkylightConnected {
+            do {
+                let client = try await sessionManager.client(configuration: configuration.account)
+                let coordinator = SyncCoordinator.live(apiClient: client)
+                _ = try await coordinator.purgeChoreMapping(
+                    mappingID: mapping.id,
+                    frameID: frameID,
+                    side: .none
+                )
+            } catch {
+                recordSourceError(error, area: .chores)
+            }
+        }
+        configuration.choreMappings.removeAll { $0.id == mapping.id }
+        saveConfiguration()
+    }
+
     func refreshSkylightDestinations() async {
         do {
             let client = try await sessionManager.client(configuration: configuration.account)
@@ -575,11 +709,13 @@ final class AppStore {
             skylightAlbums = []
             skylightLists = []
             skylightMealCategories = []
+            skylightChoreCategories = []
             return
         }
         async let albums = client.listAlbums(frameID: frameID)
         async let lists = client.listLists(frameID: frameID).data
         async let mealCategories = client.listMealCategories(frameID: frameID)
+        async let choreCategories = client.listCategories(frameID: frameID)
         skylightAlbums = try await albums.sorted {
             ($0.attributes.title ?? "").localizedStandardCompare($1.attributes.title ?? "") == .orderedAscending
         }
@@ -588,6 +724,12 @@ final class AppStore {
         }
         skylightMealCategories = (try? await mealCategories)?.sorted {
             ($0.attributes.label ?? "").localizedStandardCompare($1.attributes.label ?? "") == .orderedAscending
+        } ?? []
+        skylightChoreCategories = (try? await choreCategories)?.filter {
+            $0.attributes.selectedForChoreChart == true
+        }.sorted {
+            ($0.attributes.label ?? "").localizedStandardCompare($1.attributes.label ?? "")
+                == .orderedAscending
         } ?? []
         hydrateUniqueDestinationIDs()
     }

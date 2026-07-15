@@ -2,6 +2,7 @@ enum NavigationSection: String, CaseIterable, Identifiable, Sendable {
     case overview
     case photos
     case reminders
+    case chores
     case recipes
     case meals
     case activity
@@ -13,7 +14,7 @@ enum NavigationSection: String, CaseIterable, Identifiable, Sendable {
 
     /// Sync-source sections, shown as the top sidebar group.
     static let sources: [NavigationSection] = [
-        .overview, .photos, .reminders, .recipes, .meals, .activity
+        .overview, .photos, .reminders, .chores, .recipes, .meals, .activity
     ]
 
     /// Account and configuration sections, shown as the lower sidebar group.
@@ -28,6 +29,7 @@ enum NavigationSection: String, CaseIterable, Identifiable, Sendable {
         case .overview: "Overview"
         case .photos: "Photos"
         case .reminders: "Reminders"
+        case .chores: "Chores"
         case .recipes: "Recipes"
         case .meals: "Meals"
         case .activity: "Activity"
@@ -42,6 +44,7 @@ enum NavigationSection: String, CaseIterable, Identifiable, Sendable {
         case .overview: "square.grid.2x2"
         case .photos: "photo.on.rectangle.angled"
         case .reminders: "checklist"
+        case .chores: "person.2.badge.gearshape"
         case .recipes: "book.closed"
         case .meals: "fork.knife"
         case .activity: "clock.arrow.circlepath"

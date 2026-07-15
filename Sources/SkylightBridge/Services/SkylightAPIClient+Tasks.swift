@@ -23,7 +23,7 @@ extension SkylightAPIClient {
     }
 
     func listAllChores(frameID: String) async throws -> [SkylightResource<SkylightChoreAttributes>] {
-        let response: SkylightCollectionResponse<SkylightChoreAttributes> = try await send(
+        let response: SkylightAllChoresResponse = try await send(
             method: "GET",
             path: ["frames", frameID, "chores", "all"]
         )
@@ -106,7 +106,8 @@ extension SkylightAPIClient {
     func deleteChore(frameID: String, choreID: String) async throws {
         try await sendWithoutResponse(
             method: "DELETE",
-            path: ["frames", frameID, "chores", choreID]
+            path: ["frames", frameID, "chores", choreID],
+            query: [URLQueryItem(name: "apply_to", value: "all")]
         )
     }
 

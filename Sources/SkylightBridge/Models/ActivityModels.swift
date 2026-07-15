@@ -10,6 +10,7 @@ enum ActivityLevel: String, Codable, Sendable {
 enum IntegrationArea: String, Codable, Sendable {
     case photos
     case reminders
+    case chores
     case recipes
     case meals
     case account

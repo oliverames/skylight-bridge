@@ -274,6 +274,7 @@ struct SkylightAPIClientTests {
             before: "chore-2",
             after: "chore-0"
         )
+        try await client.deleteChore(frameID: "frame-1", choreID: "series-1")
 
         #expect(meal.id == "meal-1")
         let requests = await recorder.requests
@@ -282,6 +283,10 @@ struct SkylightAPIClientTests {
         let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
         let position = try #require(object["position"] as? [String: String])
         #expect(position == ["before": "chore-2", "after": "chore-0"])
+        #expect(requests[2].httpMethod == "DELETE")
+        #expect(requests[2].url?.path == "/api/frames/frame-1/chores/series-1")
+        #expect(URLComponents(url: requests[2].url!, resolvingAgainstBaseURL: false)?
+            .queryItems?.first(where: { $0.name == "apply_to" })?.value == "all")
     }
 
     @Test("Generic authenticated escape hatch preserves private API headers")

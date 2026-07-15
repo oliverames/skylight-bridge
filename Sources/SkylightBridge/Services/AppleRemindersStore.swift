@@ -140,6 +140,121 @@ final class AppleRemindersStore {
         }
     }
 
+    func choreReminders(in listID: String, memberKey: String) async throws -> [ChoreReminderSnapshot] {
+        try requireFullAccess()
+        guard let calendar = eventStore.calendar(withIdentifier: listID),
+              calendar.allowedEntityTypes.contains(.reminder) else {
+            throw AppleRemindersStoreError.listNotFound(listID)
+        }
+        let predicate = eventStore.predicateForReminders(in: [calendar])
+        return await withCheckedContinuation { continuation in
+            eventStore.fetchReminders(matching: predicate) { reminders in
+                continuation.resume(returning: (reminders ?? []).map {
+                    Self.choreSnapshot(for: $0, memberKey: memberKey)
+                })
+            }
+        }
+    }
+
+    func createChoreReminder(
+        in listID: String,
+        draft: ChoreReminderDraft,
+        memberKey: String
+    ) throws -> ChoreReminderSnapshot {
+        try requireFullAccess()
+        guard let calendar = eventStore.calendar(withIdentifier: listID),
+              calendar.allowedEntityTypes.contains(.reminder) else {
+            throw AppleRemindersStoreError.listNotFound(listID)
+        }
+        guard calendar.allowsContentModifications else {
+            throw AppleRemindersStoreError.readOnlyList(listID)
+        }
+        let reminder = EKReminder(eventStore: eventStore)
+        reminder.calendar = calendar
+        reminder.title = draft.title
+        reminder.notes = draft.notes
+        reminder.dueDateComponents = draft.dueDate.map(Self.dateComponents)
+        if let recurrence = draft.recurrence {
+            reminder.addRecurrenceRule(RecurrenceRuleConverter.ekRecurrenceRule(from: recurrence))
+        }
+        do {
+            try eventStore.save(reminder, commit: true)
+        } catch {
+            throw AppleRemindersStoreError.eventKit(error.localizedDescription)
+        }
+        return Self.choreSnapshot(for: reminder, memberKey: memberKey)
+    }
+
+    func updateChoreReminder(
+        withID reminderID: String,
+        patch: ChoreReminderPatch,
+        memberKey: String
+    ) throws -> ChoreReminderSnapshot {
+        try requireFullAccess()
+        guard let reminder = eventStore.calendarItem(withIdentifier: reminderID) as? EKReminder else {
+            throw AppleRemindersStoreError.reminderNotFound(reminderID)
+        }
+        reminder.title = patch.title
+        reminder.notes = patch.notes
+        reminder.dueDateComponents = patch.dueDate.map(Self.dateComponents)
+        if patch.replaceRecurrence {
+            for rule in reminder.recurrenceRules ?? [] { reminder.removeRecurrenceRule(rule) }
+            if let recurrence = patch.recurrence {
+                reminder.addRecurrenceRule(RecurrenceRuleConverter.ekRecurrenceRule(from: recurrence))
+            }
+        }
+        do {
+            try eventStore.save(reminder, commit: true)
+        } catch {
+            throw AppleRemindersStoreError.eventKit(error.localizedDescription)
+        }
+        return Self.choreSnapshot(for: reminder, memberKey: memberKey)
+    }
+
+    func setChoreReminderCompletion(
+        withID reminderID: String,
+        completed: Bool,
+        dueDate: Date?,
+        memberKey: String
+    ) throws -> ChoreReminderSnapshot {
+        try requireFullAccess()
+        guard let reminder = eventStore.calendarItem(withIdentifier: reminderID) as? EKReminder else {
+            throw AppleRemindersStoreError.reminderNotFound(reminderID)
+        }
+        if !completed, let dueDate {
+            reminder.dueDateComponents = Self.dateComponents(dueDate)
+        }
+        reminder.isCompleted = completed
+        do {
+            try eventStore.save(reminder, commit: true)
+        } catch {
+            throw AppleRemindersStoreError.eventKit(error.localizedDescription)
+        }
+        return Self.choreSnapshot(for: reminder, memberKey: memberKey)
+    }
+
+    func moveChoreReminder(
+        withID reminderID: String,
+        toListID listID: String,
+        memberKey: String
+    ) throws -> ChoreReminderSnapshot {
+        try requireFullAccess()
+        guard let reminder = eventStore.calendarItem(withIdentifier: reminderID) as? EKReminder else {
+            throw AppleRemindersStoreError.reminderNotFound(reminderID)
+        }
+        guard let calendar = eventStore.calendar(withIdentifier: listID),
+              calendar.allowedEntityTypes.contains(.reminder) else {
+            throw AppleRemindersStoreError.listNotFound(listID)
+        }
+        reminder.calendar = calendar
+        do {
+            try eventStore.save(reminder, commit: true)
+        } catch {
+            throw AppleRemindersStoreError.eventKit(error.localizedDescription)
+        }
+        return Self.choreSnapshot(for: reminder, memberKey: memberKey)
+    }
+
     func reminder(withID reminderID: String) throws -> AppleReminderSnapshot {
         try requireFullAccess()
         guard let reminder = eventStore.calendarItem(withIdentifier: reminderID) as? EKReminder else {
@@ -350,5 +465,49 @@ final class AppleRemindersStore {
             .sorted { left, right in
                 left.title.localizedStandardCompare(right.title) == .orderedAscending
             }
+    }
+
+    nonisolated private static func choreSnapshot(
+        for reminder: EKReminder,
+        memberKey: String
+    ) -> ChoreReminderSnapshot {
+        let parsedRecurrence: ParsedRecurrenceRule?
+        let recurrenceUnsupported: Bool
+        if let first = reminder.recurrenceRules?.first {
+            do {
+                parsedRecurrence = try RecurrenceRuleConverter.parsedRule(from: first)
+                recurrenceUnsupported = false
+            } catch {
+                parsedRecurrence = nil
+                recurrenceUnsupported = true
+            }
+        } else {
+            parsedRecurrence = nil
+            recurrenceUnsupported = false
+        }
+        return ChoreReminderSnapshot(
+            id: reminder.calendarItemIdentifier,
+            listID: reminder.calendar.calendarIdentifier,
+            memberKey: memberKey,
+            title: reminder.title,
+            notes: reminder.notes,
+            isCompleted: reminder.isCompleted,
+            dueDate: reminder.dueDateComponents.flatMap { Calendar.current.date(from: $0) },
+            recurrence: parsedRecurrence,
+            recurrenceUnsupported: recurrenceUnsupported,
+            modifiedAt: reminder.lastModifiedDate ?? reminder.creationDate ?? .distantPast
+        )
+    }
+
+    nonisolated private static func dateComponents(_ date: Date) -> DateComponents {
+        let calendar = Calendar.current
+        let includeTime = calendar.component(.hour, from: date) != 0
+            || calendar.component(.minute, from: date) != 0
+        var components = calendar.dateComponents(
+            includeTime ? [.year, .month, .day, .hour, .minute] : [.year, .month, .day],
+            from: date
+        )
+        components.calendar = Calendar.current
+        return components
     }
 }

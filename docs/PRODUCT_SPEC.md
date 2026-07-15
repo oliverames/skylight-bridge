@@ -4,7 +4,7 @@
 
 Skylight Bridge lets a person choose a narrow set of Apple content and mirror it to Skylight without turning every Apple list, note, or photo into household content.
 
-Apple remains the source of truth for Photos and meal-plan notes. Reminders and Recipes can be one-way or two-way because their content naturally changes on either device.
+Apple remains the source of truth for Photos and meal-plan notes. Reminders, Recipes, and Chores can be one-way or two-way because their content naturally changes on either device. Skylight remains the first-time setup authority for Chore Chart people.
 
 ## Selection model
 
@@ -54,6 +54,14 @@ Two-way merge is field-aware. A reminder added on only one side is created on th
 
 Deleting a reminder mapping asks whether to also remove the items it synced from Skylight, from Apple Reminders, or from neither. Neither list itself is deleted. Cleanup is best-effort per item so an already-removed item does not block the rest.
 
+### Chores
+
+Chore setup begins on Skylight. After the user selects people for the Chore Chart, the Chores screen creates or reuses one Apple Reminders list per person and an Up for Grabs list. The generated mapping records each Skylight category ID, Apple list ID, list title, sync direction, conflict policy, and enabled state. Matching titles assigned to the same person are adopted on first sync rather than duplicated.
+
+Recurring chores use a strict RRULE converter. Supported frequency, interval, weekday, month-day, end-date, count, and Skylight time-slot fields become native EventKit recurrence rules. Unknown components are never silently discarded. When a Skylight recurrence contains details EventKit cannot reproduce, Apple still receives the usable repeat schedule, the mapping is marked degraded, and later Apple-side content edits preserve the original Skylight recurrence verbatim.
+
+Completion is occurrence-based. The bridge fetches the series inventory and the dated chore window separately, then synchronizes today's state. Completing a recurring Apple reminder marks that Skylight occurrence complete; a Skylight completion advances the Apple reminder to its next due date. Persisted due-date and completed-instance baselines prevent the same occurrence from firing twice and allow either side to reopen today's occurrence.
+
 ### Recipes
 
 The user chooses an Apple Notes folder, then selects every note or individual recipe notes.
@@ -79,14 +87,13 @@ The user chooses a separate Apple Notes folder, then selects every note or indiv
 ## Explicit exclusions
 
 - No calendar sync interface
-- No chores sync interface
 - No routines sync interface
 - No Task Box sync interface
 - No automatic ingestion of every Reminders list
 - No automatic ingestion of every note in Apple Notes
 - No modification of the Apple Photos library
 
-The underlying Skylight client still covers discovered calendar, chore, routine, Task Box, and reward endpoints for completeness and diagnostics.
+The underlying Skylight client also covers discovered calendar, standalone routine, Task Box, and reward endpoints for completeness and diagnostics.
 
 ## Safety rules
 

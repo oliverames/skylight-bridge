@@ -67,6 +67,64 @@ struct ReminderListMapping: Identifiable, Codable, Sendable, Hashable {
     var enabled = false
 }
 
+struct ChoreMemberLink: Identifiable, Codable, Sendable, Hashable {
+    static let upForGrabsKey = "upForGrabs"
+
+    var id: String { memberKey }
+    var memberKey: String
+    var memberLabel: String
+    var appleListID: String?
+    var appleListTitle: String
+    var isEnabled: Bool
+
+    init(
+        memberKey: String,
+        memberLabel: String,
+        appleListID: String? = nil,
+        appleListTitle: String? = nil,
+        isEnabled: Bool = true
+    ) {
+        self.memberKey = memberKey
+        self.memberLabel = memberLabel
+        self.appleListID = appleListID
+        self.appleListTitle = appleListTitle ?? "\(memberLabel) Chores"
+        self.isEnabled = isEnabled
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        memberKey = try container.decode(String.self, forKey: .memberKey)
+        memberLabel = try container.decodeIfPresent(String.self, forKey: .memberLabel) ?? memberKey
+        appleListID = try container.decodeIfPresent(String.self, forKey: .appleListID)
+        appleListTitle = try container.decodeIfPresent(String.self, forKey: .appleListTitle)
+            ?? "\(memberLabel) Chores"
+        isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+    }
+}
+
+struct ChoreMapping: Identifiable, Codable, Sendable, Hashable {
+    var id = UUID()
+    var frameID = ""
+    var frameName = ""
+    var memberLinks: [ChoreMemberLink] = []
+    var direction: ReminderSyncDirection = .twoWay
+    var conflictPolicy: SyncConflictPolicy = .newestWins
+    var isEnabled = true
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        frameID = try container.decodeIfPresent(String.self, forKey: .frameID) ?? ""
+        frameName = try container.decodeIfPresent(String.self, forKey: .frameName) ?? ""
+        memberLinks = try container.decodeIfPresent([ChoreMemberLink].self, forKey: .memberLinks) ?? []
+        direction = try container.decodeIfPresent(ReminderSyncDirection.self, forKey: .direction) ?? .twoWay
+        conflictPolicy = try container.decodeIfPresent(SyncConflictPolicy.self, forKey: .conflictPolicy) ?? .newestWins
+        isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+    }
+}
+
 enum NotesContentKind: String, Codable, CaseIterable, Sendable {
     case recipes
     case meals
@@ -145,6 +203,7 @@ struct AppConfiguration: Codable, Sendable, Hashable {
     var account = SkylightAccountConfiguration()
     var photoMappings: [PhotoMapping] = []
     var reminderMappings: [ReminderListMapping] = []
+    var choreMappings: [ChoreMapping] = []
     var recipeSelection = NotesSelection(kind: .recipes)
     var mealSelection = NotesSelection(kind: .meals)
     var syncIntervalMinutes = 15
@@ -172,6 +231,9 @@ struct AppConfiguration: Codable, Sendable, Hashable {
         reminderMappings = try container.decodeIfPresent(
             [ReminderListMapping].self, forKey: .reminderMappings
         ) ?? []
+        choreMappings = try container.decodeIfPresent(
+            [ChoreMapping].self, forKey: .choreMappings
+        ) ?? []
         recipeSelection = try container.decodeIfPresent(
             NotesSelection.self, forKey: .recipeSelection
         ) ?? NotesSelection(kind: .recipes)
@@ -189,6 +251,9 @@ struct AppConfiguration: Codable, Sendable, Hashable {
     var hasEnabledSync: Bool {
         photoMappings.contains(where: \.enabled) ||
             reminderMappings.contains(where: \.enabled) ||
+            choreMappings.contains { mapping in
+                mapping.isEnabled && mapping.memberLinks.contains(where: \.isEnabled)
+            } ||
             (recipeSelection.enabled && recipeSelection.folderID != nil) ||
             (mealSelection.enabled && mealSelection.folderID != nil)
     }

@@ -1,6 +1,6 @@
 # Skylight API Evidence and Compatibility
 
-Evidence was refreshed on July 13, 2026. Skylight still does not publish a supported public Calendar API.
+Evidence was refreshed on July 15, 2026. Skylight still does not publish a supported public Calendar API.
 
 ## Source priority
 
@@ -31,6 +31,8 @@ Current login uses a web session, OAuth authorization code exchange, access toke
 - The current list visibility field is `hide_on_device`.
 - Current Task Box routes use `/frames/{frameId}/task_box/items`.
 - The live app models routines as chores carrying a `routine` field.
+- `/frames/{frameId}/chores/all` returns grouped `chores` and `routines` buckets rather than a top-level `data` collection; each occurrence carries its series ID in `attributes.series`.
+- Recurring chore writes require exactly one `BYHOUR` value (`6`, `14`, or `20`), occurrence completion requires `instance_date` and `instance_time` with a blank `category_id`, and recurring deletion requires `apply_to=all`. These contracts were exercised against the live account on July 15, 2026.
 - Standalone `/routines` routes are experimental and absent from the live bundle.
 - The current API header version is `2026-05-01`.
 

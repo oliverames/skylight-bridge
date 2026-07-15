@@ -3,6 +3,17 @@ import Testing
 @testable import SkylightBridge
 
 struct SkylightAPIDecodingTests {
+    @Test("Grouped chore inventory decodes and de-duplicates series")
+    func decodesGroupedChoreInventory() throws {
+        let json = #"{"chores":{"today":{"data":[{"id":"occurrence-1","type":"chore","attributes":{"summary":"Water plants","series":"series-1","recurring":true,"recurrence_set":["RRULE:FREQ=DAILY;INTERVAL=1"]}}]},"future":{"data":[{"id":"occurrence-2","type":"chore","attributes":{"summary":"Water plants","series":"series-1","recurring":true,"recurrence_set":["RRULE:FREQ=DAILY;INTERVAL=1"]}}]}},"routines":{}}"#
+        let response = try JSONDecoder().decode(
+            SkylightAllChoresResponse.self,
+            from: Data(json.utf8)
+        )
+        #expect(response.data.count == 1)
+        #expect(response.data.first?.attributes.series == "series-1")
+    }
+
     @Test("Album message identifiers decode the live object shape")
     func decodesAlbumMessageIdentifiers() throws {
         let data = Data(#"{"data":[{"id":101},{"id":"102"}]}"#.utf8)
@@ -96,8 +107,18 @@ struct SyncStateDecodingTests {
 
         #expect(state.photos.isEmpty)
         #expect(state.reminders.isEmpty)
+        #expect(state.chores.isEmpty)
         #expect(state.notes.isEmpty)
         #expect(state.photoAlbums.isEmpty)
+    }
+
+    @Test("Configuration files written before chores still decode")
+    func decodesConfigurationWithoutChores() throws {
+        let configuration = try JSONDecoder().decode(
+            AppConfiguration.self,
+            from: Data("{}".utf8)
+        )
+        #expect(configuration.choreMappings.isEmpty)
     }
 
     @Test("Records missing later-added fields still decode with defaults")

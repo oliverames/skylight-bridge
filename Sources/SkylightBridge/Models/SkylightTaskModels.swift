@@ -20,6 +20,43 @@ struct SkylightChoreAttributes: Codable, Equatable, Sendable {
     let emojiIcon: String?
     let routine: Bool?
     let position: Int?
+    let series: String?
+
+    init(
+        summary: String? = nil,
+        description: String? = nil,
+        group: String? = nil,
+        status: SkylightChoreStatus? = nil,
+        start: String? = nil,
+        startTime: String? = nil,
+        completedOn: String? = nil,
+        rewardPoints: Int? = nil,
+        recurring: Bool? = nil,
+        recurringUntil: String? = nil,
+        recurrenceSet: [String]? = nil,
+        upForGrabs: Bool? = nil,
+        emojiIcon: String? = nil,
+        routine: Bool? = nil,
+        position: Int? = nil,
+        series: String? = nil
+    ) {
+        self.summary = summary
+        self.description = description
+        self.group = group
+        self.status = status
+        self.start = start
+        self.startTime = startTime
+        self.completedOn = completedOn
+        self.rewardPoints = rewardPoints
+        self.recurring = recurring
+        self.recurringUntil = recurringUntil
+        self.recurrenceSet = recurrenceSet
+        self.upForGrabs = upForGrabs
+        self.emojiIcon = emojiIcon
+        self.routine = routine
+        self.position = position
+        self.series = series
+    }
 
     enum CodingKeys: String, CodingKey {
         case summary
@@ -37,6 +74,39 @@ struct SkylightChoreAttributes: Codable, Equatable, Sendable {
         case emojiIcon = "emoji_icon"
         case routine
         case position
+        case series
+    }
+}
+
+/// `/chores/all` is grouped by task kind and time bucket rather than using the
+/// normal top-level JSON:API collection envelope. Each leaf is a regular
+/// collection response. Keep the dictionary keys open so a server-added bucket
+/// does not break decoding.
+struct SkylightAllChoresResponse: Codable, Equatable, Sendable {
+    let chores: [String: SkylightCollectionResponse<SkylightChoreAttributes>]
+    let routines: [String: SkylightCollectionResponse<SkylightChoreAttributes>]
+
+    var data: [SkylightResource<SkylightChoreAttributes>] {
+        let resources = [chores, routines].flatMap { group in
+            group.keys.sorted().flatMap { group[$0]?.data ?? [] }
+        }
+        var seen: Set<String> = []
+        return resources.filter { resource in
+            let identity = resource.attributes.series ?? resource.id
+            return seen.insert(identity).inserted
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        chores = try container.decodeIfPresent(
+            [String: SkylightCollectionResponse<SkylightChoreAttributes>].self,
+            forKey: .chores
+        ) ?? [:]
+        routines = try container.decodeIfPresent(
+            [String: SkylightCollectionResponse<SkylightChoreAttributes>].self,
+            forKey: .routines
+        ) ?? [:]
     }
 }
 

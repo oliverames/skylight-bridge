@@ -575,6 +575,163 @@ struct SyncCoordinatorTests {
         #expect(persisted.reminders.isEmpty)
     }
 
+    @Test("A Skylight recurring chore creates a linked repeating Apple reminder")
+    func syncsRecurringChoreToApple() async throws {
+        let api = CoordinatorAPIStub()
+        await api.configureChores([
+            SkylightResource(
+                id: "chore-1",
+                attributes: SkylightChoreAttributes(
+                    summary: "Water plants",
+                    description: "Kitchen herbs",
+                    group: nil,
+                    status: .pending,
+                    start: "2026-07-15",
+                    startTime: nil,
+                    completedOn: nil,
+                    rewardPoints: nil,
+                    recurring: true,
+                    recurringUntil: nil,
+                    recurrenceSet: ["FREQ=DAILY;INTERVAL=1"],
+                    upForGrabs: false,
+                    emojiIcon: nil,
+                    routine: true,
+                    position: nil
+                ),
+                relationships: [
+                    "categories": SkylightRelationship(
+                        data: .many([SkylightIdentifier(id: "person-1", type: "category")])
+                    )
+                ]
+            )
+        ])
+        let choreSource = CoordinatorChoreReminderSource()
+        let state = CoordinatorStateStore()
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            state: state,
+            choreReminderSource: choreSource
+        )
+        var mapping = ChoreMapping()
+        mapping.frameID = "frame-1"
+        mapping.frameName = "Kitchen"
+        mapping.memberLinks = [ChoreMemberLink(
+            memberKey: "person-1",
+            memberLabel: "Oliver",
+            appleListID: "list-1",
+            appleListTitle: "Oliver Chores"
+        )]
+        var configuration = AppConfiguration()
+        configuration.account.frameID = "frame-1"
+        configuration.dryRun = false
+        configuration.choreMappings = [mapping]
+
+        let summary = try await coordinator.sync(configuration: configuration)
+        let created = choreSource.createdReminders
+        let persisted = try await state.loadSyncState()
+
+        #expect(summary.chores.applied == 1)
+        #expect(created.count == 1)
+        #expect(created.first?.title == "Water plants")
+        #expect(created.first?.recurrence?.frequency == .daily)
+        #expect(persisted.chores.count == 1)
+        #expect(persisted.chores.first?.skylightSeriesID == "chore-1")
+    }
+
+    @Test("A rolled EventKit occurrence rebinds before completion is propagated")
+    func rebindsRolledRecurringReminderIdentifier() async throws {
+        let today = Date(timeIntervalSince1970: 1_784_131_200)
+        let nextDay = Date(timeIntervalSince1970: 1_784_217_600)
+        let api = CoordinatorAPIStub()
+        await api.configureChores([
+            SkylightResource(
+                id: "chore-1",
+                attributes: SkylightChoreAttributes(
+                    summary: "Water plants",
+                    description: nil,
+                    group: nil,
+                    status: .pending,
+                    start: "2026-07-15",
+                    startTime: nil,
+                    completedOn: nil,
+                    rewardPoints: nil,
+                    recurring: true,
+                    recurringUntil: nil,
+                    recurrenceSet: ["FREQ=DAILY;INTERVAL=1"],
+                    upForGrabs: false,
+                    emojiIcon: nil,
+                    routine: true,
+                    position: nil
+                ),
+                relationships: [
+                    "category": SkylightRelationship(
+                        data: .many([SkylightIdentifier(id: "person-1", type: "category")])
+                    )
+                ]
+            )
+        ])
+        let mappingID = UUID()
+        let rolledReminder = ChoreReminderSnapshot(
+            id: "apple-new-occurrence",
+            listID: "list-1",
+            memberKey: "person-1",
+            title: "Water plants",
+            notes: nil,
+            isCompleted: false,
+            dueDate: nextDay,
+            recurrence: ParsedRecurrenceRule(frequency: .daily),
+            recurrenceUnsupported: false,
+            modifiedAt: today
+        )
+        let choreSource = CoordinatorChoreReminderSource(reminders: [rolledReminder])
+        var initialState = SyncState()
+        initialState.chores = [ChoreSyncRecord(
+            mappingID: mappingID,
+            frameID: "frame-1",
+            appleReminderID: "apple-old-occurrence",
+            skylightSeriesID: "chore-1",
+            memberKey: "person-1",
+            lastAppleModifiedAt: today,
+            lastSkylightModifiedAt: today,
+            contentFingerprint: "",
+            lastSyncedTitle: "Water plants",
+            lastSyncedRecurrence: "FREQ=DAILY;INTERVAL=1",
+            baselineDueDate: today
+        )]
+        let state = CoordinatorStateStore(state: initialState)
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            state: state,
+            choreReminderSource: choreSource,
+            now: { today }
+        )
+        var mapping = ChoreMapping()
+        mapping.id = mappingID
+        mapping.frameID = "frame-1"
+        mapping.frameName = "Kitchen"
+        mapping.memberLinks = [ChoreMemberLink(
+            memberKey: "person-1",
+            memberLabel: "Oliver",
+            appleListID: "list-1",
+            appleListTitle: "Oliver Chores"
+        )]
+        var configuration = AppConfiguration()
+        configuration.account.frameID = "frame-1"
+        configuration.dryRun = false
+        configuration.choreMappings = [mapping]
+
+        let summary = try await coordinator.sync(configuration: configuration)
+        let persisted = try await state.loadSyncState()
+
+        #expect(summary.chores.applied == 1)
+        #expect(await api.completedChoreSeriesIDs == ["chore-1"])
+        #expect(persisted.chores.first?.appleReminderID == "apple-new-occurrence")
+        #expect(persisted.chores.first?.baselineCompletedInstanceDate == "2026-07-15")
+        #expect(persisted.chores.first?.baselineDueDate == nextDay)
+    }
+
     private func makeCoordinator(
         api: CoordinatorAPIStub,
         reminders: [AppleReminderSnapshot],
@@ -583,16 +740,20 @@ struct SyncCoordinatorTests {
         state: CoordinatorStateStore = CoordinatorStateStore(),
         notesSource: CoordinatorNotesSource = CoordinatorNotesSource(),
         reminderSource: CoordinatorReminderSource? = nil,
-        recipeClassifier: (any RecipeClassifying)? = nil
+        choreReminderSource: CoordinatorChoreReminderSource? = nil,
+        recipeClassifier: (any RecipeClassifying)? = nil,
+        now: @escaping @Sendable () -> Date = { Date() }
     ) -> SyncCoordinator {
         SyncCoordinator(
             photoSource: photoSource,
             reminderSource: reminderSource ?? CoordinatorReminderSource(reminders: reminders),
+            choreReminderSource: choreReminderSource,
             notesSource: notesSource,
             imageConverter: imageConverter,
             api: api,
             stateStore: state,
-            recipeClassifier: recipeClassifier
+            recipeClassifier: recipeClassifier,
+            now: now
         )
     }
 
@@ -1012,6 +1173,141 @@ private final class CoordinatorReminderSource: ReminderSyncSource {
     }
 }
 
+@MainActor
+private final class CoordinatorChoreReminderSource: ChoreReminderSource {
+    private var reminders: [ChoreReminderSnapshot] = []
+    private(set) var createdReminders: [ChoreReminderSnapshot] = []
+    private var nextID = 1
+
+    init(reminders: [ChoreReminderSnapshot] = []) {
+        self.reminders = reminders
+    }
+
+    func syncReminderLists() throws -> [AppleReminderListSnapshot] {
+        [AppleReminderListSnapshot(
+            id: "list-1",
+            title: "Oliver Chores",
+            sourceID: "source-1",
+            sourceTitle: "iCloud",
+            allowsContentModifications: true
+        )]
+    }
+
+    func syncCreateReminderList(named title: String) throws -> AppleReminderListSnapshot {
+        AppleReminderListSnapshot(
+            id: "created-list",
+            title: title,
+            sourceID: "source-1",
+            sourceTitle: "iCloud",
+            allowsContentModifications: true
+        )
+    }
+
+    func syncChoreReminders(
+        in listID: String,
+        memberKey: String
+    ) async throws -> [ChoreReminderSnapshot] {
+        reminders.filter { $0.listID == listID }
+    }
+
+    func syncCreateChoreReminder(
+        in listID: String,
+        draft: ChoreReminderDraft,
+        memberKey: String
+    ) throws -> ChoreReminderSnapshot {
+        let snapshot = ChoreReminderSnapshot(
+            id: "apple-chore-\(nextID)",
+            listID: listID,
+            memberKey: memberKey,
+            title: draft.title,
+            notes: draft.notes,
+            isCompleted: false,
+            dueDate: draft.dueDate,
+            recurrence: draft.recurrence,
+            recurrenceUnsupported: false,
+            modifiedAt: Date(timeIntervalSince1970: 500)
+        )
+        nextID += 1
+        reminders.append(snapshot)
+        createdReminders.append(snapshot)
+        return snapshot
+    }
+
+    func syncUpdateChoreReminder(
+        withID reminderID: String,
+        patch: ChoreReminderPatch,
+        memberKey: String
+    ) throws -> ChoreReminderSnapshot {
+        guard let index = reminders.firstIndex(where: { $0.id == reminderID }) else {
+            throw CoordinatorStubError.unexpectedCall
+        }
+        let old = reminders[index]
+        let updated = ChoreReminderSnapshot(
+            id: old.id,
+            listID: old.listID,
+            memberKey: memberKey,
+            title: patch.title,
+            notes: patch.notes,
+            isCompleted: old.isCompleted,
+            dueDate: patch.dueDate,
+            recurrence: patch.replaceRecurrence ? patch.recurrence : old.recurrence,
+            recurrenceUnsupported: false,
+            modifiedAt: Date(timeIntervalSince1970: 600)
+        )
+        reminders[index] = updated
+        return updated
+    }
+
+    func syncSetChoreReminderCompletion(
+        withID reminderID: String,
+        completed: Bool,
+        dueDate: Date?,
+        memberKey: String
+    ) throws -> ChoreReminderSnapshot {
+        guard let index = reminders.firstIndex(where: { $0.id == reminderID }) else {
+            throw CoordinatorStubError.unexpectedCall
+        }
+        let old = reminders[index]
+        let rolledDate = completed && old.recurrence != nil
+            ? old.dueDate.flatMap { Calendar.current.date(byAdding: .day, value: 1, to: $0) }
+            : (dueDate ?? old.dueDate)
+        let updated = ChoreReminderSnapshot(
+            id: old.id, listID: old.listID, memberKey: memberKey,
+            title: old.title, notes: old.notes,
+            isCompleted: completed && old.recurrence == nil,
+            dueDate: rolledDate, recurrence: old.recurrence,
+            recurrenceUnsupported: old.recurrenceUnsupported,
+            modifiedAt: Date(timeIntervalSince1970: 700)
+        )
+        reminders[index] = updated
+        return updated
+    }
+
+    func syncMoveChoreReminder(
+        withID reminderID: String,
+        toListID listID: String,
+        memberKey: String
+    ) throws -> ChoreReminderSnapshot {
+        guard let index = reminders.firstIndex(where: { $0.id == reminderID }) else {
+            throw CoordinatorStubError.unexpectedCall
+        }
+        let old = reminders[index]
+        let updated = ChoreReminderSnapshot(
+            id: old.id, listID: listID, memberKey: memberKey,
+            title: old.title, notes: old.notes, isCompleted: old.isCompleted,
+            dueDate: old.dueDate, recurrence: old.recurrence,
+            recurrenceUnsupported: old.recurrenceUnsupported,
+            modifiedAt: Date(timeIntervalSince1970: 600)
+        )
+        reminders[index] = updated
+        return updated
+    }
+
+    func syncRemoveChoreReminder(withID reminderID: String) throws {
+        reminders.removeAll { $0.id == reminderID }
+    }
+}
+
 private actor CoordinatorNotesSource: NotesSyncSource {
     private var notes: [AppleNoteSnapshot]
     private let attachmentCounts: [String: Int]
@@ -1167,6 +1463,7 @@ private struct CoordinatorAPICalls: Equatable, Sendable {
     var createdRecipes = 0
     var updatedRecipes = 0
     var deletedRecipes = 0
+    var createdChores = 0
 }
 
 private actor CoordinatorAPIStub: SkylightSyncAPI {
@@ -1175,6 +1472,8 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
     private var listItems: [SkylightResource<SkylightListItemAttributes>] = []
     private var recipes: [SkylightResource<SkylightRecipeAttributes>] = []
     private var mealCategories: [SkylightResource<SkylightMealCategoryAttributes>] = []
+    private var chores: [SkylightResource<SkylightChoreAttributes>] = []
+    private(set) var completedChoreSeriesIDs: [String] = []
     private(set) var updatedRecipeIDs: [String] = []
     private(set) var deletedRecipeIDs: [String] = []
     private(set) var recipeRequests: [SkylightRecipeRequest] = []
@@ -1197,6 +1496,54 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
         _ categories: [SkylightResource<SkylightMealCategoryAttributes>]
     ) {
         mealCategories = categories
+    }
+
+    func configureChores(_ chores: [SkylightResource<SkylightChoreAttributes>]) {
+        self.chores = chores
+    }
+
+    func listAllChores(frameID: String) async throws -> [SkylightResource<SkylightChoreAttributes>] {
+        chores
+    }
+
+    func listChores(
+        frameID: String,
+        before: String?,
+        after: String?,
+        includeLate: Bool?,
+        filter: String?
+    ) async throws -> [SkylightResource<SkylightChoreAttributes>] {
+        chores
+    }
+
+    func createChore(
+        frameID: String,
+        request: SkylightChoreRequest
+    ) async throws -> SkylightResource<SkylightChoreAttributes> {
+        calls.createdChores += 1
+        throw CoordinatorStubError.unexpectedCall
+    }
+
+    func updateChore(
+        frameID: String,
+        choreID: String,
+        request: SkylightChoreRequest
+    ) async throws -> SkylightResource<SkylightChoreAttributes> {
+        throw CoordinatorStubError.unexpectedCall
+    }
+
+    func deleteChore(frameID: String, choreID: String) async throws {
+        chores.removeAll { $0.id == choreID }
+    }
+
+    func setChoreCompletion(
+        frameID: String,
+        seriesID: String,
+        request: SkylightChoreCompletionRequest
+    ) async throws {
+        if request.status == .complete {
+            completedChoreSeriesIDs.append(seriesID)
+        }
     }
 
     func listLists(frameID: String) async throws -> SkylightListCollectionResponse {

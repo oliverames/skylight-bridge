@@ -83,6 +83,8 @@ private struct DetailView: View {
                 PhotosSyncView(store: store)
             case .reminders:
                 RemindersSyncView(store: store)
+            case .chores:
+                ChoresSyncView(store: store)
             case .recipes:
                 NotesSyncView(store: store, kind: .recipes)
             case .meals:
