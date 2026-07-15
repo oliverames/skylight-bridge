@@ -1,12 +1,12 @@
 # Skylight Bridge
 
-Skylight Bridge is a private macOS utility that mirrors explicitly selected Apple content to a Skylight Calendar account.
+Skylight Bridge is a private macOS utility, with an iPhone companion, that mirrors explicitly selected Apple content to a Skylight Calendar account.
 
 The app keeps Apple Photos, Reminders, and Notes as the source systems, while Skylight's Chore Chart defines the household members and recurring chore schedule. Nothing syncs until the user creates and enables a mapping.
 
 ## Product scope
 
-- Photos: choose an album, folder, shared album, Favorites, or individual photos. The bridge renders the current edited appearance (including RAW and ProRAW), converts it to sRGB JPEG, strips location metadata by default, uploads it, and manages only its own Skylight copies. Photos always push one way to Skylight. Deleting a photo mapping removes the copies it created from Skylight, since Apple Photos is never touched, and also deletes the Skylight album if the bridge created it and it is now empty. The menu bar icon pulses while a sync is running and switches to a warning glyph if the last sync failed; the menu shows the last sync time.
+- Photos: choose an album, folder, shared album, Favorites, or individual photos. The bridge renders the current edited appearance (including RAW and ProRAW), converts it to sRGB JPEG, strips location metadata by default, uploads it, and manages only its own Skylight copies. Photos always push one way to Skylight. An individual-photo mapping can be managed from the Mac or iPhone: selections are merged into the shared iCloud list, and an explicit, confirmed removal on either device removes only that photo from both. Its destination, conversion, removal policy, and enabled state are shared too. Deleting a photo mapping removes the copies it created from Skylight, since Apple Photos is never touched, and also deletes the Skylight album if the bridge created it and it is now empty. The menu bar icon pulses while a sync is running and switches to a warning glyph if the last sync failed; the menu shows the last sync time.
 - Reminders: link an Apple Reminders list with a Skylight list. Either side can be an existing list or created new, so a list that already lives on the Skylight can flow into a fresh Apple Reminders list. Each mapping is one-way or two-way, and the first sync into an existing list links items whose title and completion state match instead of duplicating them. Two-way sync preserves separate additions on each side and merges simultaneous edits field by field, using the conflict policy only when both sides changed the same field. Deleting a mapping asks whether to also remove the synced items from Skylight or Apple Reminders.
 - Chores: configure the Chore Chart on Skylight first, then use the clear **Set Up Lists from Skylight** action to create or reuse one Apple Reminders list per selected family member, plus an Up for Grabs list. The bridge carries true recurrence rules in both directions and synchronizes today's completion as an occurrence, so checking off a repeating reminder marks that day's Skylight chore complete and a Skylight completion advances the reminder. Unsupported recurrence details are preserved on Skylight instead of being overwritten.
 - Recipes: choose an Apple Notes folder, then synchronize every note or selected recipe notes. Recipe sync can be push-only or two-way; two-way pulls Skylight recipe-box changes back into the folder as notes. With the meal category set to Automatic, each recipe is sorted into the right Skylight category (Breakfast, Lunch, Dinner, …) on this Mac by Apple Intelligence, and recipes without a title emoji get one; picking a category files everything there instead, and without Apple Intelligence the bridge falls back to the first category. Notes the bridge writes use native Apple Notes styling (title heading, section headings, and real bullet and numbered lists) with a toggle to fall back to plain text, and notes containing attachments are never rewritten.
@@ -18,6 +18,7 @@ There is intentionally no calendar sync interface. Google Calendar already cover
 ## Requirements
 
 - macOS 26 or 27
+- An iPhone running iOS 18.2 or later, if using the companion app
 - Swift 6.4 or later
 - A Skylight Calendar account
 - Skylight Plus for Skylight features that require it
@@ -41,13 +42,13 @@ The interface uses native macOS 26 SwiftUI navigation with standard grouped-sett
 1. Open the Account section in the sidebar and sign in to Skylight. The app discovers its frames and devices automatically.
 2. Keep Preview mode enabled (the "Preview changes without applying them" toggle in the Sync section).
 3. Open Photos, Reminders, Chores, Recipes, and Meals to grant only the source permissions you need.
-4. For chores, configure people and chores on Skylight first, then choose **Set Up Lists from Skylight**. For other areas, add source mappings. No unselected list, reminder, folder, note, album, or photo is considered.
+4. For chores, configure people and chores on Skylight first, then choose **Set Up Lists from Skylight**. For other areas, add source mappings. No unselected list, reminder, folder, note, album, or photo is considered. Individual-photo selections can then be added or explicitly removed from either client.
 5. Run a sync preview and inspect Activity.
 6. Turn off Preview mode only after the preview matches the intended changes.
 
 Adding, editing, or enabling a mapping triggers a sync automatically (a preview while Preview mode is on), so changes appear in Activity without waiting for the background schedule.
 
-Skylight credentials and OAuth tokens are stored in the macOS Keychain. Mapping configuration and bridge-owned identity records are stored in the user's Application Support directory.
+Skylight credentials and OAuth tokens are stored in the macOS Keychain. Mapping configuration and bridge-owned identity records are stored in the user's Application Support directory. The preferences and individual-photo mappings that the iPhone can manage are additionally reconciled through the signed-in person's private iCloud CloudKit database (`iCloud.com.oliverames.SkylightBridge`). The iPhone cannot access Apple Notes, so recipes and meal plans remain Mac-only.
 
 Sync settings (interval, Launch at login, Hide Dock icon, Preview mode) save automatically as you change them. A short welcome walkthrough appears on first launch, and after the bridge has synchronized enough changes it may occasionally invite an optional donation (buymeacoffee.com/oliverames); "Don't Ask Again" silences that forever. Hiding the Dock icon keeps the app running in the menu bar only; reopen the main window from the menu bar icon.
 

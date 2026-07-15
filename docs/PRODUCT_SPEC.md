@@ -34,6 +34,10 @@ Default conversion behavior:
 - remove GPS and XMP metadata
 - use the Live Photo still image in the first release
 
+### iCloud sharing for individual photos
+
+The iPhone companion and Mac share selected Skylight frame, preview mode, preferred cadence, and the settings for individual-photo mappings through the person's private CloudKit database. An individual asset is represented by a separate portable iCloud identifier record, rather than a whole-list replacement. Adding photos on either device therefore preserves the existing selections. Removing a photo requires an explicit confirmation and writes a removal record, so the same photo disappears from the other client's list without deleting the original from Apple Photos. A client that reconciles an offline local preference change republishes the merged preference set when iCloud becomes available, and the Mac imports removal records before it publishes its local selections to prevent a cold launch from resurrecting a deliberately removed item.
+
 ### Reminders
 
 A mapping links one Apple Reminders list with one Skylight list. Either side can be an existing list or a new one:
@@ -92,6 +96,7 @@ The user chooses a separate Apple Notes folder, then selects every note or indiv
 - No automatic ingestion of every Reminders list
 - No automatic ingestion of every note in Apple Notes
 - No modification of the Apple Photos library
+- No iPhone access to Apple Notes folders, so recipe and meal-plan mapping remains Mac-only
 
 The underlying Skylight client also covers discovered calendar, standalone routine, Task Box, and reward endpoints for completeness and diagnostics.
 
@@ -126,6 +131,15 @@ The underlying Skylight client also covers discovered calendar, standalone routi
 
 Apple Notes has no public data framework. A private Developer ID distribution is the practical release path because a sandboxed app needs Apple Events exceptions that are unsuitable for a normal Mac App Store build.
 
+## iPhone companion architecture
+
+- iOS 18.2 deployment floor with a native SwiftUI settings interface
+- system Photos picker for adding individual assets, with an explicit confirmed removal mechanism
+- no Apple Notes integration, because iOS does not expose a public API for app access to Apple Notes folders
+- CloudKit entitlement for `iCloud.com.oliverames.SkylightBridge`, shared with the Mac client
+
+Physical-device CloudKit testing requires the container to be enabled and assigned to both app IDs in the Apple Developer portal, followed by regenerated provisioning profiles. The simulator can build without that provisioning but is not proof of cross-device iCloud synchronization.
+
 ## Persistence
 
 Application Support stores:
@@ -134,6 +148,8 @@ Application Support stores:
 - managed Apple-to-Skylight identity links
 - content hashes and modification clocks
 - activity history
+
+The private iCloud CloudKit database stores only the cross-client preferences and individual-photo mapping metadata described above. It never receives Skylight credentials or Apple Notes content.
 
 Keychain stores:
 
