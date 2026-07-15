@@ -1183,6 +1183,24 @@ actor SyncCoordinator {
         )
         var summary = SyncDomainSummary()
 
+        // One-time cache repair: pushes made while the classifier was
+        // unavailable used to cache the fallback (first) category as if the
+        // model had chosen it, which blocked the classification retrofit
+        // forever. Clear those entries once so the retrofit can reclassify;
+        // classifyRecipePush no longer caches fallback assignments.
+        if categoryContext.isAutomatic,
+           let fallbackID = categoryContext.fallbackCategoryID,
+           !state.recipeFallbackCacheClearedFrameIDs.contains(frameID) {
+            for index in state.notes.indices
+            where state.notes[index].kind == .recipes
+                && state.notes[index].frameID == frameID
+                && state.notes[index].autoCategoryID == fallbackID {
+                state.notes[index].autoCategoryID = nil
+            }
+            state.recipeFallbackCacheClearedFrameIDs.insert(frameID)
+            try await checkpoint(state, dryRun: dryRun)
+        }
+
         var parsedNotes: [ParsedRecipeNote] = []
         for noteSummary in noteSummaries {
             let note = try await notesSource.syncNote(
@@ -2013,8 +2031,12 @@ actor SyncCoordinator {
                 emoji = result.emoji
             }
         }
+        // A fallback assignment is a placeholder, not a classification: leave
+        // the cache empty so the retrofit reclassifies once the model is back.
+        var usedFallback = false
         if context.isAutomatic, categoryID == nil {
             categoryID = context.fallbackCategoryID
+            usedFallback = true
         }
 
         let summary: String = if draft.title.hasLeadingEmoji || emoji == nil {
@@ -2025,7 +2047,9 @@ actor SyncCoordinator {
         return RecipePushClassification(
             categoryID: categoryID,
             summary: summary,
-            autoCategoryID: context.isAutomatic ? categoryID : cachedCategoryID,
+            autoCategoryID: context.isAutomatic
+                ? (usedFallback ? nil : categoryID)
+                : cachedCategoryID,
             autoEmoji: emoji
         )
     }

@@ -200,6 +200,9 @@ struct SyncState: Codable, Sendable {
     var notes: [NoteSyncRecord] = []
     // Absent in state files written before album tracking existed.
     var photoAlbums: [PhotoAlbumRecord] = []
+    // Frames whose recipe records have had wrongly cached fallback categories
+    // cleared (one-time repair; see syncRecipes). Absent before 1.4.1.
+    var recipeFallbackCacheClearedFrameIDs: Set<String> = []
 
     init() {}
 
@@ -211,5 +214,9 @@ struct SyncState: Codable, Sendable {
         reminders = try container.decodeIfPresent([ReminderSyncRecord].self, forKey: .reminders) ?? []
         notes = try container.decodeIfPresent([NoteSyncRecord].self, forKey: .notes) ?? []
         photoAlbums = try container.decodeIfPresent([PhotoAlbumRecord].self, forKey: .photoAlbums) ?? []
+        recipeFallbackCacheClearedFrameIDs = try container.decodeIfPresent(
+            Set<String>.self,
+            forKey: .recipeFallbackCacheClearedFrameIDs
+        ) ?? []
     }
 }

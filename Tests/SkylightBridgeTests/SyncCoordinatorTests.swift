@@ -724,6 +724,82 @@ struct SyncCoordinatorTests {
         #expect(second.recipes.planned == 0)
     }
 
+    @Test("A fallback category assignment is not cached as a classification")
+    func fallbackCategoryIsNotCached() async throws {
+        let plaintext = "Tacos\n\nIngredients\n- Shells\n\nInstructions\n1. Fill"
+        let note = recipeNote(id: "note-1", plaintext: plaintext)
+        let api = CoordinatorAPIStub()
+        await api.configureRecipes([])
+        await api.configureMealCategories(breakfastAndDinnerCategories)
+        let notesSource = CoordinatorNotesSource(notes: [note])
+        let state = CoordinatorStateStore()
+        // The classifier is present but returns nothing, standing in for a
+        // model call that failed; the push falls back to the first category.
+        let classifier = StubRecipeClassifier(result: nil)
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            state: state,
+            notesSource: notesSource,
+            recipeClassifier: classifier
+        )
+
+        _ = try await coordinator.sync(configuration: configuredRecipes())
+        let requests = await api.recipeRequests
+        let persisted = try await state.loadSyncState()
+
+        #expect(requests.first?.mealCategoryID == "category-breakfast")
+        #expect(persisted.notes.first?.autoCategoryID == nil)
+    }
+
+    @Test("A recipe stuck in the cached fallback category is reclassified once")
+    func fallbackCachedCategoryIsRepairedAndReclassified() async throws {
+        let plaintext = "Tacos\n\nIngredients\n- Shells\n\nInstructions\n1. Fill"
+        let note = recipeNote(id: "note-1", plaintext: plaintext)
+        var initial = SyncState()
+        // A pre-1.4.1 push cached the fallback (first) category as if the
+        // model chose it, so the retrofit never fired.
+        initial.notes = [recipeSyncRecord(
+            noteID: "note-1",
+            contentHash: sha(plaintext),
+            skylightID: "recipe-1",
+            remoteRevision: "rev-1",
+            autoCategoryID: "category-breakfast",
+            autoEmoji: "🌮"
+        )]
+        let api = CoordinatorAPIStub()
+        await api.configureRecipes([
+            remoteRecipe(id: "recipe-1", title: "Tacos", description: "", updatedAt: "rev-1")
+        ])
+        await api.configureMealCategories(breakfastAndDinnerCategories)
+        let notesSource = CoordinatorNotesSource(notes: [note])
+        let state = CoordinatorStateStore(state: initial)
+        let classifier = StubRecipeClassifier(
+            result: RecipeClassification(categoryLabel: "Dinner", emoji: "🌮")
+        )
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            state: state,
+            notesSource: notesSource,
+            recipeClassifier: classifier
+        )
+
+        let first = try await coordinator.sync(configuration: configuredRecipes())
+        let requests = await api.recipeRequests
+        let persisted = try await state.loadSyncState()
+
+        #expect(first.recipes.applied == 1)
+        #expect(requests.last?.mealCategoryID == "category-dinner")
+        #expect(persisted.notes.first?.autoCategoryID == "category-dinner")
+        #expect(persisted.recipeFallbackCacheClearedFrameIDs.contains("frame-1"))
+
+        // The repair is one-time: the reclassified category survives the
+        // next sync even though it now matches nothing new.
+        let second = try await coordinator.sync(configuration: configuredRecipes())
+        #expect(second.recipes.planned == 0)
+    }
+
     @Test("A classified recipe title that already has an emoji is left alone")
     func emojiTitlesAreNotDoubleDecorated() async throws {
         let plaintext = "🌮 Tacos\n\nIngredients\n- Shells\n\nInstructions\n1. Fill"
@@ -801,7 +877,9 @@ struct SyncCoordinatorTests {
         noteID: String,
         contentHash: String,
         skylightID: String,
-        remoteRevision: String
+        remoteRevision: String,
+        autoCategoryID: String? = nil,
+        autoEmoji: String? = nil
     ) -> NoteSyncRecord {
         NoteSyncRecord(
             kind: .recipes,
@@ -811,7 +889,9 @@ struct SyncCoordinatorTests {
             skylightID: skylightID,
             lastSyncedAt: Date(timeIntervalSince1970: 100),
             lastAppleModifiedAt: Date(timeIntervalSince1970: 100),
-            lastSkylightUpdatedAt: remoteRevision
+            lastSkylightUpdatedAt: remoteRevision,
+            autoCategoryID: autoCategoryID,
+            autoEmoji: autoEmoji
         )
     }
 
