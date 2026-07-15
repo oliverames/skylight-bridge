@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <title>Skylight Bridge Calendar Tile</title>
+  <desc>Flat opaque calendar-tile artwork on a transparent 1024-point Icon Composer canvas.</desc>
+  <rect x="470" y="444" width="436" height="414" rx="82" fill="#FFFEF9"/>
+  <path d="M552 444H824C869.287 444 906 480.713 906 526V528H470V526C470 480.713 506.713 444 552 444Z" fill="#FF6B57"/>
+  <rect x="552" y="609" width="64" height="64" rx="18" fill="#0D5973"/>
+  <rect x="656" y="609" width="64" height="64" rx="18" fill="#0D5973"/>
+  <rect x="760" y="609" width="64" height="64" rx="18" fill="#0D5973"/>
+  <rect x="552" y="713" width="64" height="64" rx="18" fill="#0D5973"/>
+  <rect x="656" y="713" width="64" height="64" rx="18" fill="#0D5973"/>
+  <rect x="760" y="713" width="64" height="64" rx="18" fill="#FDC239"/>
+</svg>

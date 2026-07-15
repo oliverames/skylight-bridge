@@ -1,0 +1,38 @@
+{
+  "fill" : {
+    "automatic-gradient" : "srgb:0.71765,0.79608,0.74902,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "image-name" : "03 Calendar Tile.svg",
+          "name" : "03 Calendar Tile"
+        },
+        {
+          "image-name" : "02 Photo Tile.svg",
+          "name" : "02 Photo Tile"
+        },
+        {
+          "image-name" : "01 Ribbon.svg",
+          "name" : "01 Ribbon"
+        }
+      ],
+      "name" : "Skylight Bridge - Relay Ribbon Icon Composer",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.6
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.2
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

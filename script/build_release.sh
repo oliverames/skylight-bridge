@@ -16,7 +16,7 @@ APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 ENTITLEMENTS="$ROOT_DIR/Resources/SkylightBridge.entitlements"
-ICON_SOURCE="$ROOT_DIR/Resources/AppIcon.png"
+ICON_SOURCE="$ROOT_DIR/Resources/AppIcon.icon"
 APP_ZIP="$RELEASE_DIR/$DISPLAY_NAME-$VERSION.zip"
 DMG_PATH="$RELEASE_DIR/$DISPLAY_NAME-$VERSION.dmg"
 CHECKSUM_PATH="$DMG_PATH.sha256"
@@ -50,7 +50,7 @@ chmod 755 "$APP_BINARY"
 cp "$ROOT_DIR/Resources/Info.plist" "$INFO_PLIST"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$INFO_PLIST"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$INFO_PLIST"
-"$ROOT_DIR/script/create_icns.sh" "$ICON_SOURCE" "$APP_RESOURCES/AppIcon.icns"
+"$ROOT_DIR/script/compile_app_icon.sh" "$ICON_SOURCE" "$APP_RESOURCES" "$INFO_PLIST"
 
 plutil -lint "$INFO_PLIST" >/dev/null
 plutil -lint "$ENTITLEMENTS" >/dev/null

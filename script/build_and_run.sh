@@ -14,7 +14,7 @@ APP_MACOS="$APP_CONTENTS/MacOS"
 APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
-ICON_FILE="$ROOT_DIR/Resources/AppIcon.png"
+ICON_FILE="$ROOT_DIR/Resources/AppIcon.icon"
 ENTITLEMENTS_FILE="$ROOT_DIR/Resources/SkylightBridge.entitlements"
 INFO_PLIST_TEMPLATE="$ROOT_DIR/Resources/Info.plist"
 
@@ -31,9 +31,7 @@ chmod +x "$APP_BINARY"
 
 cp "$INFO_PLIST_TEMPLATE" "$INFO_PLIST"
 
-if [[ -f "$ICON_FILE" ]]; then
-  "$ROOT_DIR/script/create_icns.sh" "$ICON_FILE" "$APP_RESOURCES/AppIcon.icns"
-fi
+"$ROOT_DIR/script/compile_app_icon.sh" "$ICON_FILE" "$APP_RESOURCES" "$INFO_PLIST"
 
 plutil -lint "$INFO_PLIST" >/dev/null
 plutil -lint "$ENTITLEMENTS_FILE" >/dev/null

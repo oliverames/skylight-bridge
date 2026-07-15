@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <title>Skylight Bridge Photo Tile</title>
+  <desc>Flat opaque photo-tile artwork on a transparent 1024-point Icon Composer canvas.</desc>
+  <rect x="118" y="166" width="436" height="414" rx="82" fill="#DCF1F3"/>
+  <circle cx="238" cy="292" r="40" fill="#FDC239"/>
+  <path d="M158 524L284 360L376 468L446 390L514 482V524Z" fill="#52C7EB"/>
+</svg>
