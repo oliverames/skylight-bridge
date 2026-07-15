@@ -47,13 +47,14 @@ struct OverviewView: View {
                     detail: recipesDetail,
                     destination: .recipes
                 )
-                sourceRow(
-                    title: "Meals",
-                    systemImage: "fork.knife",
-                    value: notesSelectionValue(store.configuration.mealSelection),
-                    detail: "Dated meal lines from a Notes folder. Push only.",
-                    destination: .meals
-                )
+                // Temporarily hide the unfinished Meals workflow from the overview.
+                // sourceRow(
+                //     title: "Meals",
+                //     systemImage: "fork.knife",
+                //     value: notesSelectionValue(store.configuration.mealSelection),
+                //     detail: "Dated meal lines from a Notes folder. Push only.",
+                //     destination: .meals
+                // )
             } header: {
                 SectionHeader(
                     title: "Sources",
