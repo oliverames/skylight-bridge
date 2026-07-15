@@ -14,14 +14,14 @@ enum NavigationSection: String, CaseIterable, Identifiable, Sendable {
 
     /// Sync-source sections, shown as the top sidebar group.
     static let sources: [NavigationSection] = [
-        .overview, .photos, .reminders, .chores, .recipes, .meals, .activity
+        .overview, .photos, .reminders, .chores, .recipes, .meals
     ]
 
     /// Account and configuration sections, shown as the lower sidebar group.
     /// Bringing these into the main window keeps everything, including sign-in,
     /// in one place instead of a separate Settings pane.
     static let configuration: [NavigationSection] = [
-        .account, .sync, .diagnostics
+        .activity, .account, .sync, .diagnostics
     ]
 
     var title: String {
