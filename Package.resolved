@@ -6,8 +6,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/oliverames/skylight-bridge-ios.git",
       "state" : {
-        "revision" : "2bc6798b3d513e0b8686cda0b6e1bab66fed9162",
-        "version" : "0.1.4"
+        "revision" : "a30439f3244ca26e63aedac3441a1bc528c52b17",
+        "version" : "0.1.7"
       }
     }
   ],

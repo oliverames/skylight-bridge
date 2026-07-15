@@ -42,13 +42,17 @@ extension AppStore {
         }
     }
 
-    func publishSharediCloudState() async {
+    func publishSharediCloudState(
+        intentionalPhotoAdditions: [UUID: Set<String>] = [:]
+    ) async {
         do {
             let cloudPreferences = CloudPreferencesStore()
             let saved = try await cloudPreferences.save(sharedPreferences())
             storeSharedPreferences(saved)
             applySharedPreferences(saved)
-            try await publishLocalSelectedPhotoMappings()
+            try await publishLocalSelectedPhotoMappings(
+                intentionalPhotoAdditions: intentionalPhotoAdditions
+            )
         } catch {
             appendActivity(.init(
                 level: .warning,
@@ -70,9 +74,12 @@ extension AppStore {
         saveConfiguration(triggerSync: triggerSync)
 
         guard mapping.sourceKind == .selectedPhotos else { return }
+        let addedAssetIDs = mapping.selectedAssetIDs.subtracting(previous?.selectedAssetIDs ?? [])
         let removedAssetIDs = (previous?.selectedAssetIDs ?? []).subtracting(mapping.selectedAssetIDs)
         Task {
-            await publishSharediCloudState()
+            await publishSharediCloudState(
+                intentionalPhotoAdditions: [mapping.id: addedAssetIDs]
+            )
             await publishRemovedSelectedPhotos(removedAssetIDs, for: mapping)
         }
     }
@@ -116,7 +123,9 @@ extension AppStore {
         }
     }
 
-    private func publishLocalSelectedPhotoMappings() async throws {
+    private func publishLocalSelectedPhotoMappings(
+        intentionalPhotoAdditions: [UUID: Set<String>] = [:]
+    ) async throws {
         guard photosAuthorizationStatus == .fullAccess else { return }
         let cloudMappings = CloudPhotoMappingStore()
         for mapping in configuration.photoMappings where mapping.sourceKind == .selectedPhotos {
@@ -127,7 +136,20 @@ extension AppStore {
             let cloudIdentifiers = try photoLibrary.cloudAssetIdentifiers(
                 for: Array(mapping.selectedAssetIDs)
             )
-            for cloudIdentifier in cloudIdentifiers.values {
+            let remoteSelections = try await cloudMappings.loadSelections(for: mapping.id)
+            let remoteSelectionByCloudIdentifier = Dictionary(
+                uniqueKeysWithValues: remoteSelections.map {
+                    ($0.cloudAssetIdentifier, $0)
+                }
+            )
+            let explicitlyAddedLocalIdentifiers = intentionalPhotoAdditions[mapping.id] ?? []
+            for (localIdentifier, cloudIdentifier) in cloudIdentifiers {
+                guard SharedPhotoSelection.shouldPublishAdd(
+                    for: remoteSelectionByCloudIdentifier[cloudIdentifier],
+                    isExplicitUserAddition: explicitlyAddedLocalIdentifiers.contains(localIdentifier)
+                ) else {
+                    continue
+                }
                 _ = try await cloudMappings.saveSelection(
                     .adding(
                         mappingID: mapping.id,
