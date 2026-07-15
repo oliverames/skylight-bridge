@@ -97,15 +97,14 @@ struct TipFooter: View {
     }
 }
 
-/// Standard layout for grouped-settings detail pages: a centered content
-/// column with comfortable side margins at any window size, so cards never
-/// hug the window edges.
+/// Standard layout for grouped-settings detail pages. TinyStart-style: cards
+/// stretch with the window and keep a fixed, modest gutter on each side —
+/// no centered max-width column, whose side margins would grow with the
+/// window.
 struct GroupedPageLayout: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .contentMargins(.horizontal, 40, for: .scrollContent)
-            .frame(maxWidth: 840)
-            .frame(maxWidth: .infinity)
+            .contentMargins(.horizontal, 24, for: .scrollContent)
     }
 }
 
