@@ -13,6 +13,7 @@ RELEASE_ASSET_NAME="$4"
 REPOSITORY="oliverames/skylight-bridge"
 APPCAST_URL="https://raw.githubusercontent.com/$REPOSITORY/gh-pages/appcast.xml"
 KEYCHAIN_ACCOUNT="${SPARKLE_KEYCHAIN_ACCOUNT:-Skylight Bridge Sparkle EdDSA}"
+APPCAST_DESCRIPTION="${APPCAST_DESCRIPTION:-This release includes improvements and fixes.}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APPCAST_PATH="$ROOT_DIR/appcast.xml"
 SIGN_TOOL="$ROOT_DIR/.build/artifacts/sparkle/Sparkle/bin/sign_update"
@@ -79,7 +80,7 @@ cat > "$TMP_APPCAST" <<EOF
       <title>Version $VERSION</title>
       <sparkle:version>$BUILD_NUMBER</sparkle:version>
       <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
-      <description><![CDATA[<p>Skylight Bridge $VERSION adds secure automatic updates and a value-based support reminder.</p>]]></description>
+      <description><![CDATA[<p>$APPCAST_DESCRIPTION</p>]]></description>
       <pubDate>$PUBLISHED_AT</pubDate>
       <enclosure url="$DOWNLOAD_URL" sparkle:edSignature="$SIGNATURE" length="$DMG_SIZE" type="application/octet-stream" />
     </item>
