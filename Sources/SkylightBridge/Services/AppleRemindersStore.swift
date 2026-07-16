@@ -135,7 +135,9 @@ final class AppleRemindersStore {
         let predicate = eventStore.predicateForReminders(in: [calendar])
         return await withCheckedContinuation { continuation in
             eventStore.fetchReminders(matching: predicate) { reminders in
-                continuation.resume(returning: Self.snapshots(for: reminders ?? []))
+                Task { @MainActor in
+                    continuation.resume(returning: Self.snapshots(for: reminders ?? []))
+                }
             }
         }
     }
@@ -149,9 +151,11 @@ final class AppleRemindersStore {
         let predicate = eventStore.predicateForReminders(in: [calendar])
         return await withCheckedContinuation { continuation in
             eventStore.fetchReminders(matching: predicate) { reminders in
-                continuation.resume(returning: (reminders ?? []).map {
-                    Self.choreSnapshot(for: $0, memberKey: memberKey)
-                })
+                Task { @MainActor in
+                    continuation.resume(returning: (reminders ?? []).map {
+                        Self.choreSnapshot(for: $0, memberKey: memberKey)
+                    })
+                }
             }
         }
     }
