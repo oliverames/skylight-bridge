@@ -22,7 +22,7 @@ enum NavigationSection: String, CaseIterable, Identifiable, Sendable {
     /// Bringing these into the main window keeps everything, including sign-in,
     /// in one place instead of a separate Settings pane.
     static let configuration: [NavigationSection] = [
-        .activity, .account, .sync, .diagnostics
+        .account, .sync, .activity, .diagnostics
     ]
 
     var title: String {
