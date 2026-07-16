@@ -1,20 +1,20 @@
 <p align="center">
-  <img src="Resources/AppIcon.png" width="112" height="112" alt="Skylight Bridge app icon">
+  <img src="docs/images/skylight-bridge-app-icon.png" width="112" height="112" alt="Skylight Bridge app icon">
 </p>
 
-<h1 align="center">Skylight Bridge</h1>
+<h1 align="center">Skylight Bridge for macOS</h1>
 
 <p align="center">
-  <strong>A native macOS app that sends the Apple photos, reminders, recipes, and meal plans you choose to your Skylight Calendar.</strong>
-</p>
-
-<p align="center">
-  <code>macOS 26+</code> &bull; <code>opt-in mappings</code> &bull; <code>notarized Mac release</code>
+  <strong>Keep your Skylight Calendar useful with the Apple Photos, Reminders, recipes, and meal plans you choose on your Mac.</strong>
 </p>
 
 <p align="center">
-  <a href="https://github.com/oliverames/skylight-bridge/releases/tag/v1.5.1">
-    <img src="https://img.shields.io/badge/macOS-v1.5.1-f5a542?style=flat-square&logo=apple&logoColor=white" alt="macOS release 1.5.1">
+  <code>macOS 26+</code> &bull; <code>opt-in mappings</code> &bull; <code>notarized updates</code>
+</p>
+
+<p align="center">
+  <a href="https://github.com/oliverames/skylight-bridge/releases/tag/v1.5.3">
+    <img src="https://img.shields.io/badge/macOS-v1.5.3-f5a542?style=flat-square&logo=apple&logoColor=white" alt="macOS release 1.5.3">
   </a>
   <a href="#license">
     <img src="https://img.shields.io/badge/license-all%20rights%20reserved-f5a542?style=flat-square" alt="All rights reserved">
@@ -29,9 +29,9 @@
 
 ---
 
-Skylight Bridge is for households that already use Apple Photos, Apple Reminders, and Apple Notes, but want the right parts of that life on a shared Skylight Calendar. It keeps those Apple apps as the source of truth and mirrors only the albums, lists, folders, or individual photos you explicitly select.
+Skylight Bridge is a native macOS app for households that use a Skylight Calendar alongside Apple Photos, Apple Reminders, and Apple Notes. It keeps Apple apps as the source of truth and mirrors only the albums, lists, folders, recipes, meal plans, and individual photos you explicitly select.
 
-The current Mac app is a private, Developer ID-signed release. It is not affiliated with Skylight, and it uses a private Skylight API that can change without notice.
+The Mac app is Developer ID-signed, notarized, and independently maintained. It is not affiliated with Skylight, and it uses a private Skylight API that can change without notice.
 
 ## Why a bridge exists
 
@@ -39,52 +39,36 @@ Skylight works best when it reflects the household's actual routines. The troubl
 
 Without a bridge, keeping a Skylight Calendar current means maintaining the same information twice. Skylight Bridge handles the repeat work while leaving control with the person who owns the Apple data. A shared screen stays useful, and no one has to upload the same photo or retype the same task again.
 
-This is a practical Mac utility, not a second household database. Preview mode is on by default, every mapping is opt-in, and the Activity screen shows what a sync plans to change before it changes anything.
+This is a practical Mac utility, not a second household database. Every mapping is opt-in, and the Activity screen gives you a clear record of what the bridge changes.
 
 ## Install on macOS
 
 1. Go to the [latest macOS release](https://github.com/oliverames/skylight-bridge/releases/latest) and download the `.dmg` file.
 2. Open the downloaded disk image and drag **Skylight Bridge** into **Applications**.
 3. Open Skylight Bridge from Applications. The app is Developer ID-signed, notarized, and stapled for Gatekeeper.
-4. On first run, sign in to Skylight, leave Preview mode on, and create the mapping you want to test.
+4. The app checks for signed updates, and **Skylight Bridge > Check for Updates…** is always available when you want to check manually.
 
-Version 1.5.1 is the current release. If you want to verify the download, compare the output below with the checksum file beside the DMG on the release page.
+Version 1.5.3 is the current release. If you want to verify the download, compare the output below with the checksum file beside the DMG on the release page.
 
 ```bash
-shasum -a 256 ~/Downloads/Skylight.Bridge-1.5.1.dmg
+shasum -a 256 ~/Downloads/Skylight.Bridge-1.5.3.dmg
 ```
 
-### First sync
+<p align="center">
+  <img src="docs/images/overview.png" width="820" alt="Skylight Bridge Overview on macOS, showing selected Apple Photos, Reminders, and recipes sources ready to sync">
+</p>
+
+<p align="center">
+  <sub>One Mac workspace for the selected parts of your Apple life that belong on a shared Skylight Calendar.</sub>
+</p>
+
+## First sync
 
 1. Open **Account** and sign in to your Skylight account. The app finds available frames and devices.
-2. In **Sync**, leave **Preview changes without applying them** enabled.
-3. Add an enabled mapping in Photos, Reminders, Chores, Recipes, or Meals. Grant only the Apple permissions needed for that mapping.
-4. Run a preview, then review the result in **Activity**.
-5. Turn Preview mode off only after the proposed changes look right.
+2. Add and enable the source you want in Photos, Reminders, Chores, Recipes, or Meals. Grant only the Apple permissions that source needs.
+3. Select **Sync Now**, then use **Activity** to review the result. The overview always shows which sources are ready to sync.
 
-The menu bar item keeps the app close at hand. It shows the current sync state, runs a sync or preview when the app is ready, and directs you to sign in, configure a mapping, or inspect Activity when that is the next useful step.
-
-## Screenshots
-
-### Mac workspace
-
-<p align="center">
-  <img src="docs/images/main-window.png" width="720" alt="Skylight Bridge macOS workspace with Apple Photos, Reminders, Chores, Recipes, Meals, Activity, Account, Sync, and Diagnostics in the sidebar">
-</p>
-
-<p align="center">
-  <sub>The native macOS workspace keeps source mappings, account setup, sync settings, and activity history in one window.</sub>
-</p>
-
-### Menu bar sync status
-
-<p align="center">
-  <img src="docs/images/menu-bar-sync.png" width="360" alt="Skylight Bridge macOS menu bar showing Sync Now, Live Sync status, and the last successful sync time">
-</p>
-
-<p align="center">
-  <sub>The Mac app lives in the menu bar, where a manual sync and its status stay visible without keeping a window open.</sub>
-</p>
+The menu bar keeps the app close at hand. It shows sync status, runs a sync when the app is ready, and directs you to sign in, configure a mapping, or inspect Activity when that is the next useful step.
 
 ## What Skylight Bridge syncs
 

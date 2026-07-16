@@ -2,20 +2,20 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
     <title>Skylight Bridge Updates</title>
-    <link>https://oliverames.github.io/skylight-bridge/appcast.xml</link>
+    <link>https://raw.githubusercontent.com/oliverames/skylight-bridge/gh-pages/appcast.xml</link>
     <description>Signed updates for Skylight Bridge.</description>
     <language>en</language>
     <item>
-      <title>Version 1.5.2</title>
-      <sparkle:version>12</sparkle:version>
-      <sparkle:shortVersionString>1.5.2</sparkle:shortVersionString>
-      <description><![CDATA[<p>Skylight Bridge 1.5.2 adds secure automatic updates and a value-based support reminder.</p>]]></description>
-      <pubDate>Thu, 16 Jul 2026 00:50:56 +0000</pubDate>
-      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.5.2/Skylight.Bridge-1.5.2.dmg" sparkle:edSignature="JPbEYpKW/itH3ICum/YakXUJiVtYAkhffASzpH1ExtOV+gyvLERe6qoVTLAWSO6kX9y/gs3hP+XMMk7VRTGjDw==" length="5974243" type="application/octet-stream" />
+      <title>Version 1.5.3</title>
+      <sparkle:version>13</sparkle:version>
+      <sparkle:shortVersionString>1.5.3</sparkle:shortVersionString>
+      <description><![CDATA[<p>Skylight Bridge 1.5.3 adds secure automatic updates and a value-based support reminder.</p>]]></description>
+      <pubDate>Thu, 16 Jul 2026 00:56:15 +0000</pubDate>
+      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.5.3/Skylight.Bridge-1.5.3.dmg" sparkle:edSignature="/TjNnBl1MyG68cjlrRWxQj6kiwCbIneTm+lx57J7LqJI/YNZLI4fab+2IyW2eBGjs3gVmE/PMrOzyaMchxKfCQ==" length="5984484" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: rT6kRqnGTb2oHQej6wWqYzwacQw4Ba7M8AWbpRw7GJ8SCaLxhv4crG+dFyVYtlOMp6I5w7/GDl3LpxeBqsa/Aw==
-length: 1022
+edSignature: mUwgFsrdzBmT/8RDwBmkDumoAUPNk363+ZfnyyZUEQVApvdIexWCI2Lxs6sS/a/L3F4mwMdZwE/ihfYn2hFnAA==
+length: 1047
 -->
