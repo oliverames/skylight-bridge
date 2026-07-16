@@ -1,3 +1,21 @@
+## 2026-07-16 - Skylight Bridge 1.5.6: Two-way chores and list metadata
+
+**What changed**: Released version 1.5.6 (build 16). Chore Chart mappings now remain two-way, including older saved mappings. Linked Apple Reminders and Skylight lists sync title and color changes according to the mapping direction and conflict policy.
+
+Selected-photo names now publish as captions on linked Skylight copies. The README documents the complete Photos, Reminders, Recipe Box, and Chore Chart feature set.
+
+**Decisions made**: The first list-metadata sync records existing titles and colors without relabeling either list. Color clearing remains excluded because Skylight has no documented clear contract. Apple Photos remain unchanged.
+
+**Verification**: All 126 tests passed. The signed local build passed verification. Apple accepted and stapled the universal app and DMG. Both passed Gatekeeper, disk-image, mounted-app, and strict signature checks.
+
+The published SHA-256 matched the local DMG (`37f4c457eaaf0b0423cf2b90a672ebee3876a319bc3e1e86a415833ee797e4b8`). The signed Sparkle appcast was published to `gh-pages`.
+
+**Left off at**: Version 1.5.6 is published at https://github.com/oliverames/skylight-bridge/releases/tag/v1.5.6. Tag `v1.5.6` points to `5333d62`; the appcast mirror is published from `gh-pages` commit `4e9d804`.
+
+**Open questions**: None.
+
+---
+
 ## 2026-07-16 - Metadata sync
 
 **What changed**: Commit `f03b347` syncs linked Apple Reminders and Skylight list titles and colors in both directions. Selected-photo names now publish as captions on their bridge-linked Skylight message without changing Apple Photos. The README now separates the published 1.5.5 build from the live next-release work, accurately presents Chore Chart sync as live in the current build, and removes the hidden meal-plan workflow.

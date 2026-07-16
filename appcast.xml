@@ -6,16 +6,16 @@
     <description>Signed updates for Skylight Bridge.</description>
     <language>en</language>
     <item>
-      <title>Version 1.5.5</title>
-      <sparkle:version>15</sparkle:version>
-      <sparkle:shortVersionString>1.5.5</sparkle:shortVersionString>
-      <description><![CDATA[<p>Selected photos now receive concise, on-device Apple Intelligence names after selection, without interrupting the picker.</p>]]></description>
-      <pubDate>Thu, 16 Jul 2026 17:38:58 +0000</pubDate>
-      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.5.5/Skylight.Bridge-1.5.5.dmg" sparkle:edSignature="oSZ1FOJ1S870qClqK3Kb1sIjuh0e9tyxmHoM0TCmd6sQBeLRIAmdEnsRF3eu1StsLJVxZwZ5up0xHA5NORkoAw==" length="6029028" type="application/octet-stream" />
+      <title>Version 1.5.6</title>
+      <sparkle:version>16</sparkle:version>
+      <sparkle:shortVersionString>1.5.6</sparkle:shortVersionString>
+      <description><![CDATA[<p>Chore Chart mappings now stay two-way, linked Reminders lists sync titles and colors, and selected-photo names publish as Skylight captions.</p>]]></description>
+      <pubDate>Thu, 16 Jul 2026 18:34:28 +0000</pubDate>
+      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.5.6/Skylight.Bridge-1.5.6.dmg" sparkle:edSignature="WdYJT+qJ7FWa4oHAXojYgXY3P9uUEy2HKtyZvoBm9hrGihVT39nYAnP5CVYVBB0x5ctppxgb9PChZjtmUl7MCA==" length="6076644" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: ZTDilckhDTp7uC34olp1lgpPdH6Z3R1UjDlAeBH/3mvzknW/7gYonBwQgwhnQSxDjQLszji2nGoqrlWnzt+sDQ==
-length: 1081
+edSignature: D6XFTsyhGbSwm/WI5a/kBD4aqoPvVRcTjaOed4faE5bGt1m2CSjGv85gsRU/+nqTvaIJinluOaSHZY0joklvCw==
+length: 1100
 -->
