@@ -14,6 +14,7 @@ APP_BUNDLE="$DIST_DIR/$DISPLAY_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
 APP_RESOURCES="$APP_CONTENTS/Resources"
+APP_FRAMEWORKS="$APP_CONTENTS/Frameworks"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 ICON_FILE="$ROOT_DIR/Resources/AppIcon.icon"
@@ -32,12 +33,28 @@ pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 
 cd "$ROOT_DIR"
 swift build
-BUILD_BINARY="$(swift build --show-bin-path)/$APP_NAME"
+BUILD_PRODUCTS="$(swift build --show-bin-path)"
+BUILD_BINARY="$BUILD_PRODUCTS/$APP_NAME"
+SPARKLE_FRAMEWORK_SOURCE="$BUILD_PRODUCTS/PackageFrameworks/Sparkle.framework"
+SPARKLE_FRAMEWORK="$APP_FRAMEWORKS/Sparkle.framework"
+
+if [[ ! -d "$SPARKLE_FRAMEWORK_SOURCE" ]]; then
+  echo "Sparkle.framework is missing from the Swift package build." >&2
+  exit 1
+fi
 
 rm -rf "$APP_BUNDLE"
-mkdir -p "$APP_MACOS" "$APP_RESOURCES"
+mkdir -p "$APP_MACOS" "$APP_RESOURCES" "$APP_FRAMEWORKS"
 cp "$BUILD_BINARY" "$APP_BINARY"
 chmod +x "$APP_BINARY"
+ditto "$SPARKLE_FRAMEWORK_SOURCE" "$SPARKLE_FRAMEWORK"
+
+if ! otool -l "$APP_BINARY" | awk '
+  $1 == "path" && $2 == "@executable_path/../Frameworks" { found = 1 }
+  END { exit !found }
+'; then
+  install_name_tool -add_rpath '@executable_path/../Frameworks' "$APP_BINARY"
+fi
 
 cp "$INFO_PLIST_TEMPLATE" "$INFO_PLIST"
 
@@ -67,6 +84,12 @@ if [[ -n "$CODESIGN_IDENTITY" ]]; then
     "$RESOLVED_ENTITLEMENTS_FILE" \
     "$BUNDLE_ID" \
     "$CLOUDKIT_CONTAINER_IDENTIFIER"
+  codesign \
+    --force \
+    --sign "$CODESIGN_IDENTITY" \
+    --options runtime \
+    --timestamp \
+    "$SPARKLE_FRAMEWORK" >/dev/null
   codesign \
     --force \
     --sign "$CODESIGN_IDENTITY" \
