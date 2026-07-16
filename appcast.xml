@@ -6,16 +6,16 @@
     <description>Signed updates for Skylight Bridge.</description>
     <language>en</language>
     <item>
-      <title>Version 1.5.3</title>
-      <sparkle:version>13</sparkle:version>
-      <sparkle:shortVersionString>1.5.3</sparkle:shortVersionString>
-      <description><![CDATA[<p>Skylight Bridge 1.5.3 adds secure automatic updates and a value-based support reminder.</p>]]></description>
-      <pubDate>Thu, 16 Jul 2026 00:56:15 +0000</pubDate>
-      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.5.3/Skylight.Bridge-1.5.3.dmg" sparkle:edSignature="/TjNnBl1MyG68cjlrRWxQj6kiwCbIneTm+lx57J7LqJI/YNZLI4fab+2IyW2eBGjs3gVmE/PMrOzyaMchxKfCQ==" length="5984484" type="application/octet-stream" />
+      <title>Version 1.5.4</title>
+      <sparkle:version>14</sparkle:version>
+      <sparkle:shortVersionString>1.5.4</sparkle:shortVersionString>
+      <description><![CDATA[<p>This release fixes iCloud sharing reliability, prevents a Reminders-related crash, and improves local app launch stability.</p>]]></description>
+      <pubDate>Thu, 16 Jul 2026 17:14:18 +0000</pubDate>
+      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.5.4/Skylight.Bridge-1.5.4.dmg" sparkle:edSignature="4x4Nf887VH5+ONc0SovIukWu0cJi5PdFUn450AInxxh7EUhmav+bc/n7zqLrp85wp02BKOgam6WFdlxiOFTRDQ==" length="5982948" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: mUwgFsrdzBmT/8RDwBmkDumoAUPNk363+ZfnyyZUEQVApvdIexWCI2Lxs6sS/a/L3F4mwMdZwE/ihfYn2hFnAA==
-length: 1047
+edSignature: RnAtp599hNrXNdKhmIa/BPbVtGRc4+hm06pOP5CpcifUREXHQq87dXlMEwBSsRLLW1vmKGiSW/dJ9hoUn5KnDg==
+length: 1083
 -->
