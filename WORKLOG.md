@@ -1,3 +1,17 @@
+## 2026-07-16 - Skylight Bridge 1.5.4: CloudKit sharing, crash, and release reliability
+
+**What changed**: Fixed the original iCloud sharing errors by deploying the required CloudKit production schema and adding the `SharedPhotoMapping` record-name query index. The app now recognizes undeployed-production-schema errors and logs a concise recoverable message rather than exposing CloudKit record internals. Bundled and signed Sparkle for local app runs, kept EventKit reminder callbacks on the main actor to address the reported crash, and reordered Configuration to Account, Sync, Activity, then Diagnostics. Released version 1.5.4 (build 14), including an accurate README badge/install command and signed Sparkle appcast entry.
+
+**Decisions made**: Production CloudKit failures are handled as recoverable sharing failures while preserving local work. The public release is the Developer ID-signed, notarized, stapled DMG; the appcast names the release-specific fixes and retains a generic default for future releases. Only `/Applications/Skylight Bridge.app` remains installed locally after release verification.
+
+**Verification**: 106 tests in 19 suites passed. The CloudKit production schema and query indexes were verified in the Apple Developer dashboard. The 1.5.4 app and DMG passed nested-signature checks, notarization, stapling, Gatekeeper assessment, disk-image verification, and published SHA-256 comparison. The signed appcast was published to `gh-pages`, and the installed 1.5.4 (14) app launched successfully.
+
+**Left off at**: Version 1.5.4 is published at https://github.com/oliverames/skylight-bridge/releases/tag/v1.5.4. Tag `v1.5.4` points to `352ffe6`; the appcast mirror is committed on `main` as `0f784ff`.
+
+**Open questions**: None.
+
+---
+
 ## 2026-07-15 - Skylight Bridge 1.5.1 release
 
 **What changed**: Published version 1.5.1 (11), including the CloudKit app-identity signing correction, guided Chore Chart setup, refined menu-bar and sidebar navigation, temporarily hidden Meals workflow, and clearer first-run onboarding.
