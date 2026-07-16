@@ -1,3 +1,17 @@
+## 2026-07-16 - Metadata sync
+
+**What changed**: Commit `f03b347` syncs linked Apple Reminders and Skylight list titles and colors in both directions. Selected-photo names now publish as captions on their bridge-linked Skylight message without changing Apple Photos.
+
+**Decisions made**: The first sync records existing list values without relabeling either side. Later conflicts use the selected policy, with Apple as the stable newest-change fallback. Color clearing is excluded because Skylight has no documented clear contract.
+
+**Verification**: `swift test` passed 126 tests in 22 suites. The signed build, strict signature check, and `git diff --check` passed.
+
+**Left off at**: Pushed to `main` as `f03b347`; this is not a public release.
+
+**Open questions**: None.
+
+---
+
 ## 2026-07-16 - Skylight Bridge 1.5.5: On-device selected-photo names
 
 **What changed**: Released version 1.5.5 (build 15). Selected Photos mappings now generate concise, descriptive names with Apple Intelligence after the picker has returned, so selection is never interrupted. Names appear as they are ready, persist locally with the mapping, and keep saving in the background if the mapping sheet closes first.
