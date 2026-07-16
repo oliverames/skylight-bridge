@@ -1,5 +1,5 @@
 {
-  "originHash" : "9c344c2dfd0c51f46d80b54082a8c9b354b548be2c531109bd1e188a348ddf10",
+  "originHash" : "650f6f5d76ecf5c18de8b42f66aa9678f648b3c01f7de8b96eeb1e8860715349",
   "pins" : [
     {
       "identity" : "skylight-bridge-ios",
@@ -8,6 +8,15 @@
       "state" : {
         "revision" : "a30439f3244ca26e63aedac3441a1bc528c52b17",
         "version" : "0.1.7"
+      }
+    },
+    {
+      "identity" : "sparkle",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/sparkle-project/Sparkle",
+      "state" : {
+        "revision" : "b6496a74a087257ef5e6da1c5b29a447a60f5bd7",
+        "version" : "2.9.4"
       }
     }
   ],

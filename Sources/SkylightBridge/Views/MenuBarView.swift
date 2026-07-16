@@ -4,6 +4,7 @@ import SwiftUI
 struct MenuBarView: View {
     @Environment(\.openWindow) private var openWindow
     let store: AppStore
+    let onCheckForUpdates: () -> Void
 
     var body: some View {
         Button("Open Skylight Bridge") {
@@ -16,6 +17,8 @@ struct MenuBarView: View {
         .disabled(syncControl.isDisabled)
 
         Divider()
+
+        Button("Check for Updates…", action: onCheckForUpdates)
 
         Button("Account & Settings…") {
             openMainWindow(selection: .account)

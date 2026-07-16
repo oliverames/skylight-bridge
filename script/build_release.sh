@@ -3,25 +3,30 @@ set -euo pipefail
 
 APP_NAME="SkylightBridge"
 DISPLAY_NAME="Skylight Bridge"
-VERSION="${VERSION:-1.5.1}"
-BUILD_NUMBER="${BUILD_NUMBER:-11}"
 SIGN_IDENTITY="${SIGN_IDENTITY:-Developer ID Application: Oliver Ames (PV3W52NDZ3)}"
 DEVELOPER_ID_PROFILE="${DEVELOPER_ID_PROFILE:-}"
+KEYCHAIN_PROFILE="${KEYCHAIN_PROFILE:-notarytool-profile}"
 
 APP_BUNDLE_IDENTIFIER="com.oliverames.SkylightBridge"
 CLOUDKIT_CONTAINER_IDENTIFIER="iCloud.com.oliverames.SkylightBridge"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SOURCE_INFO_PLIST="$ROOT_DIR/Resources/Info.plist"
+VERSION="${VERSION:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$SOURCE_INFO_PLIST")}"
+BUILD_NUMBER="${BUILD_NUMBER:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$SOURCE_INFO_PLIST")}"
 RELEASE_DIR="$ROOT_DIR/dist/release"
 APP_BUNDLE="$RELEASE_DIR/$DISPLAY_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
 APP_RESOURCES="$APP_CONTENTS/Resources"
+APP_FRAMEWORKS="$APP_CONTENTS/Frameworks"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 ENTITLEMENTS="$ROOT_DIR/Resources/SkylightBridge.entitlements"
 RESOLVED_ENTITLEMENTS="$RELEASE_DIR/SkylightBridge.resolved.entitlements"
 ICON_SOURCE="$ROOT_DIR/Resources/AppIcon.icon"
+SPARKLE_FRAMEWORK_SOURCE="$ROOT_DIR/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+SPARKLE_FRAMEWORK="$APP_FRAMEWORKS/Sparkle.framework"
 APP_ZIP="$RELEASE_DIR/$DISPLAY_NAME-$VERSION.zip"
 DMG_PATH="$RELEASE_DIR/$DISPLAY_NAME-$VERSION.dmg"
 CHECKSUM_PATH="$DMG_PATH.sha256"
@@ -29,9 +34,23 @@ DMG_SOURCE="$RELEASE_DIR/dmg-source"
 DMG_MOUNT="$RELEASE_DIR/dmg-mount"
 
 require_notary_credentials() {
-  : "${NOTARY_KEY_FILE:?Set NOTARY_KEY_FILE to an App Store Connect API key file}"
-  : "${NOTARY_KEY_ID:?Set NOTARY_KEY_ID to the App Store Connect key ID}"
-  : "${NOTARY_ISSUER_ID:?Set NOTARY_ISSUER_ID to the App Store Connect issuer ID}"
+  if [[ -n "${NOTARY_KEY_FILE:-}" || -n "${NOTARY_KEY_ID:-}" || -n "${NOTARY_ISSUER_ID:-}" ]]; then
+    : "${NOTARY_KEY_FILE:?Set NOTARY_KEY_FILE to an App Store Connect API key file}"
+    : "${NOTARY_KEY_ID:?Set NOTARY_KEY_ID to the App Store Connect key ID}"
+    : "${NOTARY_ISSUER_ID:?Set NOTARY_ISSUER_ID to the App Store Connect issuer ID}"
+    NOTARYTOOL_ARGS=(
+      --key "$NOTARY_KEY_FILE"
+      --key-id "$NOTARY_KEY_ID"
+      --issuer "$NOTARY_ISSUER_ID"
+    )
+    return
+  fi
+
+  if ! xcrun notarytool history --keychain-profile "$KEYCHAIN_PROFILE" >/dev/null 2>&1; then
+    echo "No usable notarization credentials. Set NOTARY_KEY_FILE, NOTARY_KEY_ID, and NOTARY_ISSUER_ID, or configure keychain profile '$KEYCHAIN_PROFILE'." >&2
+    exit 1
+  fi
+  NOTARYTOOL_ARGS=(--keychain-profile "$KEYCHAIN_PROFILE")
 }
 
 require_developer_id_profile() {
@@ -80,18 +99,14 @@ if container_identifier in containers:
 
 submit_for_notarization() {
   local artifact="$1"
-  xcrun notarytool submit "$artifact" \
-    --key "$NOTARY_KEY_FILE" \
-    --key-id "$NOTARY_KEY_ID" \
-    --issuer "$NOTARY_ISSUER_ID" \
-    --wait
+  xcrun notarytool submit "$artifact" "${NOTARYTOOL_ARGS[@]}" --wait
 }
 
 require_notary_credentials
 require_developer_id_profile
 
 rm -rf "$RELEASE_DIR"
-mkdir -p "$APP_MACOS" "$APP_RESOURCES"
+mkdir -p "$APP_MACOS" "$APP_RESOURCES" "$APP_FRAMEWORKS"
 
 cd "$ROOT_DIR"
 swift build -c release --arch arm64 --arch x86_64
@@ -99,6 +114,17 @@ BUILD_BINARY="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-pat
 
 cp "$BUILD_BINARY" "$APP_BINARY"
 chmod 755 "$APP_BINARY"
+if [[ ! -d "$SPARKLE_FRAMEWORK_SOURCE" ]]; then
+  echo "Sparkle framework is missing. Run 'swift package resolve' before building a release." >&2
+  exit 1
+fi
+ditto "$SPARKLE_FRAMEWORK_SOURCE" "$SPARKLE_FRAMEWORK"
+if ! otool -l "$APP_BINARY" | awk '
+  $1 == "path" && $2 == "@executable_path/../Frameworks" { found = 1 }
+  END { exit !found }
+'; then
+  install_name_tool -add_rpath '@executable_path/../Frameworks' "$APP_BINARY"
+fi
 cp "$ROOT_DIR/Resources/Info.plist" "$INFO_PLIST"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$INFO_PLIST"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$INFO_PLIST"
@@ -115,6 +141,38 @@ plutil -lint "$ENTITLEMENTS" >/dev/null
   "$CLOUDKIT_CONTAINER_IDENTIFIER"
 lipo "$APP_BINARY" -verify_arch arm64
 lipo "$APP_BINARY" -verify_arch x86_64
+if ! otool -L "$APP_BINARY" | rg -Fq '@rpath/Sparkle.framework/Versions/B/Sparkle'; then
+  echo "release binary does not link Sparkle.framework" >&2
+  exit 1
+fi
+if ! otool -l "$APP_BINARY" | awk '
+  $1 == "path" && $2 == "@executable_path/../Frameworks" { found = 1 }
+  END { exit !found }
+'; then
+  echo "release binary does not search the app's Frameworks directory" >&2
+  exit 1
+fi
+
+SPARKLE_VERSION_DIR="$SPARKLE_FRAMEWORK/Versions/B"
+if [[ -d "$SPARKLE_VERSION_DIR/XPCServices/Installer.xpc" ]]; then
+  codesign --force --sign "$SIGN_IDENTITY" --options runtime --timestamp \
+    "$SPARKLE_VERSION_DIR/XPCServices/Installer.xpc"
+fi
+if [[ -d "$SPARKLE_VERSION_DIR/XPCServices/Downloader.xpc" ]]; then
+  codesign --force --sign "$SIGN_IDENTITY" --options runtime --timestamp \
+    --preserve-metadata=entitlements \
+    "$SPARKLE_VERSION_DIR/XPCServices/Downloader.xpc"
+fi
+if [[ -f "$SPARKLE_VERSION_DIR/Autoupdate" ]]; then
+  codesign --force --sign "$SIGN_IDENTITY" --options runtime --timestamp \
+    "$SPARKLE_VERSION_DIR/Autoupdate"
+fi
+if [[ -d "$SPARKLE_VERSION_DIR/Updater.app" ]]; then
+  codesign --force --sign "$SIGN_IDENTITY" --options runtime --timestamp \
+    "$SPARKLE_VERSION_DIR/Updater.app"
+fi
+codesign --force --sign "$SIGN_IDENTITY" --options runtime --timestamp "$SPARKLE_FRAMEWORK"
+codesign --verify --strict --verbose=4 "$SPARKLE_FRAMEWORK"
 
 codesign \
   --force \

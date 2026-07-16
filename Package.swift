@@ -14,13 +14,18 @@ let package = Package(
         .package(
             url: "https://github.com/oliverames/skylight-bridge-ios.git",
             from: "0.1.0"
+        ),
+        .package(
+            url: "https://github.com/sparkle-project/Sparkle",
+            from: "2.9.4"
         )
     ],
     targets: [
         .executableTarget(
             name: "SkylightBridge",
             dependencies: [
-                .product(name: "SkylightBridgeShared", package: "skylight-bridge-ios")
+                .product(name: "SkylightBridgeShared", package: "skylight-bridge-ios"),
+                .product(name: "Sparkle", package: "Sparkle")
             ],
             path: "Sources/SkylightBridge",
             swiftSettings: [

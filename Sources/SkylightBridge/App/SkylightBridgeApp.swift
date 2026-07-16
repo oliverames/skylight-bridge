@@ -1,7 +1,11 @@
 import AppKit
+import Sparkle
 import SwiftUI
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var updaterController: SPUStandardUpdaterController?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Mirrored from AppConfiguration.hideDockIcon at save time so the
         // policy can be applied before the configuration file is loaded,
@@ -11,6 +15,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !hideDockIcon {
             NSApp.activate(ignoringOtherApps: true)
         }
+
+        // `swift run` launches a bare executable rather than the signed app
+        // bundle that owns the Sparkle feed configuration. Keep local package
+        // development free of update checks, while all distributed builds
+        // start the standard Sparkle controller automatically.
+        guard Bundle.main.bundleURL.pathExtension == "app" else { return }
+        updaterController = SPUStandardUpdaterController(
+            startingUpdater: true,
+            updaterDelegate: nil,
+            userDriverDelegate: nil
+        )
+    }
+
+    func checkForUpdates() {
+        updaterController?.checkForUpdates(nil)
     }
 }
 
@@ -31,11 +50,17 @@ struct SkylightBridgeApp: App {
         .windowResizability(.contentMinSize)
         .defaultSize(width: 1_040, height: 700)
         .commands {
-            AppCommands(store: store)
+            AppCommands(
+                store: store,
+                onCheckForUpdates: appDelegate.checkForUpdates
+            )
         }
 
         MenuBarExtra {
-            MenuBarView(store: store)
+            MenuBarView(
+                store: store,
+                onCheckForUpdates: appDelegate.checkForUpdates
+            )
         } label: {
             // Pulse while syncing; switch to a warning glyph after a failed
             // sync so background failures are visible without opening the menu.
@@ -60,6 +85,7 @@ struct SkylightBridgeApp: App {
 private struct AppCommands: Commands {
     @Environment(\.openWindow) private var openWindow
     let store: AppStore
+    let onCheckForUpdates: () -> Void
 
     var body: some Commands {
         CommandGroup(replacing: .appSettings) {
@@ -69,6 +95,10 @@ private struct AppCommands: Commands {
                 NSApp.activate(ignoringOtherApps: true)
             }
             .keyboardShortcut(",", modifiers: .command)
+        }
+
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…", action: onCheckForUpdates)
         }
 
         CommandMenu("Sync") {
