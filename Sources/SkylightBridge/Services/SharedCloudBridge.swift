@@ -32,13 +32,10 @@ extension AppStore {
             // first would create a newer add record and silently resurrect it.
             try await importSharedPhotoMappings()
             try await publishLocalSelectedPhotoMappings()
+            recordSharediCloudSuccess()
             statusMessage = "Shared preferences and selected photos are up to date with iCloud."
         } catch {
-            appendActivity(.init(
-                level: .warning,
-                area: .system,
-                message: "iCloud sharing is unavailable: \(error.localizedDescription)"
-            ))
+            recordSharediCloudFailure(error, savedLocally: false)
         }
     }
 
@@ -53,13 +50,29 @@ extension AppStore {
             try await publishLocalSelectedPhotoMappings(
                 intentionalPhotoAdditions: intentionalPhotoAdditions
             )
+            recordSharediCloudSuccess()
         } catch {
-            appendActivity(.init(
-                level: .warning,
-                area: .system,
-                message: "Saved on this Mac. iCloud sharing will retry when available: \(error.localizedDescription)"
-            ))
+            recordSharediCloudFailure(error, savedLocally: true)
         }
+    }
+
+    private func recordSharediCloudSuccess() {
+        hasLoggedSharediCloudSchemaDeploymentFailure = false
+    }
+
+    private func recordSharediCloudFailure(_ error: any Error, savedLocally: Bool) {
+        let requiresSchemaDeployment = SharedCloudKitFailure.isProductionSchemaConfigurationError(error)
+        if requiresSchemaDeployment {
+            guard !hasLoggedSharediCloudSchemaDeploymentFailure else { return }
+            hasLoggedSharediCloudSchemaDeploymentFailure = true
+            statusMessage = "iCloud sharing needs its schema deployed to production."
+        }
+
+        appendActivity(.init(
+            level: .warning,
+            area: .system,
+            message: SharedCloudKitFailure.activityMessage(for: error, savedLocally: savedLocally)
+        ))
     }
 
     /// Saves a photo mapping and mirrors only individual-photo changes to
@@ -181,6 +194,10 @@ extension AppStore {
                 )
             }
         } catch {
+            if SharedCloudKitFailure.isProductionSchemaConfigurationError(error) {
+                recordSharediCloudFailure(error, savedLocally: true)
+                return
+            }
             appendActivity(.init(
                 level: .warning,
                 area: .photos,

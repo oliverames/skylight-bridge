@@ -38,6 +38,7 @@ final class AppStore {
     /// Milestone the donation sheet is currently thanking the user for.
     var donationPromptMilestone: Int?
     private var hasLoggedClassifierUnavailable = false
+    @ObservationIgnored var hasLoggedSharediCloudSchemaDeploymentFailure = false
 
     private enum SupportDefaultsKey {
         static let hasCompletedOnboarding = "hasCompletedOnboarding"
