@@ -1528,11 +1528,14 @@ actor SyncCoordinator {
                 try await checkpoint(state, dryRun: dryRun)
             }
 
+            // Chore Chart represents a shared household schedule. Unlike a
+            // general Reminders list mapping, it always mirrors changes in
+            // both directions, including configurations saved by older builds.
             let actions = ChoreSyncPlanner.plan(
                 apple: appleSnapshots,
                 skylight: remoteSnapshots,
                 links: activeRecords.map(Self.choreLink),
-                direction: mapping.direction,
+                direction: .twoWay,
                 conflictPolicy: mapping.conflictPolicy,
                 today: today,
                 todayDate: todayDate

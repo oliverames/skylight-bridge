@@ -575,8 +575,8 @@ struct SyncCoordinatorTests {
         #expect(persisted.reminders.isEmpty)
     }
 
-    @Test("A Skylight recurring chore creates a linked repeating Apple reminder")
-    func syncsRecurringChoreToApple() async throws {
+    @Test("Chore sync stays two-way and creates a linked repeating Apple reminder")
+    func syncsRecurringChoreToAppleFromLegacyOneWayMapping() async throws {
         let api = CoordinatorAPIStub()
         await api.configureChores([
             SkylightResource(
@@ -616,6 +616,7 @@ struct SyncCoordinatorTests {
         var mapping = ChoreMapping()
         mapping.frameID = "frame-1"
         mapping.frameName = "Kitchen"
+        mapping.direction = .appleToSkylight
         mapping.memberLinks = [ChoreMemberLink(
             memberKey: "person-1",
             memberLabel: "Oliver",
@@ -637,6 +638,61 @@ struct SyncCoordinatorTests {
         #expect(created.first?.recurrence?.frequency == .daily)
         #expect(persisted.chores.count == 1)
         #expect(persisted.chores.first?.skylightSeriesID == "chore-1")
+    }
+
+    @Test("A repeating Apple chore creates a recurring Skylight routine")
+    func syncsRecurringAppleChoreToSkylightFromLegacyOneWayMapping() async throws {
+        let today = Date(timeIntervalSince1970: 1_784_073_600)
+        let api = CoordinatorAPIStub()
+        let choreSource = CoordinatorChoreReminderSource(reminders: [
+            ChoreReminderSnapshot(
+                id: "apple-chore-1",
+                listID: "list-1",
+                memberKey: "person-1",
+                title: "Water plants",
+                notes: "Kitchen herbs",
+                isCompleted: false,
+                dueDate: today,
+                recurrence: ParsedRecurrenceRule(frequency: .daily),
+                recurrenceUnsupported: false,
+                modifiedAt: today
+            )
+        ])
+        let state = CoordinatorStateStore()
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            state: state,
+            choreReminderSource: choreSource,
+            now: { today }
+        )
+        var mapping = ChoreMapping()
+        mapping.frameID = "frame-1"
+        mapping.frameName = "Kitchen"
+        mapping.direction = .skylightToApple
+        mapping.memberLinks = [ChoreMemberLink(
+            memberKey: "person-1",
+            memberLabel: "Oliver",
+            appleListID: "list-1",
+            appleListTitle: "Oliver Chores"
+        )]
+        var configuration = AppConfiguration()
+        configuration.account.frameID = "frame-1"
+        configuration.dryRun = false
+        configuration.choreMappings = [mapping]
+
+        let summary = try await coordinator.sync(configuration: configuration)
+        let requests = await api.choreRequests
+        let persisted = try await state.loadSyncState()
+
+        #expect(summary.chores.applied == 1)
+        #expect(requests.count == 1)
+        #expect(requests.first?.summary == "Water plants")
+        #expect(requests.first?.recurring == true)
+        #expect(requests.first?.routine == true)
+        #expect(requests.first?.recurrenceSet?.first?.hasPrefix("RRULE:FREQ=DAILY") == true)
+        #expect(persisted.chores.count == 1)
+        #expect(persisted.chores.first?.appleReminderID == "apple-chore-1")
     }
 
     @Test("A rolled EventKit occurrence rebinds before completion is propagated")
@@ -1474,6 +1530,7 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
     private var mealCategories: [SkylightResource<SkylightMealCategoryAttributes>] = []
     private var chores: [SkylightResource<SkylightChoreAttributes>] = []
     private(set) var completedChoreSeriesIDs: [String] = []
+    private(set) var choreRequests: [SkylightChoreRequest] = []
     private(set) var updatedRecipeIDs: [String] = []
     private(set) var deletedRecipeIDs: [String] = []
     private(set) var recipeRequests: [SkylightRecipeRequest] = []
@@ -1521,7 +1578,29 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
         request: SkylightChoreRequest
     ) async throws -> SkylightResource<SkylightChoreAttributes> {
         calls.createdChores += 1
-        throw CoordinatorStubError.unexpectedCall
+        choreRequests.append(request)
+        let id = "remote-chore-\(calls.createdChores)"
+        let created = SkylightResource(
+            id: id,
+            attributes: SkylightChoreAttributes(
+                summary: request.summary,
+                description: request.description,
+                status: request.status,
+                start: request.start,
+                startTime: request.startTime,
+                rewardPoints: request.rewardPoints,
+                recurring: request.recurring,
+                recurringUntil: request.recurringUntil,
+                recurrenceSet: request.recurrenceSet,
+                upForGrabs: request.upForGrabs,
+                emojiIcon: request.emojiIcon,
+                routine: request.routine,
+                position: request.position,
+                series: id
+            )
+        )
+        chores.append(created)
+        return created
     }
 
     func updateChore(

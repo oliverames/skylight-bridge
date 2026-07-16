@@ -181,21 +181,12 @@ struct ChoresSyncView: View {
                 }
 
                 DisclosureGroup("Advanced") {
-                    Picker("Direction", selection: savingBinding($mapping.direction)) {
-                        Text("Apple → Skylight").tag(ReminderSyncDirection.appleToSkylight)
-                        Text("Skylight → Apple").tag(ReminderSyncDirection.skylightToApple)
-                        Text("Two-way").tag(ReminderSyncDirection.twoWay)
+                    Picker("When both changed", selection: savingBinding($mapping.conflictPolicy)) {
+                        ForEach(SyncConflictPolicy.allCases, id: \.self) { policy in
+                            Text(policy.label).tag(policy)
+                        }
                     }
                     .pickerStyle(.menu)
-
-                    if mapping.direction == .twoWay {
-                        Picker("When both changed", selection: savingBinding($mapping.conflictPolicy)) {
-                            ForEach(SyncConflictPolicy.allCases, id: \.self) { policy in
-                                Text(policy.label).tag(policy)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                    }
 
                     Button("Reset Chore Setup", role: .destructive) {
                         Task { await store.removeChoreMapping(mapping) }
@@ -204,7 +195,7 @@ struct ChoresSyncView: View {
             } header: {
                 Text(mapping.frameName.isEmpty ? "Skylight Chores" : mapping.frameName)
             } footer: {
-                Text("Completing a repeating reminder marks today's Skylight occurrence complete. Completing it on Skylight advances the reminder to its next occurrence.")
+                Text("Chore Chart sync is always two-way. Recurring chores stay recurring in Apple Reminders, and completing either side updates today's occurrence on the other.")
             }
         }
     }

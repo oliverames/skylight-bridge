@@ -297,6 +297,7 @@ final class AppStore {
             existingMapping.frameName = skylightFrames.first(where: { $0.id == frameID })?
                 .attributes.name ?? "Skylight"
             existingMapping.memberLinks = links
+            existingMapping.direction = .twoWay
             existingMapping.isEnabled = true
             if let index = configuration.choreMappings.firstIndex(where: { $0.id == existingMapping.id }) {
                 configuration.choreMappings[index] = existingMapping
