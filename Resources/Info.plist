@@ -19,11 +19,11 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.5.2</string>
+    <string>1.5.3</string>
     <key>CFBundleVersion</key>
-    <string>12</string>
+    <string>13</string>
     <key>SUFeedURL</key>
-    <string>https://oliverames.github.io/skylight-bridge/appcast.xml</string>
+    <string>https://raw.githubusercontent.com/oliverames/skylight-bridge/gh-pages/appcast.xml</string>
     <key>SUPublicEDKey</key>
     <string>dHpRax28kl47J+NOJLYyLwZ/Xtqg64gC1Zl/PRPzB3U=</string>
     <key>SURequireSignedFeed</key>

@@ -11,16 +11,21 @@ BUILD_NUMBER="$2"
 DMG_PATH="$3"
 RELEASE_ASSET_NAME="$4"
 REPOSITORY="oliverames/skylight-bridge"
+APPCAST_URL="https://raw.githubusercontent.com/$REPOSITORY/gh-pages/appcast.xml"
 KEYCHAIN_ACCOUNT="${SPARKLE_KEYCHAIN_ACCOUNT:-Skylight Bridge Sparkle EdDSA}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APPCAST_PATH="$ROOT_DIR/appcast.xml"
 SIGN_TOOL="$ROOT_DIR/.build/artifacts/sparkle/Sparkle/bin/sign_update"
 PAGES_DIR=""
+TMP_APPCAST=""
 
 cleanup() {
   local result=$?
   if [[ -n "$PAGES_DIR" && -d "$PAGES_DIR" ]]; then
     rm -rf "$PAGES_DIR"
+  fi
+  if [[ -n "$TMP_APPCAST" && -f "$TMP_APPCAST" ]]; then
+    rm -f "$TMP_APPCAST"
   fi
   exit "$result"
 }
@@ -53,19 +58,21 @@ if [[ -z "$SIGNATURE" ]]; then
   echo "Sparkle archive signature is empty." >&2
   exit 1
 fi
-"$SIGN_TOOL" "$DMG_PATH" --account "$KEYCHAIN_ACCOUNT" --verify "$SIGNATURE" >/dev/null
+"$SIGN_TOOL" --verify --account "$KEYCHAIN_ACCOUNT" "$DMG_PATH" "$SIGNATURE" >/dev/null
 
 DMG_SIZE="$(stat -f%z "$DMG_PATH")"
 PUBLISHED_AT="$(LC_ALL=C date -u '+%a, %d %b %Y %H:%M:%S +0000')"
 DOWNLOAD_URL="https://github.com/$REPOSITORY/releases/download/v$VERSION/$RELEASE_ASSET_NAME"
 TMP_APPCAST="$(mktemp -t skylight-bridge-appcast)"
+mv "$TMP_APPCAST" "$TMP_APPCAST.xml"
+TMP_APPCAST="$TMP_APPCAST.xml"
 
 cat > "$TMP_APPCAST" <<EOF
 <?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
     <title>Skylight Bridge Updates</title>
-    <link>https://oliverames.github.io/skylight-bridge/appcast.xml</link>
+    <link>$APPCAST_URL</link>
     <description>Signed updates for Skylight Bridge.</description>
     <language>en</language>
     <item>
@@ -81,7 +88,7 @@ cat > "$TMP_APPCAST" <<EOF
 EOF
 
 "$SIGN_TOOL" "$TMP_APPCAST" --account "$KEYCHAIN_ACCOUNT" --disable-signing-warning
-"$SIGN_TOOL" "$TMP_APPCAST" --account "$KEYCHAIN_ACCOUNT" --verify >/dev/null
+"$SIGN_TOOL" --verify --account "$KEYCHAIN_ACCOUNT" "$TMP_APPCAST" >/dev/null
 mv "$TMP_APPCAST" "$APPCAST_PATH"
 
 PAGES_DIR="$(mktemp -d -t skylight-bridge-pages)"
@@ -101,4 +108,4 @@ if ! git -C "$PAGES_DIR" diff --cached --quiet; then
   git -C "$PAGES_DIR" push origin HEAD:gh-pages
 fi
 
-printf 'Published signed appcast: %s\n' 'https://oliverames.github.io/skylight-bridge/appcast.xml'
+printf 'Published signed appcast: %s\n' "$APPCAST_URL"
