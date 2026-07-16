@@ -1,10 +1,10 @@
 ## 2026-07-16 - Metadata sync
 
-**What changed**: Commit `f03b347` syncs linked Apple Reminders and Skylight list titles and colors in both directions. Selected-photo names now publish as captions on their bridge-linked Skylight message without changing Apple Photos.
+**What changed**: Commit `f03b347` syncs linked Apple Reminders and Skylight list titles and colors in both directions. Selected-photo names now publish as captions on their bridge-linked Skylight message without changing Apple Photos. The README now separates the published 1.5.5 build from the live next-release work, accurately presents Chore Chart sync as live in the current build, and removes the hidden meal-plan workflow.
 
 **Decisions made**: The first sync records existing list values without relabeling either side. Later conflicts use the selected policy, with Apple as the stable newest-change fallback. Color clearing is excluded because Skylight has no documented clear contract.
 
-**Verification**: `swift test` passed 126 tests in 22 suites. The signed build, strict signature check, and `git diff --check` passed.
+**Verification**: `swift test` passed 126 tests in 22 suites. The signed build, strict signature check, and `git diff --check` passed. The final README scan found no meal-plan references.
 
 **Left off at**: Pushed to `main` as `f03b347`; this is not a public release.
 
