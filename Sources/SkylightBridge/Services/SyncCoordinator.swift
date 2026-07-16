@@ -104,6 +104,12 @@ protocol PhotoSyncSource: Sendable {
 
 @MainActor
 protocol ReminderSyncSource: Sendable {
+    func syncReminderList(withID listID: String) throws -> AppleReminderListSnapshot
+    func syncUpdateReminderList(
+        withID listID: String,
+        title: String?,
+        colorHex: String?
+    ) throws -> AppleReminderListSnapshot
     func syncReminders(in listID: String) async throws -> [AppleReminderSnapshot]
     func syncCreateReminder(in listID: String, draft: AppleReminderDraft) async throws -> AppleReminderSnapshot
     func syncUpdateReminder(withID reminderID: String, patch: AppleReminderPatch) async throws -> AppleReminderSnapshot
@@ -188,6 +194,11 @@ protocol SkylightSyncAPI: Sendable {
         frameID: String,
         messageID: String
     ) async throws -> SkylightResource<SkylightPhotoMessageAttributes>
+    func updateMessageCaption(
+        frameID: String,
+        messageID: String,
+        caption: String
+    ) async throws -> SkylightResource<SkylightPhotoMessageAttributes>
     func listMessages(
         frameID: String,
         page: Int?,
@@ -198,6 +209,11 @@ protocol SkylightSyncAPI: Sendable {
     func listLists(frameID: String) async throws -> SkylightListCollectionResponse
     func createList(
         frameID: String,
+        request: SkylightListRequest
+    ) async throws -> SkylightResource<SkylightListAttributes>
+    func updateList(
+        frameID: String,
+        listID: String,
         request: SkylightListRequest
     ) async throws -> SkylightResource<SkylightListAttributes>
 
@@ -350,6 +366,18 @@ extension ApplePhotoLibrary: PhotoSyncSource {
 }
 
 extension AppleRemindersStore: ReminderSyncSource {
+    func syncReminderList(withID listID: String) throws -> AppleReminderListSnapshot {
+        try reminderList(withID: listID)
+    }
+
+    func syncUpdateReminderList(
+        withID listID: String,
+        title: String?,
+        colorHex: String?
+    ) throws -> AppleReminderListSnapshot {
+        try updateReminderList(withID: listID, title: title, colorHex: colorHex)
+    }
+
     func syncReminders(in listID: String) async throws -> [AppleReminderSnapshot] {
         try await reminders(in: listID)
     }
@@ -733,6 +761,13 @@ actor SyncCoordinator {
             state.reminders.removeAll { $0.id == record.id }
             try await stateStore.saveSyncState(state)
         }
+        let listRecordCount = state.reminderLists.count
+        state.reminderLists.removeAll {
+            $0.mappingID == mappingID && $0.frameID == frameID
+        }
+        if state.reminderLists.count != listRecordCount {
+            try await stateStore.saveSyncState(state)
+        }
         return affected
     }
 
@@ -814,6 +849,7 @@ actor SyncCoordinator {
             }
 
             for asset in sourceAssets.sorted(by: { $0.id < $1.id }) {
+                let caption = normalizedPhotoCaption(mapping.selectedPhotoNames[asset.id])
                 let destinationID = destination.id
                     ?? (dryRun && destination.needsCreation
                         ? "dry-run-new-album:\(mapping.id.uuidString)"
@@ -837,8 +873,13 @@ actor SyncCoordinator {
                 if let existing, existing.renderedHash == converted.sha256 {
                     let oldAlbumIDs = existing.skylightAlbumIDs.subtracting([destinationID])
                     let needsAdd = !existing.skylightAlbumIDs.contains(destinationID)
-                    summary.planned += (needsAdd ? 1 : 0) + (oldAlbumIDs.isEmpty ? 0 : 1)
-                    guard !dryRun, needsAdd || !oldAlbumIDs.isEmpty else { continue }
+                    let needsCaptionUpdate = caption.map { $0 != existing.lastSyncedCaption } ?? false
+                    summary.planned += (needsAdd ? 1 : 0)
+                        + (oldAlbumIDs.isEmpty ? 0 : 1)
+                        + (needsCaptionUpdate ? 1 : 0)
+                    guard !dryRun, needsAdd || !oldAlbumIDs.isEmpty || needsCaptionUpdate else {
+                        continue
+                    }
                     if needsAdd {
                         try await api.addMessages(
                             frameID: frameID,
@@ -855,6 +896,14 @@ actor SyncCoordinator {
                         )
                         summary.applied += 1
                     }
+                    if needsCaptionUpdate, let caption {
+                        _ = try await api.updateMessageCaption(
+                            frameID: frameID,
+                            messageID: existing.skylightMessageID,
+                            caption: caption
+                        )
+                        summary.applied += 1
+                    }
                     upsertPhotoRecord(PhotoSyncRecord(
                         mappingID: mapping.id,
                         frameID: frameID,
@@ -863,7 +912,8 @@ actor SyncCoordinator {
                         renderedHash: existing.renderedHash,
                         skylightMessageID: existing.skylightMessageID,
                         skylightAlbumIDs: [destinationID],
-                        lastSyncedAt: now()
+                        lastSyncedAt: now(),
+                        lastSyncedCaption: caption ?? existing.lastSyncedCaption
                     ), in: &state)
                     try await checkpoint(state, dryRun: dryRun)
                     continue
@@ -874,7 +924,8 @@ actor SyncCoordinator {
                     let newMessageID = try await uploadPhoto(
                         converted,
                         frameID: frameID,
-                        destinationAlbumID: destinationID
+                        destinationAlbumID: destinationID,
+                        caption: caption
                     )
                     upsertPhotoRecord(
                         PhotoSyncRecord(
@@ -885,7 +936,8 @@ actor SyncCoordinator {
                             renderedHash: converted.sha256,
                             skylightMessageID: newMessageID,
                             skylightAlbumIDs: [destinationID],
-                            lastSyncedAt: now()
+                            lastSyncedAt: now(),
+                            lastSyncedCaption: caption
                         ),
                         in: &state
                     )
@@ -931,6 +983,11 @@ actor SyncCoordinator {
             }
         }
         return summary
+    }
+
+    private func normalizedPhotoCaption(_ value: String?) -> String? {
+        let caption = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return caption.isEmpty ? nil : caption
     }
 
     private func photoAssets(for mapping: PhotoMapping) async throws -> [ApplePhotoAssetSnapshot] {
@@ -996,7 +1053,8 @@ actor SyncCoordinator {
     private func uploadPhoto(
         _ image: AppleConvertedImage,
         frameID: String,
-        destinationAlbumID: String
+        destinationAlbumID: String,
+        caption: String?
     ) async throws -> String {
         guard image.data.count <= 26_214_400 else {
             throw SyncCoordinatorError.convertedImageTooLarge(
@@ -1007,7 +1065,7 @@ actor SyncCoordinator {
         let upload = try await api.requestUploadURL(
             ext: "jpg",
             frameIDs: [frameID],
-            caption: nil
+            caption: caption
         )
         let uploadURL: URL
         do {
@@ -1063,6 +1121,7 @@ actor SyncCoordinator {
         var summary = SyncDomainSummary()
 
         for mapping in mappings {
+            let appleList = try await reminderSource.syncReminderList(withID: mapping.sourceListID)
             let allApple = try await reminderSource.syncReminders(in: mapping.sourceListID)
             let selectedApple = mapping.selectionMode == .everything
                 ? allApple
@@ -1075,6 +1134,20 @@ actor SyncCoordinator {
             if destination.needsCreation {
                 summary.planned += 1
                 if !dryRun { summary.applied += 1 }
+            }
+            if let destinationID = destination.id,
+               let attributes = destination.attributes {
+                let listSummary = try await syncReminderListMetadata(
+                    mapping: mapping,
+                    frameID: frameID,
+                    appleList: appleList,
+                    skylightListID: destinationID,
+                    skylightAttributes: attributes,
+                    dryRun: dryRun,
+                    state: &state
+                )
+                summary.planned += listSummary.planned
+                summary.applied += listSummary.applied
             }
             let records = state.reminders.filter {
                 $0.mappingID == mapping.id &&
@@ -1342,10 +1415,14 @@ actor SyncCoordinator {
         let lists = try await api.listLists(frameID: frameID).data
         let configuredID = mapping.destinationListID.trimmed
         if !configuredID.isEmpty {
-            guard lists.contains(where: { $0.id == configuredID }) else {
+            guard let configured = lists.first(where: { $0.id == configuredID }) else {
                 throw SyncCoordinatorError.invalidReminderDestination(mapping.id)
             }
-            return ReminderDestinationResolution(id: configuredID, needsCreation: false)
+            return ReminderDestinationResolution(
+                id: configuredID,
+                attributes: configured.attributes,
+                needsCreation: false
+            )
         }
         let title = mapping.destinationListTitle.trimmed
         guard !title.isEmpty else {
@@ -1358,16 +1435,182 @@ actor SyncCoordinator {
             throw SyncCoordinatorError.ambiguousReminderDestination(title)
         }
         if let existing = matches.first {
-            return ReminderDestinationResolution(id: existing.id, needsCreation: false)
+            return ReminderDestinationResolution(
+                id: existing.id,
+                attributes: existing.attributes,
+                needsCreation: false
+            )
         }
         guard !dryRun else {
-            return ReminderDestinationResolution(id: nil, needsCreation: true)
+            return ReminderDestinationResolution(id: nil, attributes: nil, needsCreation: true)
         }
         let created = try await api.createList(
             frameID: frameID,
             request: SkylightListRequest(label: title, kind: mapping.destinationKind)
         )
-        return ReminderDestinationResolution(id: created.id, needsCreation: true)
+        return ReminderDestinationResolution(
+            id: created.id,
+            attributes: created.attributes,
+            needsCreation: true
+        )
+    }
+
+    private func syncReminderListMetadata(
+        mapping: ReminderListMapping,
+        frameID: String,
+        appleList: AppleReminderListSnapshot,
+        skylightListID: String,
+        skylightAttributes: SkylightListAttributes,
+        dryRun: Bool,
+        state: inout SyncState
+    ) async throws -> SyncDomainSummary {
+        var summary = SyncDomainSummary()
+        let appleTitle = appleList.title.trimmed
+        let skylightTitle = (skylightAttributes.label ?? "").trimmed
+        let appleColor = ReminderListColor.normalizedHex(appleList.colorHex)
+        let skylightColor = ReminderListColor.normalizedHex(skylightAttributes.color)
+        guard !appleTitle.isEmpty, !skylightTitle.isEmpty else { return summary }
+
+        guard let existing = state.reminderLists.first(where: {
+            $0.mappingID == mapping.id &&
+                $0.frameID == frameID &&
+                $0.appleListID == appleList.id &&
+                $0.skylightListID == skylightListID
+        }) else {
+            guard !dryRun else { return summary }
+            upsertReminderListRecord(ReminderListSyncRecord(
+                mappingID: mapping.id,
+                frameID: frameID,
+                appleListID: appleList.id,
+                skylightListID: skylightListID,
+                lastSyncedAppleTitle: appleTitle,
+                lastSyncedSkylightTitle: skylightTitle,
+                lastSyncedAppleColor: appleColor,
+                lastSyncedSkylightColor: skylightColor
+            ), in: &state)
+            try await checkpoint(state, dryRun: false)
+            return summary
+        }
+
+        let titleAction = ReminderListMetadataPlanner.plan(
+            appleTitle: appleTitle,
+            skylightTitle: skylightTitle,
+            link: ReminderListMetadataLink(
+                baselineAppleTitle: existing.lastSyncedAppleTitle,
+                baselineSkylightTitle: existing.lastSyncedSkylightTitle
+            ),
+            direction: mapping.direction,
+            conflictPolicy: mapping.conflictPolicy
+        )
+        let colorMetadataIsInitialized = existing.lastSyncedAppleColor != nil
+            || existing.lastSyncedSkylightColor != nil
+        let colorAction = colorMetadataIsInitialized
+            ? ReminderListColorMetadataPlanner.plan(
+                appleColor: appleColor,
+                skylightColor: skylightColor,
+                link: ReminderListColorMetadataLink(
+                    baselineAppleColor: ReminderListColor.normalizedHex(existing.lastSyncedAppleColor),
+                    baselineSkylightColor: ReminderListColor.normalizedHex(existing.lastSyncedSkylightColor)
+                ),
+                direction: mapping.direction,
+                conflictPolicy: mapping.conflictPolicy
+            )
+            : nil
+        guard titleAction != nil || colorAction != nil else {
+            guard !dryRun else { return summary }
+            upsertReminderListRecord(ReminderListSyncRecord(
+                mappingID: mapping.id,
+                frameID: frameID,
+                appleListID: appleList.id,
+                skylightListID: skylightListID,
+                lastSyncedAppleTitle: appleTitle,
+                lastSyncedSkylightTitle: skylightTitle,
+                lastSyncedAppleColor: appleColor,
+                lastSyncedSkylightColor: skylightColor
+            ), in: &state)
+            try await checkpoint(state, dryRun: false)
+            return summary
+        }
+
+        let remoteTitle = titleForRemoteUpdate(titleAction)
+        let remoteColor = colorForRemoteUpdate(colorAction)
+        let updatedAppleTitle = titleForAppleUpdate(titleAction)
+        let updatedAppleColor = colorForAppleUpdate(colorAction)
+        summary.planned = (remoteTitle != nil || remoteColor != nil ? 1 : 0)
+            + (updatedAppleTitle != nil || updatedAppleColor != nil ? 1 : 0)
+        guard !dryRun else { return summary }
+
+        var syncedTitles = (apple: appleTitle, skylight: skylightTitle)
+        var syncedColors = (apple: appleColor, skylight: skylightColor)
+        if remoteTitle != nil || remoteColor != nil {
+            let updated = try await api.updateList(
+                frameID: frameID,
+                listID: skylightListID,
+                request: SkylightListRequest(
+                    label: remoteTitle,
+                    color: remoteColor,
+                    kind: skylightAttributes.kind,
+                    hideOnDevice: skylightAttributes.hideOnDevice
+                )
+            )
+            syncedTitles.skylight = (updated.attributes.label ?? remoteTitle ?? skylightTitle).trimmed
+            syncedColors.skylight = ReminderListColor.normalizedHex(updated.attributes.color)
+                ?? remoteColor
+                ?? skylightColor
+        }
+        if updatedAppleTitle != nil || updatedAppleColor != nil {
+            let updated = try await reminderSource.syncUpdateReminderList(
+                withID: appleList.id,
+                title: updatedAppleTitle,
+                colorHex: updatedAppleColor
+            )
+            syncedTitles.apple = updated.title.trimmed
+            syncedColors.apple = ReminderListColor.normalizedHex(updated.colorHex)
+                ?? updatedAppleColor
+                ?? appleColor
+        }
+
+        upsertReminderListRecord(ReminderListSyncRecord(
+            mappingID: mapping.id,
+            frameID: frameID,
+            appleListID: appleList.id,
+            skylightListID: skylightListID,
+            lastSyncedAppleTitle: syncedTitles.apple,
+            lastSyncedSkylightTitle: syncedTitles.skylight,
+            lastSyncedAppleColor: syncedColors.apple,
+            lastSyncedSkylightColor: syncedColors.skylight
+        ), in: &state)
+        try await checkpoint(state, dryRun: false)
+        summary.applied = summary.planned
+        return summary
+    }
+
+    private func titleForRemoteUpdate(
+        _ action: ReminderListMetadataAction?
+    ) -> String? {
+        guard case let .updateRemote(title)? = action else { return nil }
+        return title
+    }
+
+    private func titleForAppleUpdate(
+        _ action: ReminderListMetadataAction?
+    ) -> String? {
+        guard case let .updateApple(title)? = action else { return nil }
+        return title
+    }
+
+    private func colorForRemoteUpdate(
+        _ action: ReminderListColorMetadataAction?
+    ) -> String? {
+        guard case let .updateRemote(color)? = action else { return nil }
+        return color
+    }
+
+    private func colorForAppleUpdate(
+        _ action: ReminderListColorMetadataAction?
+    ) -> String? {
+        guard case let .updateApple(color)? = action else { return nil }
+        return color
     }
 
     private func syncChores(
@@ -3045,6 +3288,16 @@ actor SyncCoordinator {
         state.reminders.append(record)
     }
 
+    private func upsertReminderListRecord(
+        _ record: ReminderListSyncRecord,
+        in state: inout SyncState
+    ) {
+        state.reminderLists.removeAll {
+            $0.mappingID == record.mappingID && $0.frameID == record.frameID
+        }
+        state.reminderLists.append(record)
+    }
+
     private func upsertNoteRecord(_ record: NoteSyncRecord, in state: inout SyncState) {
         state.notes.removeAll { $0.id == record.id }
         state.notes.append(record)
@@ -3058,6 +3311,7 @@ private struct PhotoDestinationResolution: Sendable {
 
 private struct ReminderDestinationResolution: Sendable {
     let id: String?
+    let attributes: SkylightListAttributes?
     let needsCreation: Bool
 }
 

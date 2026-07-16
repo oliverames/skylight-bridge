@@ -7,6 +7,8 @@ enum AppleRemindersStoreError: Error, LocalizedError, Sendable {
     case reminderNotFound(String)
     case readOnlyList(String)
     case invalidTitle
+    case invalidColor
+    case noListUpdate
     case invalidPriority(Int)
     case noWritableSource
     case eventKit(String)
@@ -23,6 +25,10 @@ enum AppleRemindersStoreError: Error, LocalizedError, Sendable {
             "Apple Reminders list \(identifier) does not allow changes."
         case .invalidTitle:
             "A reminder title cannot be empty."
+        case .invalidColor:
+            "A reminder-list color must be a six-digit hex value."
+        case .noListUpdate:
+            "A reminder-list update needs a title or color."
         case let .invalidPriority(priority):
             "Reminder priority \(priority) is outside the supported range of 0 through 9."
         case .noWritableSource:
@@ -79,12 +85,74 @@ final class AppleRemindersStore {
                 AppleReminderListSnapshot(
                     id: $0.calendarIdentifier,
                     title: $0.title,
+                    colorHex: ReminderListColor.hex(for: $0.cgColor),
                     sourceID: $0.source.sourceIdentifier,
                     sourceTitle: $0.source.title,
                     allowsContentModifications: $0.allowsContentModifications
                 )
             }
             .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+
+    func reminderList(withID listID: String) throws -> AppleReminderListSnapshot {
+        try requireFullAccess()
+        guard let calendar = eventStore.calendar(withIdentifier: listID),
+              calendar.allowedEntityTypes.contains(.reminder) else {
+            throw AppleRemindersStoreError.listNotFound(listID)
+        }
+        return AppleReminderListSnapshot(
+            id: calendar.calendarIdentifier,
+            title: calendar.title,
+            colorHex: ReminderListColor.hex(for: calendar.cgColor),
+            sourceID: calendar.source.sourceIdentifier,
+            sourceTitle: calendar.source.title,
+            allowsContentModifications: calendar.allowsContentModifications
+        )
+    }
+
+    @discardableResult
+    func updateReminderList(
+        withID listID: String,
+        title: String? = nil,
+        colorHex: String? = nil
+    ) throws -> AppleReminderListSnapshot {
+        try requireFullAccess()
+        let name = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard name != "" else {
+            throw AppleRemindersStoreError.invalidTitle
+        }
+        guard name != nil || colorHex != nil else {
+            throw AppleRemindersStoreError.noListUpdate
+        }
+        if let colorHex, ReminderListColor.cgColor(for: colorHex) == nil {
+            throw AppleRemindersStoreError.invalidColor
+        }
+        guard let calendar = eventStore.calendar(withIdentifier: listID),
+              calendar.allowedEntityTypes.contains(.reminder) else {
+            throw AppleRemindersStoreError.listNotFound(listID)
+        }
+        guard calendar.allowsContentModifications else {
+            throw AppleRemindersStoreError.readOnlyList(listID)
+        }
+        if let name {
+            calendar.title = name
+        }
+        if let colorHex, let color = ReminderListColor.cgColor(for: colorHex) {
+            calendar.cgColor = color
+        }
+        do {
+            try eventStore.saveCalendar(calendar, commit: true)
+        } catch {
+            throw AppleRemindersStoreError.eventKit(error.localizedDescription)
+        }
+        return AppleReminderListSnapshot(
+            id: calendar.calendarIdentifier,
+            title: calendar.title,
+            colorHex: ReminderListColor.hex(for: calendar.cgColor),
+            sourceID: calendar.source.sourceIdentifier,
+            sourceTitle: calendar.source.title,
+            allowsContentModifications: calendar.allowsContentModifications
+        )
     }
 
     @discardableResult
@@ -110,6 +178,7 @@ final class AppleRemindersStore {
         return AppleReminderListSnapshot(
             id: calendar.calendarIdentifier,
             title: calendar.title,
+            colorHex: ReminderListColor.hex(for: calendar.cgColor),
             sourceID: source.sourceIdentifier,
             sourceTitle: source.title,
             allowsContentModifications: calendar.allowsContentModifications

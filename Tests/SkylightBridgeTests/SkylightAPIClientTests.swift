@@ -39,6 +39,56 @@ struct SkylightAPIClientTests {
         #expect(list.attributes.hideOnDevice == false)
     }
 
+    @Test("List metadata and photo captions use their update contracts")
+    func updatesListMetadataAndPhotoCaption() async throws {
+        let recorder = SkylightRequestRecorder()
+        let transport = SkylightTestTransport { request in
+            await recorder.append(request)
+            switch request.url?.path {
+            case "/api/frames/frame-1/lists/list-1":
+                return SkylightTestTransport.response(
+                    for: request,
+                    json: ##"{"data":{"id":"list-1","type":"list","attributes":{"label":"Weekend groceries","color":"#FD7A33","kind":"shopping","hide_on_device":false}}}"##
+                )
+            case "/api/frames/frame-1/messages/message-1/caption":
+                return SkylightTestTransport.response(
+                    for: request,
+                    json: ##"{"data":{"id":"message-1","type":"message","attributes":{"caption":"Backyard birthday"}}}"##
+                )
+            default:
+                throw URLError(.badServerResponse)
+            }
+        }
+        let client = SkylightAPIClient(accessToken: "token", transport: transport)
+
+        _ = try await client.updateList(
+            frameID: "frame-1",
+            listID: "list-1",
+            request: SkylightListRequest(
+                label: "Weekend groceries",
+                color: "#FD7A33",
+                kind: .shopping,
+                hideOnDevice: false
+            )
+        )
+        let message = try await client.updateMessageCaption(
+            frameID: "frame-1",
+            messageID: "message-1",
+            caption: "Backyard birthday"
+        )
+
+        let requests = await recorder.requests
+        #expect(requests.map(\.httpMethod) == ["PUT", "PUT"])
+        let listBody = try #require(requests.first?.httpBody)
+        let listUpdate = try JSONDecoder().decode(SkylightListRequest.self, from: listBody)
+        #expect(listUpdate.label == "Weekend groceries")
+        #expect(listUpdate.color == "#FD7A33")
+        let captionBody = try #require(requests.last?.httpBody)
+        let captionUpdate = try JSONDecoder().decode(SkylightCaptionRequest.self, from: captionBody)
+        #expect(captionUpdate.caption == "Backyard birthday")
+        #expect(message.attributes.caption == "Backyard birthday")
+    }
+
     @Test("Task Box uses the live nested path")
     func updatesTaskBoxItemAtCurrentPath() async throws {
         let transport = SkylightTestTransport { request in

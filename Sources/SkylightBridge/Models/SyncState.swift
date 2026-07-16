@@ -10,6 +10,10 @@ struct PhotoSyncRecord: Identifiable, Codable, Sendable, Hashable {
     var skylightMessageID: String
     var skylightAlbumIDs: Set<String>
     var lastSyncedAt: Date
+    /// Captions are a Skylight-only photo field. Retaining the last value lets
+    /// a selected-photo name update its existing remote message without an
+    /// unnecessary re-upload.
+    var lastSyncedCaption: String?
 
     init(
         mappingID: UUID,
@@ -19,7 +23,8 @@ struct PhotoSyncRecord: Identifiable, Codable, Sendable, Hashable {
         renderedHash: String,
         skylightMessageID: String,
         skylightAlbumIDs: Set<String>,
-        lastSyncedAt: Date
+        lastSyncedAt: Date,
+        lastSyncedCaption: String? = nil
     ) {
         self.mappingID = mappingID
         self.frameID = frameID
@@ -29,6 +34,7 @@ struct PhotoSyncRecord: Identifiable, Codable, Sendable, Hashable {
         self.skylightMessageID = skylightMessageID
         self.skylightAlbumIDs = skylightAlbumIDs
         self.lastSyncedAt = lastSyncedAt
+        self.lastSyncedCaption = lastSyncedCaption
     }
 
     // Persisted struct: synthesized decoding throws on any missing key, so a
@@ -44,6 +50,7 @@ struct PhotoSyncRecord: Identifiable, Codable, Sendable, Hashable {
         skylightMessageID = try container.decodeIfPresent(String.self, forKey: .skylightMessageID) ?? ""
         skylightAlbumIDs = try container.decodeIfPresent(Set<String>.self, forKey: .skylightAlbumIDs) ?? []
         lastSyncedAt = try container.decodeIfPresent(Date.self, forKey: .lastSyncedAt) ?? .distantPast
+        lastSyncedCaption = try container.decodeIfPresent(String.self, forKey: .lastSyncedCaption)
     }
 }
 
@@ -108,6 +115,61 @@ struct ReminderSyncRecord: Identifiable, Codable, Sendable, Hashable {
         lastSyncedTitle = try container.decodeIfPresent(String.self, forKey: .lastSyncedTitle)
         lastSyncedCompleted = try container.decodeIfPresent(Bool.self, forKey: .lastSyncedCompleted)
         tombstonedAt = try container.decodeIfPresent(Date.self, forKey: .tombstonedAt)
+    }
+}
+
+/// Baselines for the portable list-name field. Apple and Skylight do not
+/// expose mutable-list timestamps, so each side keeps its own last-seen title
+/// and the coordinator can determine which side changed on the next sync.
+struct ReminderListSyncRecord: Identifiable, Codable, Sendable, Hashable {
+    var id: String { "\(mappingID.uuidString):\(appleListID):\(skylightListID)" }
+    let mappingID: UUID
+    var frameID: String
+    var appleListID: String
+    var skylightListID: String
+    var lastSyncedAppleTitle: String
+    var lastSyncedSkylightTitle: String
+    var lastSyncedAppleColor: String?
+    var lastSyncedSkylightColor: String?
+
+    init(
+        mappingID: UUID,
+        frameID: String,
+        appleListID: String,
+        skylightListID: String,
+        lastSyncedAppleTitle: String,
+        lastSyncedSkylightTitle: String,
+        lastSyncedAppleColor: String? = nil,
+        lastSyncedSkylightColor: String? = nil
+    ) {
+        self.mappingID = mappingID
+        self.frameID = frameID
+        self.appleListID = appleListID
+        self.skylightListID = skylightListID
+        self.lastSyncedAppleTitle = lastSyncedAppleTitle
+        self.lastSyncedSkylightTitle = lastSyncedSkylightTitle
+        self.lastSyncedAppleColor = lastSyncedAppleColor
+        self.lastSyncedSkylightColor = lastSyncedSkylightColor
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        mappingID = try container.decode(UUID.self, forKey: .mappingID)
+        frameID = try container.decodeIfPresent(String.self, forKey: .frameID) ?? ""
+        appleListID = try container.decodeIfPresent(String.self, forKey: .appleListID) ?? ""
+        skylightListID = try container.decodeIfPresent(String.self, forKey: .skylightListID) ?? ""
+        lastSyncedAppleTitle = try container.decodeIfPresent(
+            String.self, forKey: .lastSyncedAppleTitle
+        ) ?? ""
+        lastSyncedSkylightTitle = try container.decodeIfPresent(
+            String.self, forKey: .lastSyncedSkylightTitle
+        ) ?? ""
+        lastSyncedAppleColor = try container.decodeIfPresent(
+            String.self, forKey: .lastSyncedAppleColor
+        )
+        lastSyncedSkylightColor = try container.decodeIfPresent(
+            String.self, forKey: .lastSyncedSkylightColor
+        )
     }
 }
 
@@ -265,6 +327,7 @@ struct PhotoAlbumRecord: Identifiable, Codable, Sendable, Hashable {
 struct SyncState: Codable, Sendable {
     var photos: [PhotoSyncRecord] = []
     var reminders: [ReminderSyncRecord] = []
+    var reminderLists: [ReminderListSyncRecord] = []
     var chores: [ChoreSyncRecord] = []
     var notes: [NoteSyncRecord] = []
     // Absent in state files written before album tracking existed.
@@ -281,6 +344,7 @@ struct SyncState: Codable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         photos = try container.decodeIfPresent([PhotoSyncRecord].self, forKey: .photos) ?? []
         reminders = try container.decodeIfPresent([ReminderSyncRecord].self, forKey: .reminders) ?? []
+        reminderLists = try container.decodeIfPresent([ReminderListSyncRecord].self, forKey: .reminderLists) ?? []
         chores = try container.decodeIfPresent([ChoreSyncRecord].self, forKey: .chores) ?? []
         notes = try container.decodeIfPresent([NoteSyncRecord].self, forKey: .notes) ?? []
         photoAlbums = try container.decodeIfPresent([PhotoAlbumRecord].self, forKey: .photoAlbums) ?? []

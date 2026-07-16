@@ -71,6 +71,63 @@ struct SyncCoordinatorTests {
         #expect(calls.createdAlbums == 0)
     }
 
+    @Test("A selected photo name updates its linked Skylight caption")
+    func selectedPhotoNameUpdatesSkylightCaption() async throws {
+        let mappingID = UUID()
+        let api = CoordinatorAPIStub()
+        await api.configureAlbums([
+            SkylightResource(
+                id: "album-1",
+                attributes: SkylightAlbumAttributes(
+                    title: "Our House",
+                    messageCount: 1,
+                    createdAt: nil,
+                    updatedAt: nil
+                )
+            )
+        ])
+        var stateValue = SyncState()
+        stateValue.photos = [PhotoSyncRecord(
+            mappingID: mappingID,
+            frameID: "frame-1",
+            destinationAlbumID: "album-1",
+            appleAssetID: "apple-photo",
+            renderedHash: "rendered-hash",
+            skylightMessageID: "message-1",
+            skylightAlbumIDs: ["album-1"],
+            lastSyncedAt: Date(timeIntervalSince1970: 100)
+        )]
+        let state = CoordinatorStateStore(state: stateValue)
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            photoSource: CoordinatorPhotoSource(assets: [photoAsset(id: "apple-photo")]),
+            imageConverter: CoordinatorImageConverter(convertedAssetID: "apple-photo"),
+            state: state
+        )
+        var mapping = PhotoMapping(
+            name: "Our House",
+            sourceCollectionID: "apple-album",
+            sourceCollectionTitle: "Our House",
+            destinationAlbumID: "album-1",
+            destinationAlbumTitle: "Our House"
+        )
+        mapping.id = mappingID
+        mapping.selectedPhotoNames = ["apple-photo": "Backyard birthday"]
+        var configuration = AppConfiguration.empty
+        configuration.account.frameID = "frame-1"
+        configuration.dryRun = false
+        configuration.photoMappings = [mapping]
+
+        let summary = try await coordinator.sync(configuration: configuration)
+        let captions = await api.messageCaptionUpdates
+        let persisted = try await state.loadSyncState()
+
+        #expect(summary.photos.applied == 1)
+        #expect(captions == ["Backyard birthday"])
+        #expect(persisted.photos.first?.lastSyncedCaption == "Backyard birthday")
+    }
+
     @Test("A live reminder sync creates its named list and only selected items")
     func reminderLiveSyncCreatesDestinationAndSelectedItem() async throws {
         let api = CoordinatorAPIStub()
@@ -138,6 +195,204 @@ struct SyncCoordinatorTests {
         #expect(persisted.reminders.count == 2)
         let adopted = persisted.reminders.first { $0.appleReminderID == "apple-milk" }
         #expect(adopted?.skylightItemID == "remote-milk")
+    }
+
+    @Test("A renamed Apple list updates its linked Skylight list")
+    func reminderListMetadataUpdatesSkylight() async throws {
+        let mappingID = UUID()
+        let api = CoordinatorAPIStub()
+        await api.configureLists([
+            SkylightResource(
+                id: "remote-list",
+                attributes: SkylightListAttributes(
+                    label: "Groceries",
+                    color: nil,
+                    kind: .shopping,
+                    hideOnDevice: false
+                )
+            )
+        ], items: [])
+        var stateValue = SyncState()
+        stateValue.reminderLists = [ReminderListSyncRecord(
+            mappingID: mappingID,
+            frameID: "frame-1",
+            appleListID: "apple-list",
+            skylightListID: "remote-list",
+            lastSyncedAppleTitle: "Groceries",
+            lastSyncedSkylightTitle: "Groceries"
+        )]
+        let state = CoordinatorStateStore(state: stateValue)
+        let reminderSource = CoordinatorReminderSource(
+            reminders: [],
+            listTitle: "Weekend groceries"
+        )
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            state: state,
+            reminderSource: reminderSource
+        )
+        var configuration = configuredReminders(dryRun: false)
+        configuration.reminderMappings[0].id = mappingID
+        configuration.reminderMappings[0].destinationListID = "remote-list"
+        configuration.reminderMappings[0].direction = .twoWay
+
+        let summary = try await coordinator.sync(configuration: configuration)
+        let requests = await api.listUpdateRequests
+        let persisted = try await state.loadSyncState()
+
+        #expect(summary.reminders.applied == 1)
+        #expect(requests.map(\.label) == ["Weekend groceries"])
+        #expect(persisted.reminderLists.first?.lastSyncedAppleTitle == "Weekend groceries")
+        #expect(persisted.reminderLists.first?.lastSyncedSkylightTitle == "Weekend groceries")
+    }
+
+    @Test("A renamed Skylight list updates its linked Apple list")
+    func reminderListMetadataUpdatesApple() async throws {
+        let mappingID = UUID()
+        let api = CoordinatorAPIStub()
+        await api.configureLists([
+            SkylightResource(
+                id: "remote-list",
+                attributes: SkylightListAttributes(
+                    label: "Family essentials",
+                    color: nil,
+                    kind: .shopping,
+                    hideOnDevice: false
+                )
+            )
+        ], items: [])
+        var stateValue = SyncState()
+        stateValue.reminderLists = [ReminderListSyncRecord(
+            mappingID: mappingID,
+            frameID: "frame-1",
+            appleListID: "apple-list",
+            skylightListID: "remote-list",
+            lastSyncedAppleTitle: "Groceries",
+            lastSyncedSkylightTitle: "Groceries"
+        )]
+        let state = CoordinatorStateStore(state: stateValue)
+        let reminderSource = CoordinatorReminderSource(reminders: [])
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            state: state,
+            reminderSource: reminderSource
+        )
+        var configuration = configuredReminders(dryRun: false)
+        configuration.reminderMappings[0].id = mappingID
+        configuration.reminderMappings[0].destinationListID = "remote-list"
+        configuration.reminderMappings[0].direction = .twoWay
+
+        let summary = try await coordinator.sync(configuration: configuration)
+        let persisted = try await state.loadSyncState()
+
+        #expect(summary.reminders.applied == 1)
+        #expect(reminderSource.listTitle == "Family essentials")
+        #expect(persisted.reminderLists.first?.lastSyncedAppleTitle == "Family essentials")
+        #expect(persisted.reminderLists.first?.lastSyncedSkylightTitle == "Family essentials")
+    }
+
+    @Test("A changed Apple list color updates its linked Skylight list")
+    func reminderListColorUpdatesSkylight() async throws {
+        let mappingID = UUID()
+        let api = CoordinatorAPIStub()
+        await api.configureLists([
+            SkylightResource(
+                id: "remote-list",
+                attributes: SkylightListAttributes(
+                    label: "Groceries",
+                    color: nil,
+                    kind: .shopping,
+                    hideOnDevice: false
+                )
+            )
+        ], items: [])
+        var stateValue = SyncState()
+        stateValue.reminderLists = [ReminderListSyncRecord(
+            mappingID: mappingID,
+            frameID: "frame-1",
+            appleListID: "apple-list",
+            skylightListID: "remote-list",
+            lastSyncedAppleTitle: "Groceries",
+            lastSyncedSkylightTitle: "Groceries",
+            lastSyncedAppleColor: "#2178AF",
+            lastSyncedSkylightColor: nil
+        )]
+        let state = CoordinatorStateStore(state: stateValue)
+        let reminderSource = CoordinatorReminderSource(
+            reminders: [],
+            listColorHex: "#FD7A33"
+        )
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            state: state,
+            reminderSource: reminderSource
+        )
+        var configuration = configuredReminders(dryRun: false)
+        configuration.reminderMappings[0].id = mappingID
+        configuration.reminderMappings[0].destinationListID = "remote-list"
+        configuration.reminderMappings[0].direction = .twoWay
+
+        let summary = try await coordinator.sync(configuration: configuration)
+        let requests = await api.listUpdateRequests
+        let persisted = try await state.loadSyncState()
+
+        #expect(summary.reminders.applied == 1)
+        #expect(requests.last?.label == nil)
+        #expect(requests.last?.color == "#FD7A33")
+        #expect(persisted.reminderLists.first?.lastSyncedSkylightColor == "#FD7A33")
+    }
+
+    @Test("A changed Skylight list color updates its linked Apple list")
+    func reminderListColorUpdatesApple() async throws {
+        let mappingID = UUID()
+        let api = CoordinatorAPIStub()
+        await api.configureLists([
+            SkylightResource(
+                id: "remote-list",
+                attributes: SkylightListAttributes(
+                    label: "Groceries",
+                    color: "#34C759",
+                    kind: .shopping,
+                    hideOnDevice: false
+                )
+            )
+        ], items: [])
+        var stateValue = SyncState()
+        stateValue.reminderLists = [ReminderListSyncRecord(
+            mappingID: mappingID,
+            frameID: "frame-1",
+            appleListID: "apple-list",
+            skylightListID: "remote-list",
+            lastSyncedAppleTitle: "Groceries",
+            lastSyncedSkylightTitle: "Groceries",
+            lastSyncedAppleColor: nil,
+            lastSyncedSkylightColor: "#2178AF"
+        )]
+        let state = CoordinatorStateStore(state: stateValue)
+        let reminderSource = CoordinatorReminderSource(
+            reminders: [],
+            listColorHex: nil
+        )
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            state: state,
+            reminderSource: reminderSource
+        )
+        var configuration = configuredReminders(dryRun: false)
+        configuration.reminderMappings[0].id = mappingID
+        configuration.reminderMappings[0].destinationListID = "remote-list"
+        configuration.reminderMappings[0].direction = .twoWay
+
+        let summary = try await coordinator.sync(configuration: configuration)
+        let persisted = try await state.loadSyncState()
+
+        #expect(summary.reminders.applied == 1)
+        #expect(reminderSource.listColorHex == "#34C759")
+        #expect(persisted.reminderLists.first?.lastSyncedAppleColor == "#34C759")
     }
 
     @Test("Two-way recipes pull a new Skylight recipe into the notes folder")
@@ -1212,9 +1467,42 @@ private final class CoordinatorPhotoSource: PhotoSyncSource {
 private final class CoordinatorReminderSource: ReminderSyncSource {
     let reminders: [AppleReminderSnapshot]
     private(set) var removedReminderIDs: [String] = []
+    private(set) var listTitle: String
+    private(set) var listColorHex: String?
 
-    init(reminders: [AppleReminderSnapshot]) {
+    init(
+        reminders: [AppleReminderSnapshot],
+        listTitle: String = "Groceries",
+        listColorHex: String? = "#2178AF"
+    ) {
         self.reminders = reminders
+        self.listTitle = listTitle
+        self.listColorHex = listColorHex
+    }
+
+    func syncReminderList(withID listID: String) throws -> AppleReminderListSnapshot {
+        AppleReminderListSnapshot(
+            id: listID,
+            title: listTitle,
+            colorHex: listColorHex,
+            sourceID: "source-1",
+            sourceTitle: "iCloud",
+            allowsContentModifications: true
+        )
+    }
+
+    func syncUpdateReminderList(
+        withID listID: String,
+        title: String?,
+        colorHex: String?
+    ) throws -> AppleReminderListSnapshot {
+        if let title {
+            listTitle = title
+        }
+        if let colorHex {
+            listColorHex = colorHex
+        }
+        return try syncReminderList(withID: listID)
     }
 
     func syncReminders(in listID: String) async throws -> [AppleReminderSnapshot] { reminders }
@@ -1529,11 +1817,14 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
     private var recipes: [SkylightResource<SkylightRecipeAttributes>] = []
     private var mealCategories: [SkylightResource<SkylightMealCategoryAttributes>] = []
     private var chores: [SkylightResource<SkylightChoreAttributes>] = []
+    private var albums: [SkylightResource<SkylightAlbumAttributes>] = []
     private(set) var completedChoreSeriesIDs: [String] = []
     private(set) var choreRequests: [SkylightChoreRequest] = []
     private(set) var updatedRecipeIDs: [String] = []
     private(set) var deletedRecipeIDs: [String] = []
     private(set) var recipeRequests: [SkylightRecipeRequest] = []
+    private(set) var listUpdateRequests: [SkylightListRequest] = []
+    private(set) var messageCaptionUpdates: [String] = []
 
     func snapshot() -> CoordinatorAPICalls { calls }
 
@@ -1557,6 +1848,10 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
 
     func configureChores(_ chores: [SkylightResource<SkylightChoreAttributes>]) {
         self.chores = chores
+    }
+
+    func configureAlbums(_ albums: [SkylightResource<SkylightAlbumAttributes>]) {
+        self.albums = albums
     }
 
     func listAllChores(frameID: String) async throws -> [SkylightResource<SkylightChoreAttributes>] {
@@ -1646,6 +1941,29 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
         )
     }
 
+    func updateList(
+        frameID: String,
+        listID: String,
+        request: SkylightListRequest
+    ) async throws -> SkylightResource<SkylightListAttributes> {
+        guard let index = lists.firstIndex(where: { $0.id == listID }) else {
+            throw CoordinatorStubError.unexpectedCall
+        }
+        listUpdateRequests.append(request)
+        let existing = lists[index]
+        let updated = SkylightResource(
+            id: existing.id,
+            attributes: SkylightListAttributes(
+                label: request.label ?? existing.attributes.label,
+                color: request.color ?? existing.attributes.color,
+                kind: request.kind ?? existing.attributes.kind,
+                hideOnDevice: request.hideOnDevice ?? existing.attributes.hideOnDevice
+            )
+        )
+        lists[index] = updated
+        return updated
+    }
+
     func listListItems(
         frameID: String,
         listID: String
@@ -1678,7 +1996,7 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
     }
     func listAlbums(frameID: String) async throws -> [SkylightResource<SkylightAlbumAttributes>] {
         calls.albumCollections += 1
-        return []
+        return albums
     }
     func createAlbum(frameID: String, title: String) async throws -> SkylightResource<SkylightAlbumAttributes> {
         calls.createdAlbums += 1
@@ -1701,6 +2019,26 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
     }
     func deleteMessage(frameID: String, messageID: String) async throws {
         deletedMessageIDs.append(messageID)
+    }
+    func updateMessageCaption(
+        frameID: String,
+        messageID: String,
+        caption: String
+    ) async throws -> SkylightResource<SkylightPhotoMessageAttributes> {
+        messageCaptionUpdates.append(caption)
+        return SkylightResource(
+            id: messageID,
+            attributes: SkylightPhotoMessageAttributes(
+                status: "downloaded",
+                assetType: "image",
+                createdAt: nil,
+                updatedAt: nil,
+                thumbnailURL: nil,
+                assetURL: nil,
+                senderID: nil,
+                caption: caption
+            )
+        )
     }
     func getMessage(frameID: String, messageID: String) async throws -> SkylightResource<SkylightPhotoMessageAttributes> { throw CoordinatorStubError.unexpectedCall }
     func listMessages(frameID: String, page: Int?, syncToken: String?, pageToken: String?) async throws -> SkylightPhotoMessagesResponse { throw CoordinatorStubError.unexpectedCall }

@@ -124,9 +124,26 @@ enum AppleRemindersAuthorizationStatus: String, Sendable, Codable {
 struct AppleReminderListSnapshot: Identifiable, Sendable, Hashable {
     let id: String
     let title: String
+    let colorHex: String?
     let sourceID: String
     let sourceTitle: String
     let allowsContentModifications: Bool
+
+    init(
+        id: String,
+        title: String,
+        colorHex: String? = nil,
+        sourceID: String,
+        sourceTitle: String,
+        allowsContentModifications: Bool
+    ) {
+        self.id = id
+        self.title = title
+        self.colorHex = colorHex
+        self.sourceID = sourceID
+        self.sourceTitle = sourceTitle
+        self.allowsContentModifications = allowsContentModifications
+    }
 }
 
 struct AppleReminderSnapshot: Identifiable, Sendable, Hashable {

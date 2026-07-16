@@ -22,6 +22,8 @@ Each mapping targets one Skylight album. The bridge records the Apple asset iden
 
 RAW and ProRAW sources are rendered to a displayable image by PhotoKit and then encoded as sRGB JPEG, so nothing RAW is ever uploaded.
 
+For selected individual photos, a generated local name is published as the caption of the linked Skylight message. The bridge never writes that name to Apple Photos.
+
 Default conversion behavior:
 
 - use the current edited PhotoKit rendering
@@ -50,9 +52,13 @@ A mapping links one Apple Reminders list with one Skylight list. Either side can
 
 Starting from a Skylight list is the "new Apple list" case: pick the Skylight list, create the Apple side fresh, and the first two-way sync populates it.
 
+At the list level, title and color are portable fields. The first sync records both baselines without relabeling either existing list; later changes flow in the allowed direction. Simultaneous edits use the mapping's conflict policy. Color clearing is intentionally not attempted because the observed Skylight request contract does not document it.
+
 Skylight does not expose equivalents for Apple due dates, notes, URLs, priorities, tags, subtasks, or attachments. Those fields remain in Apple and local metadata. Title and completion state are the portable fields.
 
 The bridge stores local and external Apple identifiers, the Skylight item identifier, content fingerprints, the last-synced title and completion baseline, and last-seen modification times. On the first sync into an existing list, unlinked items whose title and completion state match are linked instead of duplicated, in deterministic identifier order.
+
+It stores the linked list identifiers and independent title and color baselines as well, so a later list metadata change can be reconciled without disturbing the list's items.
 
 Two-way merge is field-aware. A reminder added on only one side is created on the other; neither side's independent additions are lost. When a linked reminder changed on both sides, the title and completion fields merge independently against the baseline: a field only counts as a conflict when both sides changed that same field, and only then does the conflict policy (newest, Apple, or Skylight) decide that one field. Disjoint edits, such as a rename on one side and a completion toggle on the other, are combined rather than resolved by discarding one.
 
