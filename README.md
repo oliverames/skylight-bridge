@@ -5,7 +5,7 @@
 <h1 align="center">Skylight Bridge for macOS</h1>
 
 <p align="center">
-  <strong>Keep your Skylight Calendar useful with the Apple Photos, Reminders, recipes, and meal plans you choose on your Mac.</strong>
+  <strong>Keep your Skylight Calendar useful with the Apple Photos, Reminders, and recipes you choose on your Mac.</strong>
 </p>
 
 <p align="center">
@@ -29,7 +29,7 @@
 
 ---
 
-Skylight Bridge is a native macOS app for households that use a Skylight Calendar alongside Apple Photos, Apple Reminders, and Apple Notes. It keeps Apple apps as the source of truth and mirrors only the albums, lists, folders, recipes, meal plans, and individual photos you explicitly select.
+Skylight Bridge is a native macOS app for households that use a Skylight Calendar alongside Apple Photos, Apple Reminders, and Apple Notes. It keeps Apple apps as the source of truth and mirrors only the albums, lists, folders, recipes, and individual photos you explicitly select.
 
 The Mac app is Developer ID-signed, notarized, and independently maintained. It is not affiliated with Skylight, and it uses a private Skylight API that can change without notice.
 
@@ -48,7 +48,7 @@ This is a practical Mac utility, not a second household database. Every mapping 
 3. Open Skylight Bridge from Applications. The app is Developer ID-signed, notarized, and stapled for Gatekeeper.
 4. The app checks for signed updates, and **Skylight Bridge > Check for Updates…** is always available when you want to check manually.
 
-Version 1.5.5 is the current release. It adds concise, on-device names for selected individual photos after the picker finishes, without changing Apple Photos. The next Mac release adds two-way Chore Chart support, two-way linked-Reminders-list title and color sync, and publishing a selected-photo name as the caption on its linked Skylight copy. If you want to verify the download, compare the output below with the checksum file beside the DMG on the release page.
+Version 1.5.5 is the current public release. It adds concise, on-device names for selected individual photos after the picker finishes, without changing Apple Photos. The current development build also has live two-way Chore Chart support, two-way linked-Reminders-list title and color sync, and selected-photo captions for bridge-linked Skylight copies; those changes will be included in the next public Mac release. If you want to verify the download, compare the output below with the checksum file beside the DMG on the release page.
 
 ```bash
 shasum -a 256 ~/Downloads/Skylight.Bridge-1.5.5.dmg
@@ -65,7 +65,7 @@ shasum -a 256 ~/Downloads/Skylight.Bridge-1.5.5.dmg
 ## First sync
 
 1. Open **Account** and sign in to your Skylight account. The app finds available frames and devices.
-2. Add and enable the source you want in Photos, Reminders, Chores, Recipes, or Meals. Grant only the Apple permissions that source needs.
+2. Add and enable the source you want in Photos, Reminders, Chores, or Recipes. Grant only the Apple permissions that source needs.
 3. Select **Sync Now**, then use **Activity** to review the result. The overview always shows which sources are ready to sync.
 
 The menu bar keeps the app close at hand. It shows sync status, runs a sync when the app is ready, and directs you to sign in, configure a mapping, or inspect Activity when that is the next useful step.
@@ -78,7 +78,6 @@ The menu bar keeps the app close at hand. It shows sync status, runs a sync when
 | Apple Reminders | A Skylight list | Creates a one-way or two-way list mapping. Two-way mappings preserve independent additions, keep a linked list's title and color in sync after the initial baseline, and use the selected conflict policy when both sides change. |
 | Skylight Chore Chart | Apple Reminders lists | Creates or reuses a list per selected household member. Chore Chart sync is always two-way: recurring chores stay recurring in Apple Reminders, and completing either side updates today's occurrence on the other. |
 | Apple Notes recipes | Skylight Recipe Box | Sends a recipe folder or selected notes to Skylight. Two-way recipe sync is available when the mapping calls for it. |
-| Apple Notes meal plans | Skylight meal plan | Sends a dedicated meal-plan folder or selected notes to Skylight. Meal plans are intentionally one-way because the source notes can contain freeform family context. |
 
 Apple Photos remains one-way to Skylight. The bridge never edits or deletes the original photo library. Generated selected-photo names are local bridge labels, not Apple Photos titles, and are published only as captions on bridge-linked Skylight copies. For a selected photo, the bridge can remove only the Skylight copy that it created and recorded as its own.
 
