@@ -1,3 +1,15 @@
+## 2026-07-15 - Skylight Bridge 1.5.1 release
+
+**What changed**: Published version 1.5.1 (11), including the CloudKit app-identity signing correction, guided Chore Chart setup, refined menu-bar and sidebar navigation, temporarily hidden Meals workflow, and clearer first-run onboarding.
+
+**Verification**: The Mac test suite passed 103 tests. The universal DMG was Developer ID signed, Apple-notarized, stapled, and accepted by Gatekeeper. `hdiutil verify` passed; the mounted app passed strict code-signature and Gatekeeper checks; and GitHub's downloaded SHA-256 file exactly matches the local DMG checksum (`724cef9130869804a30a01bf1cf6d6897e7cb92640ca79e6f6687d94928b5340`).
+
+**Left off at**: Version 1.5.1 is published at https://github.com/oliverames/skylight-bridge/releases/tag/v1.5.1. The tag points to `12cec5b` and includes the notarized DMG plus its SHA-256 checksum.
+
+**Open questions**: The physical iPhone CloudKit add, offline-edit, and removal round trip remains pending.
+
+---
+
 ## 2026-07-15 - Skylight Bridge 1.5.0 release
 
 **What changed**: Published the CloudKit-enabled Mac release as 1.5.0 (10). The regenerated Developer ID profile authorizes `com.oliverames.SkylightBridge` and the shared `iCloud.com.oliverames.SkylightBridge` container, and the release script embeds it before signing.

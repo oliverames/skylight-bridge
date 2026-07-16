@@ -13,8 +13,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/oliverames/skylight-bridge/releases/tag/v1.5.0">
-    <img src="https://img.shields.io/badge/macOS-v1.5.0-f5a542?style=flat-square&logo=apple&logoColor=white" alt="macOS release 1.5.0">
+  <a href="https://github.com/oliverames/skylight-bridge/releases/tag/v1.5.1">
+    <img src="https://img.shields.io/badge/macOS-v1.5.1-f5a542?style=flat-square&logo=apple&logoColor=white" alt="macOS release 1.5.1">
   </a>
   <a href="#license">
     <img src="https://img.shields.io/badge/license-all%20rights%20reserved-f5a542?style=flat-square" alt="All rights reserved">
@@ -48,10 +48,10 @@ This is a practical Mac utility, not a second household database. Preview mode i
 3. Open Skylight Bridge from Applications. The app is Developer ID-signed, notarized, and stapled for Gatekeeper.
 4. On first run, sign in to Skylight, leave Preview mode on, and create the mapping you want to test.
 
-Version 1.5.0 is the current release. If you want to verify the download, compare the output below with the checksum file beside the DMG on the release page.
+Version 1.5.1 is the current release. If you want to verify the download, compare the output below with the checksum file beside the DMG on the release page.
 
 ```bash
-shasum -a 256 ~/Downloads/Skylight.Bridge-1.5.0.dmg
+shasum -a 256 ~/Downloads/Skylight.Bridge-1.5.1.dmg
 ```
 
 ### First sync
