@@ -45,12 +45,52 @@ struct PhotoMapping: Identifiable, Codable, Sendable, Hashable {
     var sourceCollectionID: String?
     var sourceCollectionTitle: String?
     var selectedAssetIDs: Set<String> = []
+    /// Locally generated titles make the selected-photo list recognizable
+    /// without changing anything in the person's Apple Photos library.
+    var selectedPhotoNames: [String: String] = [:]
     var destinationAlbumID: String?
     var destinationAlbumTitle = "Apple Photos"
     var removalPolicy: ManagedRemovalPolicy = .removeFromSkylight
     var maximumLongEdge = 3_840
     var jpegQuality = 0.9
     var enabled = true
+}
+
+extension PhotoMapping {
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case sourceKind
+        case sourceCollectionID
+        case sourceCollectionTitle
+        case selectedAssetIDs
+        case selectedPhotoNames
+        case destinationAlbumID
+        case destinationAlbumTitle
+        case removalPolicy
+        case maximumLongEdge
+        case jpegQuality
+        case enabled
+    }
+
+    // Configurations from before selected-photo names existed must continue to
+    // load instead of being replaced with an empty configuration.
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? "Photos"
+        sourceKind = try container.decodeIfPresent(PhotoSourceKind.self, forKey: .sourceKind) ?? .album
+        sourceCollectionID = try container.decodeIfPresent(String.self, forKey: .sourceCollectionID)
+        sourceCollectionTitle = try container.decodeIfPresent(String.self, forKey: .sourceCollectionTitle)
+        selectedAssetIDs = try container.decodeIfPresent(Set<String>.self, forKey: .selectedAssetIDs) ?? []
+        selectedPhotoNames = try container.decodeIfPresent([String: String].self, forKey: .selectedPhotoNames) ?? [:]
+        destinationAlbumID = try container.decodeIfPresent(String.self, forKey: .destinationAlbumID)
+        destinationAlbumTitle = try container.decodeIfPresent(String.self, forKey: .destinationAlbumTitle) ?? "Apple Photos"
+        removalPolicy = try container.decodeIfPresent(ManagedRemovalPolicy.self, forKey: .removalPolicy) ?? .removeFromSkylight
+        maximumLongEdge = try container.decodeIfPresent(Int.self, forKey: .maximumLongEdge) ?? 3_840
+        jpegQuality = try container.decodeIfPresent(Double.self, forKey: .jpegQuality) ?? 0.9
+        enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+    }
 }
 
 struct ReminderListMapping: Identifiable, Codable, Sendable, Hashable {

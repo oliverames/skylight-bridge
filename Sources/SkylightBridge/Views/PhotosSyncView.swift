@@ -69,7 +69,10 @@ struct PhotosSyncView: View {
                 collections: store.photoCollections,
                 skylightAlbums: store.skylightAlbums,
                 onCancel: { editedMapping = nil },
-                onSave: save
+                onSave: save,
+                onPhotoNamesResolved: { mappingID, names in
+                    store.saveSelectedPhotoNames(names, for: mappingID)
+                }
             )
         }
         .alert(
@@ -120,24 +123,29 @@ struct PhotosSyncView: View {
 private struct PhotoMappingEditor: View {
     @State private var draft: PhotoMapping
     @State private var pickedPhotos: [PhotosPickerItem] = []
+    @State private var photoNameGenerationAssetIDs: Set<String> = []
+    @State private var savedMappingID: UUID?
     @State private var selectedAssetToRemove: String?
     let collections: [ApplePhotoCollectionSnapshot]
     let skylightAlbums: [SkylightResource<SkylightAlbumAttributes>]
     let onCancel: () -> Void
     let onSave: (PhotoMapping) -> Void
+    let onPhotoNamesResolved: (UUID, [String: String]) -> Void
 
     init(
         mapping: PhotoMapping,
         collections: [ApplePhotoCollectionSnapshot],
         skylightAlbums: [SkylightResource<SkylightAlbumAttributes>],
         onCancel: @escaping () -> Void,
-        onSave: @escaping (PhotoMapping) -> Void
+        onSave: @escaping (PhotoMapping) -> Void,
+        onPhotoNamesResolved: @escaping (UUID, [String: String]) -> Void
     ) {
         _draft = State(initialValue: mapping)
         self.collections = collections
         self.skylightAlbums = skylightAlbums
         self.onCancel = onCancel
         self.onSave = onSave
+        self.onPhotoNamesResolved = onPhotoNamesResolved
     }
 
     private var albums: [ApplePhotoCollectionSnapshot] {
@@ -218,12 +226,14 @@ private struct PhotoMappingEditor: View {
                     confirmTitle: "Save Mapping",
                     canConfirm: canSave,
                     onCancel: onCancel,
-                    onConfirm: { onSave(draft) }
+                    onConfirm: {
+                        savedMappingID = draft.id
+                        onSave(draft)
+                    }
                 )
             }
             .onChange(of: pickedPhotos) {
-                draft.selectedAssetIDs.formUnion(pickedPhotos.compactMap(\.itemIdentifier))
-                pickedPhotos = []
+                acceptPickedPhotos()
             }
             .alert(
                 "Remove Selected Photo?",
@@ -236,6 +246,7 @@ private struct PhotoMappingEditor: View {
                 Button("Remove", role: .destructive) {
                     if let selectedAssetToRemove {
                         draft.selectedAssetIDs.remove(selectedAssetToRemove)
+                        draft.selectedPhotoNames.removeValue(forKey: selectedAssetToRemove)
                     }
                     selectedAssetToRemove = nil
                 }
@@ -279,14 +290,27 @@ private struct PhotoMappingEditor: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if !draft.selectedAssetIDs.isEmpty {
-                ForEach(Array(draft.selectedAssetIDs).sorted(), id: \.self) { assetID in
+                ForEach(selectedAssetIDs, id: \.self) { assetID in
                     HStack {
-                        Label("Selected photo", systemImage: "photo")
+                        Label(photoTitle(for: assetID), systemImage: "photo")
+                        if photoNameGenerationAssetIDs.contains(assetID) {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
                         Spacer()
                         Button("Remove", role: .destructive) {
                             selectedAssetToRemove = assetID
                         }
                     }
+                }
+                if !photoNameGenerationAssetIDs.isEmpty {
+                    Text("Naming selected photos with Apple Intelligence…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if #unavailable(macOS 27.0) {
+                    Text("Photo names require macOS 27 with Apple Intelligence enabled.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 Text("New choices are added to the existing list. Use Remove for the deliberate, shared removal action.")
                     .font(.caption)
@@ -304,6 +328,8 @@ private struct PhotoMappingEditor: View {
                 draft.sourceCollectionID = nil
                 draft.sourceCollectionTitle = nil
                 draft.selectedAssetIDs = []
+                draft.selectedPhotoNames = [:]
+                photoNameGenerationAssetIDs = []
                 pickedPhotos = []
                 if sourceKind == .favorites {
                     draft.sourceCollectionTitle = "Favorites"
@@ -350,6 +376,57 @@ private struct PhotoMappingEditor: View {
         case .album: draft.sourceCollectionID != nil
         case .favorites: true
         case .selectedPhotos: !draft.selectedAssetIDs.isEmpty
+        }
+    }
+
+    private var selectedAssetIDs: [String] {
+        draft.selectedAssetIDs.sorted {
+            photoTitle(for: $0).localizedStandardCompare(photoTitle(for: $1)) == .orderedAscending
+        }
+    }
+
+    private func photoTitle(for assetID: String) -> String {
+        draft.selectedPhotoNames[assetID] ?? "Selected photo"
+    }
+
+    private func acceptPickedPhotos() {
+        let selectedPhotos = pickedPhotos.compactMap { item in
+            item.itemIdentifier.map { (assetID: $0, item: item) }
+        }
+        let photosToName = selectedPhotos.filter {
+            draft.selectedPhotoNames[$0.assetID] == nil &&
+                !photoNameGenerationAssetIDs.contains($0.assetID)
+        }
+
+        draft.selectedAssetIDs.formUnion(selectedPhotos.map(\.assetID))
+        pickedPhotos = []
+
+        guard !photosToName.isEmpty else { return }
+        guard #available(macOS 27.0, *) else { return }
+        photoNameGenerationAssetIDs.formUnion(photosToName.map(\.assetID))
+
+        Task { @MainActor in
+            await Task.yield()
+            await generatePhotoNames(for: photosToName)
+        }
+    }
+
+    @available(macOS 27.0, *)
+    private func generatePhotoNames(for selectedPhotos: [(assetID: String, item: PhotosPickerItem)]) async {
+        for selectedPhoto in selectedPhotos {
+            let assetID = selectedPhoto.assetID
+            defer { photoNameGenerationAssetIDs.remove(assetID) }
+
+            guard draft.selectedAssetIDs.contains(assetID),
+                  let data = try? await selectedPhoto.item.loadTransferable(type: Data.self),
+                  let name = await PhotoNameGenerator.name(for: data),
+                  draft.selectedAssetIDs.contains(assetID) else {
+                continue
+            }
+            draft.selectedPhotoNames[assetID] = name
+            if let savedMappingID {
+                onPhotoNamesResolved(savedMappingID, [assetID: name])
+            }
         }
     }
 }

@@ -633,6 +633,23 @@ final class AppStore {
         saveConfiguration()
     }
 
+    /// Stores a locally generated display title without changing the selected
+    /// Photos assets, scheduling a sync, or publishing cosmetic metadata to
+    /// the shared iCloud selection record.
+    func saveSelectedPhotoNames(_ names: [String: String], for mappingID: UUID) {
+        guard !names.isEmpty,
+              let index = configuration.photoMappings.firstIndex(where: { $0.id == mappingID }) else {
+            return
+        }
+
+        let selectedAssetIDs = configuration.photoMappings[index].selectedAssetIDs
+        let applicableNames = names.filter { selectedAssetIDs.contains($0.key) }
+        guard !applicableNames.isEmpty else { return }
+
+        configuration.photoMappings[index].selectedPhotoNames.merge(applicableNames) { _, new in new }
+        saveConfiguration()
+    }
+
     /// Deletes a reminder mapping. Because the mapping can be two-way, the caller
     /// chooses whether to also remove the synced items from Skylight, from Apple
     /// Reminders, or from neither.
