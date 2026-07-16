@@ -6,16 +6,16 @@
     <description>Signed updates for Skylight Bridge.</description>
     <language>en</language>
     <item>
-      <title>Version 1.5.4</title>
-      <sparkle:version>14</sparkle:version>
-      <sparkle:shortVersionString>1.5.4</sparkle:shortVersionString>
-      <description><![CDATA[<p>This release fixes iCloud sharing reliability, prevents a Reminders-related crash, and improves local app launch stability.</p>]]></description>
-      <pubDate>Thu, 16 Jul 2026 17:14:18 +0000</pubDate>
-      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.5.4/Skylight.Bridge-1.5.4.dmg" sparkle:edSignature="4x4Nf887VH5+ONc0SovIukWu0cJi5PdFUn450AInxxh7EUhmav+bc/n7zqLrp85wp02BKOgam6WFdlxiOFTRDQ==" length="5982948" type="application/octet-stream" />
+      <title>Version 1.5.5</title>
+      <sparkle:version>15</sparkle:version>
+      <sparkle:shortVersionString>1.5.5</sparkle:shortVersionString>
+      <description><![CDATA[<p>Selected photos now receive concise, on-device Apple Intelligence names after selection, without interrupting the picker.</p>]]></description>
+      <pubDate>Thu, 16 Jul 2026 17:38:58 +0000</pubDate>
+      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.5.5/Skylight.Bridge-1.5.5.dmg" sparkle:edSignature="oSZ1FOJ1S870qClqK3Kb1sIjuh0e9tyxmHoM0TCmd6sQBeLRIAmdEnsRF3eu1StsLJVxZwZ5up0xHA5NORkoAw==" length="6029028" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: RnAtp599hNrXNdKhmIa/BPbVtGRc4+hm06pOP5CpcifUREXHQq87dXlMEwBSsRLLW1vmKGiSW/dJ9hoUn5KnDg==
-length: 1083
+edSignature: ZTDilckhDTp7uC34olp1lgpPdH6Z3R1UjDlAeBH/3mvzknW/7gYonBwQgwhnQSxDjQLszji2nGoqrlWnzt+sDQ==
+length: 1081
 -->

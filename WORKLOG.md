@@ -1,3 +1,17 @@
+## 2026-07-16 - Skylight Bridge 1.5.5: On-device selected-photo names
+
+**What changed**: Released version 1.5.5 (build 15). Selected Photos mappings now generate concise, descriptive names with Apple Intelligence after the picker has returned, so selection is never interrupted. Names appear as they are ready, persist locally with the mapping, and keep saving in the background if the mapping sheet closes first.
+
+**Decisions made**: Image naming runs on device when the required Apple Intelligence image capability is available. The application continues to support macOS 26 for its other features. Generated names do not change Apple Photos or cross-device selected-photo records.
+
+**Verification**: The clean release worktree passed 109 tests in 20 suites. The universal DMG and bundled app passed Developer ID signing, Apple notarization, stapling, disk-image verification, mounted-app signature checks, and Gatekeeper assessment. The published SHA-256 matched the local DMG (`c8ab779144e1b26ba186c3347842d14f878e8009a3e901a9b02e0bbf212a1d25`). The signed Sparkle appcast was published to `gh-pages`, and `/Applications/Skylight Bridge.app` is installed as version 1.5.5 (15) and launched successfully.
+
+**Left off at**: Version 1.5.5 is published at https://github.com/oliverames/skylight-bridge/releases/tag/v1.5.5. Tag `v1.5.5` points to `2d89edb`; the appcast mirror is published from `gh-pages` commit `7dc0b88`.
+
+**Open questions**: None.
+
+---
+
 ## 2026-07-16 - Skylight Bridge 1.5.4: CloudKit sharing, crash, and release reliability
 
 **What changed**: Fixed the original iCloud sharing errors by deploying the required CloudKit production schema and adding the `SharedPhotoMapping` record-name query index. The app now recognizes undeployed-production-schema errors and logs a concise recoverable message rather than exposing CloudKit record internals. Bundled and signed Sparkle for local app runs, kept EventKit reminder callbacks on the main actor to address the reported crash, and reordered Configuration to Account, Sync, Activity, then Diagnostics. Released version 1.5.4 (build 14), including an accurate README badge/install command and signed Sparkle appcast entry.
