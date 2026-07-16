@@ -95,6 +95,12 @@ Apple Photos remains one-way to Skylight. The bridge never edits or deletes the 
 
 There is deliberately no calendar sync interface. Google Calendar already covers that need well. Routines and Task Box are also outside the product interface.
 
+## Free to use, supported when it has earned it
+
+Skylight Bridge is a free Mac app. After it has actually applied 50, 500, 2,000, or 10,000 changes between your selected Apple sources and Skylight, it may offer a Buy Me a Coffee link. The prompt names the number of changes it has completed, appears only while the app is connected and idle, and is spaced at least 30 days apart. **Don't Ask Again** turns it off permanently.
+
+This is a Mac-only, optional support prompt. It uses the local sync total to show the value the bridge has delivered, and it does not use an App Store donation flow.
+
 ## iOS companion
 
 An iOS companion app is in development. It will let people manage shared preferences and selected individual-photo mappings from an iPhone, with private CloudKit reconciliation between the phone and Mac.
@@ -140,7 +146,7 @@ The source tree requires Swift 6.4 or later, macOS 26, access to the private `sk
 ```bash
 git clone https://github.com/oliverames/skylight-bridge.git
 cd skylight-bridge
-swift test
+./script/run_tests.sh
 ./script/build_and_run.sh --verify
 ```
 
