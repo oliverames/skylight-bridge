@@ -1125,6 +1125,115 @@ struct SyncCoordinatorTests {
         #expect(completions.first?.instanceTime == nil)
     }
 
+    @Test("Teardown keeping Skylight deletes the Apple reminders and their empty lists")
+    func teardownKeepSkylightClearsAppleSide() async throws {
+        let mappingID = UUID()
+        let choreSource = CoordinatorChoreReminderSource(reminders: [
+            choreReminderSnapshot(id: "apple-1", listID: "list-1", title: "Water plants"),
+            choreReminderSnapshot(id: "apple-2", listID: "list-1", title: "Pack lunches")
+        ])
+        let api = CoordinatorAPIStub()
+        var initialState = SyncState()
+        initialState.chores = [
+            teardownRecord(mappingID: mappingID, appleID: "apple-1", seriesID: "chore-1"),
+            teardownRecord(mappingID: mappingID, appleID: "apple-2", seriesID: "chore-2")
+        ]
+        let state = CoordinatorStateStore(state: initialState)
+        let coordinator = makeCoordinator(
+            api: api, reminders: [], state: state, choreReminderSource: choreSource
+        )
+
+        let result = try await coordinator.teardownChoreMapping(
+            mappingID: mappingID,
+            frameID: "frame-1",
+            mode: .keepSkylight,
+            appleListIDs: ["list-1"]
+        )
+
+        #expect(result.skylightItemsRemoved == 0)
+        #expect(result.appleItemsRemoved == 2)
+        #expect(result.listsRemoved == 1)
+        #expect(await api.deletedChoreRequests.isEmpty)
+        #expect(choreSource.deletedListIDs == ["list-1"])
+        #expect(try await state.loadSyncState().chores.isEmpty)
+    }
+
+    @Test("Teardown keeping Reminders deletes only the Skylight chores")
+    func teardownKeepRemindersClearsSkylightSide() async throws {
+        let mappingID = UUID()
+        let choreSource = CoordinatorChoreReminderSource(reminders: [
+            choreReminderSnapshot(id: "apple-1", listID: "list-1", title: "Water plants")
+        ])
+        let api = CoordinatorAPIStub()
+        var initialState = SyncState()
+        initialState.chores = [
+            teardownRecord(
+                mappingID: mappingID, appleID: "apple-1", seriesID: "chore-1",
+                recurrence: "FREQ=DAILY;INTERVAL=1"
+            )
+        ]
+        let state = CoordinatorStateStore(state: initialState)
+        let coordinator = makeCoordinator(
+            api: api, reminders: [], state: state, choreReminderSource: choreSource
+        )
+
+        let result = try await coordinator.teardownChoreMapping(
+            mappingID: mappingID,
+            frameID: "frame-1",
+            mode: .keepReminders,
+            appleListIDs: ["list-1"]
+        )
+
+        #expect(result.skylightItemsRemoved == 1)
+        #expect(result.appleItemsRemoved == 0)
+        #expect(result.listsRemoved == 0)
+        let deletions = await api.deletedChoreRequests
+        #expect(deletions.map(\.choreID) == ["chore-1"])
+        #expect(deletions.first?.applyToAll == true)
+        #expect(choreSource.deletedListIDs.isEmpty)
+        #expect(choreSource.removedReminderIDs.isEmpty)
+        #expect(try await state.loadSyncState().chores.isEmpty)
+    }
+
+    private func choreReminderSnapshot(
+        id: String,
+        listID: String,
+        title: String
+    ) -> ChoreReminderSnapshot {
+        ChoreReminderSnapshot(
+            id: id,
+            listID: listID,
+            memberKey: "person-1",
+            title: title,
+            notes: nil,
+            isCompleted: false,
+            dueDate: nil,
+            recurrence: nil,
+            recurrenceUnsupported: false,
+            modifiedAt: Date(timeIntervalSince1970: 100)
+        )
+    }
+
+    private func teardownRecord(
+        mappingID: UUID,
+        appleID: String,
+        seriesID: String,
+        recurrence: String? = nil
+    ) -> ChoreSyncRecord {
+        ChoreSyncRecord(
+            mappingID: mappingID,
+            frameID: "frame-1",
+            appleReminderID: appleID,
+            skylightSeriesID: seriesID,
+            memberKey: "person-1",
+            lastAppleModifiedAt: Date(timeIntervalSince1970: 100),
+            lastSkylightModifiedAt: Date(timeIntervalSince1970: 100),
+            contentFingerprint: "",
+            lastSyncedTitle: "Chore",
+            lastSyncedRecurrence: recurrence
+        )
+    }
+
     private func makeCoordinator(
         api: CoordinatorAPIStub,
         reminders: [AppleReminderSnapshot],
@@ -1603,6 +1712,8 @@ private final class CoordinatorReminderSource: ReminderSyncSource {
 private final class CoordinatorChoreReminderSource: ChoreReminderSource {
     private var reminders: [ChoreReminderSnapshot] = []
     private(set) var createdReminders: [ChoreReminderSnapshot] = []
+    private(set) var removedReminderIDs: [String] = []
+    private(set) var deletedListIDs: [String] = []
     private var nextID = 1
 
     init(reminders: [ChoreReminderSnapshot] = []) {
@@ -1731,6 +1842,13 @@ private final class CoordinatorChoreReminderSource: ChoreReminderSource {
 
     func syncRemoveChoreReminder(withID reminderID: String) throws {
         reminders.removeAll { $0.id == reminderID }
+        removedReminderIDs.append(reminderID)
+    }
+
+    func syncDeleteReminderListIfEmpty(withID listID: String) async throws -> Bool {
+        guard !reminders.contains(where: { $0.listID == listID }) else { return false }
+        deletedListIDs.append(listID)
+        return true
     }
 }
 

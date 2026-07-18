@@ -185,6 +185,32 @@ final class AppleRemindersStore {
         )
     }
 
+    /// Removes an auto-created chore list, but only when it holds no reminders,
+    /// so a list the user has repurposed is never deleted out from under them.
+    /// Returns whether the list was actually removed.
+    @discardableResult
+    func deleteListIfEmpty(withID listID: String) async throws -> Bool {
+        try requireFullAccess()
+        guard let calendar = eventStore.calendar(withIdentifier: listID),
+              calendar.allowedEntityTypes.contains(.reminder),
+              calendar.allowsContentModifications else {
+            return false
+        }
+        let predicate = eventStore.predicateForReminders(in: [calendar])
+        let isEmpty: Bool = await withCheckedContinuation { continuation in
+            eventStore.fetchReminders(matching: predicate) { reminders in
+                continuation.resume(returning: (reminders ?? []).isEmpty)
+            }
+        }
+        guard isEmpty else { return false }
+        do {
+            try eventStore.removeCalendar(calendar, commit: true)
+        } catch {
+            throw AppleRemindersStoreError.eventKit(error.localizedDescription)
+        }
+        return true
+    }
+
     private func preferredListSource() -> EKSource? {
         if let source = eventStore.defaultCalendarForNewReminders()?.source {
             return source

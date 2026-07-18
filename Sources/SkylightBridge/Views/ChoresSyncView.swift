@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ChoresSyncView: View {
     @Bindable var store: AppStore
+    @State private var mappingToTeardown: ChoreMapping?
 
     private var isAuthorized: Bool {
         store.remindersAuthorizationStatus == .fullAccess
@@ -28,6 +29,29 @@ struct ChoresSyncView: View {
         .formStyle(.grouped)
         .groupedPageLayout()
         .navigationTitle("Chores")
+        .confirmationDialog(
+            "Disable Chore Sync?",
+            isPresented: Binding(
+                get: { mappingToTeardown != nil },
+                set: { if !$0 { mappingToTeardown = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: mappingToTeardown
+        ) { mapping in
+            Button("Keep Chores on Skylight") { teardown(mapping, mode: .keepSkylight) }
+            Button("Keep Chores in Reminders") { teardown(mapping, mode: .keepReminders) }
+            Button("Remove Chores Everywhere", role: .destructive) {
+                teardown(mapping, mode: .removeEverything)
+            }
+            Button("Cancel", role: .cancel) { mappingToTeardown = nil }
+        } message: { _ in
+            Text("Turns off Chore Chart sync and forgets its links. Choose which copies of the synced chores to keep. Whenever the Apple Reminders copies are removed, the chore lists this app created are deleted too (only if they are empty).")
+        }
+    }
+
+    private func teardown(_ mapping: ChoreMapping, mode: ChoreTeardownMode) {
+        mappingToTeardown = nil
+        Task { await store.removeChoreMapping(mapping, mode: mode) }
     }
 
     @ViewBuilder
@@ -188,8 +212,8 @@ struct ChoresSyncView: View {
                     }
                     .pickerStyle(.menu)
 
-                    Button("Reset Chore Setup", role: .destructive) {
-                        Task { await store.removeChoreMapping(mapping) }
+                    Button("Disable Chore Sync…", role: .destructive) {
+                        mappingToTeardown = mapping
                     }
                 }
             } header: {

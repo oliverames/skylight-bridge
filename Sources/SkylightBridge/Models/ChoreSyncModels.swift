@@ -60,6 +60,24 @@ struct ChoreAdoptionPair: Equatable, Sendable {
     let skylightID: String
 }
 
+/// How a chore mapping should be torn down when the user disables Chore Chart
+/// sync. Each mode names the side to *keep*; the other side's items are removed,
+/// and the auto-created Apple lists go with the Apple side.
+enum ChoreTeardownMode: String, CaseIterable, Sendable {
+    case keepSkylight
+    case keepReminders
+    case removeEverything
+
+    var removesSkylight: Bool { self != .keepSkylight }
+    var removesAppleReminders: Bool { self != .keepReminders }
+}
+
+struct ChoreTeardownResult: Equatable, Sendable {
+    var skylightItemsRemoved = 0
+    var appleItemsRemoved = 0
+    var listsRemoved = 0
+}
+
 enum ChoreSyncAction: Equatable, Sendable {
     case createRemote(appleID: String)
     case createApple(seriesID: String)

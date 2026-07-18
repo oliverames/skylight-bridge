@@ -143,6 +143,7 @@ protocol ChoreReminderSource: Sendable {
         memberKey: String
     ) throws -> ChoreReminderSnapshot
     func syncRemoveChoreReminder(withID reminderID: String) throws
+    func syncDeleteReminderListIfEmpty(withID listID: String) async throws -> Bool
 }
 
 protocol NotesSyncSource: Sendable {
@@ -455,6 +456,10 @@ extension AppleRemindersStore: ChoreReminderSource {
 
     func syncRemoveChoreReminder(withID reminderID: String) throws {
         try removeReminder(withID: reminderID)
+    }
+
+    func syncDeleteReminderListIfEmpty(withID listID: String) async throws -> Bool {
+        try await deleteListIfEmpty(withID: listID)
     }
 }
 
@@ -773,6 +778,53 @@ actor SyncCoordinator {
 
     /// Forgets a chore mapping's identity links and optionally removes the
     /// linked series from one side. The Reminders lists themselves are kept.
+    /// Tears down a chore mapping: removes the chore items from the side(s) the
+    /// mode does not preserve, forgets their sync records, and deletes the
+    /// auto-created Apple chore lists once they are empty. Deletions are
+    /// best-effort so one failure cannot strand the rest of the cleanup.
+    func teardownChoreMapping(
+        mappingID: UUID,
+        frameID: String,
+        mode: ChoreTeardownMode,
+        appleListIDs: [String]
+    ) async throws -> ChoreTeardownResult {
+        var state = try await stateStore.loadSyncState()
+        let records = state.chores
+            .filter { $0.mappingID == mappingID && $0.frameID == frameID }
+            .sorted { $0.appleReminderID < $1.appleReminderID }
+        var result = ChoreTeardownResult()
+        for record in records {
+            if mode.removesSkylight {
+                try? await api.deleteChore(
+                    frameID: frameID,
+                    choreID: record.skylightSeriesID,
+                    applyToAll: record.lastSyncedRecurrence != nil
+                )
+                result.skylightItemsRemoved += 1
+            }
+            if mode.removesAppleReminders {
+                try? await choreReminderSource?.syncRemoveChoreReminder(
+                    withID: record.appleReminderID
+                )
+                result.appleItemsRemoved += 1
+            }
+            state.chores.removeAll { $0.id == record.id }
+            try await stateStore.saveSyncState(state)
+        }
+        // The auto-created lists only make sense to remove when the Apple side
+        // is being cleared; otherwise deleting them would take the preserved
+        // reminders with them. deleteListIfEmpty guards against removing a list
+        // the user has since put their own reminders into.
+        if mode.removesAppleReminders, let source = choreReminderSource {
+            for listID in appleListIDs where !listID.trimmed.isEmpty {
+                if (try? await source.syncDeleteReminderListIfEmpty(withID: listID)) == true {
+                    result.listsRemoved += 1
+                }
+            }
+        }
+        return result
+    }
+
     func purgeChoreMapping(
         mappingID: UUID,
         frameID: String,

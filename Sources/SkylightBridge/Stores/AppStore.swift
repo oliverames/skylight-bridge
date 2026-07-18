@@ -684,7 +684,10 @@ final class AppStore {
         saveConfiguration()
     }
 
-    func removeChoreMapping(_ mapping: ChoreMapping) async {
+    /// Disables Chore Chart sync for a mapping and cleans up what it created.
+    /// The mode chooses which side's chores to keep; the auto-created Apple
+    /// chore lists are removed whenever the Apple side is cleared.
+    func removeChoreMapping(_ mapping: ChoreMapping, mode: ChoreTeardownMode) async {
         let frameID = mapping.frameID.trimmed.isEmpty
             ? configuration.account.frameID.trimmed
             : mapping.frameID.trimmed
@@ -692,17 +695,57 @@ final class AppStore {
             do {
                 let client = try await sessionManager.client(configuration: configuration.account)
                 let coordinator = SyncCoordinator.live(apiClient: client)
-                _ = try await coordinator.purgeChoreMapping(
+                let result = try await coordinator.teardownChoreMapping(
                     mappingID: mapping.id,
                     frameID: frameID,
-                    side: .none
+                    mode: mode,
+                    appleListIDs: choreListIDs(for: mapping)
                 )
+                recordChoreTeardown(result)
             } catch {
                 recordSourceError(error, area: .chores)
             }
         }
         configuration.choreMappings.removeAll { $0.id == mapping.id }
         saveConfiguration()
+    }
+
+    /// Resolves the Apple Reminders list identifiers a chore mapping owns, using
+    /// each member link's stored list id and falling back to a title match for
+    /// links saved before the id was recorded.
+    private func choreListIDs(for mapping: ChoreMapping) -> [String] {
+        let lists = (try? remindersStore.lists()) ?? []
+        var ids: [String] = []
+        for link in mapping.memberLinks {
+            let configuredID = link.appleListID?.trimmed ?? ""
+            if !configuredID.isEmpty, lists.contains(where: { $0.id == configuredID }) {
+                ids.append(configuredID)
+            } else if let match = lists.first(where: {
+                $0.title.localizedCaseInsensitiveCompare(link.appleListTitle) == .orderedSame
+            }) {
+                ids.append(match.id)
+            }
+        }
+        return ids
+    }
+
+    private func recordChoreTeardown(_ result: ChoreTeardownResult) {
+        var parts: [String] = []
+        if result.skylightItemsRemoved > 0 {
+            parts.append("\(countDescription(result.skylightItemsRemoved, singular: "chore")) from Skylight")
+        }
+        if result.appleItemsRemoved > 0 {
+            parts.append("\(countDescription(result.appleItemsRemoved, singular: "chore")) from Apple Reminders")
+        }
+        if result.listsRemoved > 0 {
+            parts.append("\(countDescription(result.listsRemoved, singular: "empty list")) from Apple Reminders")
+        }
+        guard !parts.isEmpty else { return }
+        appendActivity(.init(
+            level: .success,
+            area: .chores,
+            message: "Chore sync disabled. Removed \(parts.joined(separator: ", "))."
+        ))
     }
 
     func refreshSkylightDestinations() async {
