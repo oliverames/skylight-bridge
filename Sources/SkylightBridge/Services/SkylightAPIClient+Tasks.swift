@@ -103,11 +103,14 @@ extension SkylightAPIClient {
         return response.data
     }
 
-    func deleteChore(frameID: String, choreID: String) async throws {
+    /// Deletes a chore. Recurring chores must be removed with `apply_to=all` to
+    /// clear the whole series; one-off chores reject that parameter (HTTP 400),
+    /// so the caller passes `applyToAll: false` for them.
+    func deleteChore(frameID: String, choreID: String, applyToAll: Bool = true) async throws {
         try await sendWithoutResponse(
             method: "DELETE",
             path: ["frames", frameID, "chores", choreID],
-            query: [URLQueryItem(name: "apply_to", value: "all")]
+            query: applyToAll ? [URLQueryItem(name: "apply_to", value: "all")] : []
         )
     }
 

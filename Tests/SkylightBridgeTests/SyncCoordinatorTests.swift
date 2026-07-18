@@ -1043,6 +1043,88 @@ struct SyncCoordinatorTests {
         #expect(persisted.chores.first?.baselineDueDate == nextDay)
     }
 
+    @Test("Completing a one-off chore omits instance fields Skylight rejects (HTTP 422)")
+    func completesNonRecurringChoreWithoutInstanceFields() async throws {
+        let today = Date(timeIntervalSince1970: 1_784_131_200)
+        let api = CoordinatorAPIStub()
+        await api.configureChores([
+            SkylightResource(
+                id: "chore-1",
+                attributes: SkylightChoreAttributes(
+                    summary: "Water plants",
+                    status: .pending,
+                    start: "2026-07-15",
+                    recurring: false,
+                    recurrenceSet: nil,
+                    upForGrabs: false,
+                    routine: false
+                ),
+                relationships: [
+                    "category": SkylightRelationship(
+                        data: .many([SkylightIdentifier(id: "person-1", type: "category")])
+                    )
+                ]
+            )
+        ])
+        let mappingID = UUID()
+        let completedReminder = ChoreReminderSnapshot(
+            id: "apple-chore-1",
+            listID: "list-1",
+            memberKey: "person-1",
+            title: "Water plants",
+            notes: nil,
+            isCompleted: true,
+            dueDate: today,
+            recurrence: nil,
+            recurrenceUnsupported: false,
+            modifiedAt: today
+        )
+        let choreSource = CoordinatorChoreReminderSource(reminders: [completedReminder])
+        var initialState = SyncState()
+        initialState.chores = [ChoreSyncRecord(
+            mappingID: mappingID,
+            frameID: "frame-1",
+            appleReminderID: "apple-chore-1",
+            skylightSeriesID: "chore-1",
+            memberKey: "person-1",
+            lastAppleModifiedAt: today,
+            lastSkylightModifiedAt: today,
+            contentFingerprint: "",
+            lastSyncedTitle: "Water plants",
+            lastSyncedRecurrence: nil,
+            baselineDueDate: today
+        )]
+        let state = CoordinatorStateStore(state: initialState)
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            state: state,
+            choreReminderSource: choreSource,
+            now: { today }
+        )
+        var mapping = ChoreMapping()
+        mapping.id = mappingID
+        mapping.frameID = "frame-1"
+        mapping.memberLinks = [ChoreMemberLink(
+            memberKey: "person-1",
+            memberLabel: "Oliver",
+            appleListID: "list-1",
+            appleListTitle: "Oliver Chores"
+        )]
+        var configuration = AppConfiguration()
+        configuration.account.frameID = "frame-1"
+        configuration.dryRun = false
+        configuration.choreMappings = [mapping]
+
+        _ = try await coordinator.sync(configuration: configuration)
+
+        let completions = await api.choreCompletionRequests
+        #expect(completions.count == 1)
+        #expect(completions.first?.status == .complete)
+        #expect(completions.first?.instanceDate == nil)
+        #expect(completions.first?.instanceTime == nil)
+    }
+
     private func makeCoordinator(
         api: CoordinatorAPIStub,
         reminders: [AppleReminderSnapshot],
@@ -1819,6 +1901,8 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
     private var chores: [SkylightResource<SkylightChoreAttributes>] = []
     private var albums: [SkylightResource<SkylightAlbumAttributes>] = []
     private(set) var completedChoreSeriesIDs: [String] = []
+    private(set) var choreCompletionRequests: [SkylightChoreCompletionRequest] = []
+    private(set) var deletedChoreRequests: [(choreID: String, applyToAll: Bool)] = []
     private(set) var choreRequests: [SkylightChoreRequest] = []
     private(set) var updatedRecipeIDs: [String] = []
     private(set) var deletedRecipeIDs: [String] = []
@@ -1906,7 +1990,8 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
         throw CoordinatorStubError.unexpectedCall
     }
 
-    func deleteChore(frameID: String, choreID: String) async throws {
+    func deleteChore(frameID: String, choreID: String, applyToAll: Bool) async throws {
+        deletedChoreRequests.append((choreID: choreID, applyToAll: applyToAll))
         chores.removeAll { $0.id == choreID }
     }
 
@@ -1915,6 +2000,7 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
         seriesID: String,
         request: SkylightChoreCompletionRequest
     ) async throws {
+        choreCompletionRequests.append(request)
         if request.status == .complete {
             completedChoreSeriesIDs.append(seriesID)
         }

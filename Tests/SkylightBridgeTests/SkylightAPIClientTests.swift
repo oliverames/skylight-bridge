@@ -339,6 +339,24 @@ struct SkylightAPIClientTests {
             .queryItems?.first(where: { $0.name == "apply_to" })?.value == "all")
     }
 
+    @Test("Deleting a one-off chore omits apply_to, which Skylight rejects for it")
+    func deletesNonRecurringChoreWithoutApplyTo() async throws {
+        let recorder = SkylightRequestRecorder()
+        let transport = SkylightTestTransport { request in
+            await recorder.append(request)
+            return SkylightTestTransport.response(for: request, statusCode: 204)
+        }
+        let client = SkylightAPIClient(accessToken: "token", transport: transport)
+
+        try await client.deleteChore(frameID: "frame-1", choreID: "series-1", applyToAll: false)
+
+        let requests = await recorder.requests
+        #expect(requests[0].httpMethod == "DELETE")
+        #expect(requests[0].url?.path == "/api/frames/frame-1/chores/series-1")
+        #expect(URLComponents(url: requests[0].url!, resolvingAgainstBaseURL: false)?
+            .queryItems?.contains(where: { $0.name == "apply_to" }) != true)
+    }
+
     @Test("Generic authenticated escape hatch preserves private API headers")
     func performsGenericAuthenticatedRequest() async throws {
         let transport = SkylightTestTransport { request in

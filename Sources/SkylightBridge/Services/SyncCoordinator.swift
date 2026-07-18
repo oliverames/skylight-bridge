@@ -256,7 +256,7 @@ protocol SkylightSyncAPI: Sendable {
         choreID: String,
         request: SkylightChoreRequest
     ) async throws -> SkylightResource<SkylightChoreAttributes>
-    func deleteChore(frameID: String, choreID: String) async throws
+    func deleteChore(frameID: String, choreID: String, applyToAll: Bool) async throws
     func setChoreCompletion(
         frameID: String,
         seriesID: String,
@@ -331,7 +331,7 @@ extension SkylightSyncAPI {
         throw SyncCoordinatorError.missingChoreReminderSource
     }
 
-    func deleteChore(frameID _: String, choreID _: String) async throws {
+    func deleteChore(frameID _: String, choreID _: String, applyToAll _: Bool) async throws {
         throw SyncCoordinatorError.missingChoreReminderSource
     }
 
@@ -786,7 +786,11 @@ actor SyncCoordinator {
         for record in records {
             switch side {
             case .skylight:
-                try? await api.deleteChore(frameID: frameID, choreID: record.skylightSeriesID)
+                try? await api.deleteChore(
+                    frameID: frameID,
+                    choreID: record.skylightSeriesID,
+                    applyToAll: record.lastSyncedRecurrence != nil
+                )
                 affected += 1
             case .appleReminders:
                 try? await choreReminderSource?.syncRemoveChoreReminder(
@@ -1915,13 +1919,20 @@ actor SyncCoordinator {
                     ), state: &state)
 
                 case let .completeRemote(seriesID, status):
+                    // Skylight ties `instance_date`/`instance_time` to a specific
+                    // occurrence of a recurring chore and rejects them (HTTP 422)
+                    // for one-off chores, where the completion applies to the
+                    // whole chore. Only send them when the chore is recurring.
+                    let remoteIsRecurring = !(remoteByID[seriesID]?.recurrenceRaw.isEmpty ?? true)
                     try await api.setChoreCompletion(
                         frameID: frameID,
                         seriesID: seriesID,
                         request: SkylightChoreCompletionRequest(
                             status: status,
-                            instanceDate: today,
-                            instanceTime: remoteByID[seriesID]?.startDate.map(Self.choreTime) ?? "06:00"
+                            instanceDate: remoteIsRecurring ? today : nil,
+                            instanceTime: remoteIsRecurring
+                                ? (remoteByID[seriesID]?.startDate.map(Self.choreTime) ?? "06:00")
+                                : nil
                         )
                     )
                     if let index = state.chores.firstIndex(where: {
@@ -1964,7 +1975,15 @@ actor SyncCoordinator {
                     }
 
                 case let .deleteRemote(seriesID):
-                    try await api.deleteChore(frameID: frameID, choreID: seriesID)
+                    // `apply_to=all` clears an entire recurring series but is
+                    // rejected (HTTP 400) for one-off chores, so scope it to the
+                    // chore's recurrence.
+                    let remoteIsRecurring = !(remoteByID[seriesID]?.recurrenceRaw.isEmpty ?? true)
+                    try await api.deleteChore(
+                        frameID: frameID,
+                        choreID: seriesID,
+                        applyToAll: remoteIsRecurring
+                    )
                     state.chores.removeAll {
                         $0.mappingID == mapping.id && $0.skylightSeriesID == seriesID
                     }

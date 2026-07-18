@@ -51,6 +51,24 @@ struct SecurityHardeningTests {
         #expect(!oauth.localizedDescription.contains("secret"))
     }
 
+    @Test("Structured validation errors surface without echoing the raw body")
+    func surfacesValidationDetailSafely() {
+        let validation = SkylightAPIError.httpStatus(
+            code: 422,
+            body: #"{"errors":{"instance_date":["must be blank"]}}"#
+        )
+        #expect(validation.localizedDescription.contains("instance_date: must be blank"))
+
+        // A JSON error body that reflects a secret value is still not echoed,
+        // because only the `errors` envelope is read.
+        let leaky = SkylightAPIError.httpStatus(
+            code: 401,
+            body: #"{"access_token":"secret","message":"secret"}"#
+        )
+        #expect(!leaky.localizedDescription.contains("secret"))
+        #expect(leaky.localizedDescription == "Skylight returned HTTP 401.")
+    }
+
     @Test("Malformed meal plans fail closed instead of looking empty")
     func malformedMealPlanFailsClosed() {
         do {
