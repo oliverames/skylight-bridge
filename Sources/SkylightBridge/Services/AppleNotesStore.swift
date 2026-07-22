@@ -62,6 +62,7 @@ actor AppleNotesStore {
             tell application "Notes"
                 set resultRows to {}
                 repeat with accountItem in accounts
+                    set accountItem to contents of accountItem
                     set end of resultRows to {id of accountItem as text, name of accountItem as text}
                 end repeat
                 return resultRows
@@ -105,6 +106,7 @@ actor AppleNotesStore {
 
                     set resultRows to {}
                     repeat with noteItem in notes of targetFolder
+                        set noteItem to contents of noteItem
                         set end of resultRows to {id of noteItem as text, id of targetFolder as text, name of noteItem as text, creation date of noteItem, modification date of noteItem, password protected of noteItem, shared of noteItem, count of attachments of noteItem}
                     end repeat
                     return resultRows
@@ -148,6 +150,7 @@ actor AppleNotesStore {
                     if targetFolder is missing value then error "Folder not found" number 10001
 
                     repeat with noteItem in notes of targetFolder
+                        set noteItem to contents of noteItem
                         if (id of noteItem as text) is requestedNoteID then
                             return {id of noteItem as text, id of targetFolder as text, name of noteItem as text, plaintext of noteItem as text, creation date of noteItem, modification date of noteItem, password protected of noteItem, shared of noteItem}
                         end if
@@ -211,6 +214,7 @@ actor AppleNotesStore {
                     set targetFolder to my findFolderInAccounts(requestedFolderID)
                     if targetFolder is missing value then error "Folder not found" number 10001
                     repeat with noteItem in notes of targetFolder
+                        set noteItem to contents of noteItem
                         if (id of noteItem as text) is requestedNoteID then
                             set body of noteItem to requestedBody
                             return {id of noteItem as text}
@@ -235,6 +239,7 @@ actor AppleNotesStore {
                     set targetFolder to my findFolderInAccounts(requestedFolderID)
                     if targetFolder is missing value then error "Folder not found" number 10001
                     repeat with noteItem in notes of targetFolder
+                        set noteItem to contents of noteItem
                         if (id of noteItem as text) is requestedNoteID then
                             delete noteItem
                             return {"trashed"}
@@ -332,10 +337,11 @@ actor AppleNotesStore {
             .replacingOccurrences(of: "\n", with: "")
     }
 
-    private static let noteSelectionHandlers = """
+    static let noteSelectionHandlers = """
     on findFolder(folderItems, requestedFolderID)
         tell application "Notes"
             repeat with folderItem in folderItems
+                set folderItem to contents of folderItem
                 if (id of folderItem as text) is requestedFolderID then return folderItem
                 set nestedResult to my findFolder(folders of folderItem, requestedFolderID)
                 if nestedResult is not missing value then return nestedResult
@@ -347,6 +353,7 @@ actor AppleNotesStore {
     on findFolderInAccounts(requestedFolderID)
         tell application "Notes"
             repeat with accountItem in accounts
+                set accountItem to contents of accountItem
                 set folderResult to my findFolder(folders of accountItem, requestedFolderID)
                 if folderResult is not missing value then return folderResult
             end repeat
@@ -355,10 +362,11 @@ actor AppleNotesStore {
     end findFolderInAccounts
     """
 
-    private static let folderEnumerationScript = """
+    static let folderEnumerationScript = """
     on collectFolders(folderItems, accountIdentifier, parentIdentifier, resultRows)
         tell application "Notes"
             repeat with folderItem in folderItems
+                set folderItem to contents of folderItem
                 set folderIdentifier to id of folderItem as text
                 set end of resultRows to {folderIdentifier, name of folderItem as text, accountIdentifier, parentIdentifier, shared of folderItem}
                 set resultRows to my collectFolders(folders of folderItem, accountIdentifier, folderIdentifier, resultRows)
@@ -370,6 +378,7 @@ actor AppleNotesStore {
     tell application "Notes"
         set resultRows to {}
         repeat with accountItem in accounts
+            set accountItem to contents of accountItem
             set accountIdentifier to id of accountItem as text
             set resultRows to my collectFolders(folders of accountItem, accountIdentifier, "", resultRows)
         end repeat
