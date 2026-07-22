@@ -1,3 +1,19 @@
+## 2026-07-22 - Skylight Bridge 1.5.7: Notes and one-off chore reliability
+
+**What changed**: Released version 1.5.7 (build 17). Apple Notes automation now dereferences account, folder, and note objects before reading their properties, preventing the folder-traversal failure that could stop sync in a large or nested Notes hierarchy. One-off Chore Chart completion and deletion no longer send recurrence-only fields that Skylight rejects with HTTP 422. Removing a Chore Chart mapping now asks whether to keep the Skylight side or the Reminders side and deletes only the other side.
+
+**Decisions made**: The Notes fix applies the same safe dereferencing rule to every Apple Notes object loop, not only the folder lookup that exposed the error. Chore teardown remains explicit and recoverable through the user's keep-side choice.
+
+**Verification**: All 132 tests passed in 23 suites. A read-only live AppleScript probe enumerated and reselected all 51 Notes folders. The universal app and DMG passed Developer ID signing, Apple notarization, stapling, disk-image verification, mounted-app strict signature checks, and Gatekeeper assessment.
+
+The published SHA-256 matched the local DMG (`81641a397fcc39d208eff846979b85b9e45c3fc84ad5e4f6fcc2194bc4b8c3ed`). The signed Sparkle appcast was published to `gh-pages` and matched the live feed byte for byte.
+
+**Left off at**: Version 1.5.7 is published at https://github.com/oliverames/skylight-bridge/releases/tag/v1.5.7. Tag `v1.5.7` points to `8121125`; the appcast mirror is published from `gh-pages` commit `048800b`.
+
+**Open questions**: None.
+
+---
+
 ## 2026-07-16 - Skylight Bridge 1.5.6: Two-way chores and list metadata
 
 **What changed**: Released version 1.5.6 (build 16). Chore Chart mappings now remain two-way, including older saved mappings. Linked Apple Reminders and Skylight lists sync title and color changes according to the mapping direction and conflict policy.

@@ -6,16 +6,16 @@
     <description>Signed updates for Skylight Bridge.</description>
     <language>en</language>
     <item>
-      <title>Version 1.5.6</title>
-      <sparkle:version>16</sparkle:version>
-      <sparkle:shortVersionString>1.5.6</sparkle:shortVersionString>
-      <description><![CDATA[<p>Chore Chart mappings now stay two-way, linked Reminders lists sync titles and colors, and selected-photo names publish as Skylight captions.</p>]]></description>
-      <pubDate>Thu, 16 Jul 2026 18:34:28 +0000</pubDate>
-      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.5.6/Skylight.Bridge-1.5.6.dmg" sparkle:edSignature="WdYJT+qJ7FWa4oHAXojYgXY3P9uUEy2HKtyZvoBm9hrGihVT39nYAnP5CVYVBB0x5ctppxgb9PChZjtmUl7MCA==" length="6076644" type="application/octet-stream" />
+      <title>Version 1.5.7</title>
+      <sparkle:version>17</sparkle:version>
+      <sparkle:shortVersionString>1.5.7</sparkle:shortVersionString>
+      <description><![CDATA[<p>Apple Notes folder traversal is reliable in large or nested hierarchies, one-off Chore Chart actions no longer return HTTP 422, and mapping removal now asks which side to keep.</p>]]></description>
+      <pubDate>Wed, 22 Jul 2026 14:03:04 +0000</pubDate>
+      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.5.7/Skylight.Bridge-1.5.7.dmg" sparkle:edSignature="uqP0dA5U78BRIzCedaMoM+NFrCGA8EPvPC1CkwSMjt7uOCMWKxftCT4PdJ6TL1V0Su7LPvOj5tHMu9sKALWoBA==" length="6100706" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: D6XFTsyhGbSwm/WI5a/kBD4aqoPvVRcTjaOed4faE5bGt1m2CSjGv85gsRU/+nqTvaIJinluOaSHZY0joklvCw==
-length: 1100
+edSignature: ubRwcg8k9mKzOkpEA4j5WwmntKEugG8sjm0hyuh3kBhHjPqqz9NXJ4DkvyFXuVHFl5XBXJTjMThaJzXHbBTBDw==
+length: 1136
 -->
