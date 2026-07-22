@@ -1,3 +1,17 @@
+## 2026-07-22 - Add and stabilize continuous integration
+
+**What changed**: Added automated build and test coverage for the Mac bridge, including authenticated access to its private shared package dependency and a deterministic Sparkle staging step.
+
+**Decisions made**: Kept production signing and release concerns out of CI; the workflow validates source, dependencies, build, and tests only.
+
+**Left off at**: The workflow fixes are on `main`; the live workflow is green.
+
+**Open questions**: The physical iCloud round-trip validation with the iOS companion remains as recorded in the project backlog.
+
+**Verification**: The post-fix GitHub Actions run completed successfully with the expected build and test coverage.
+
+---
+
 ## 2026-07-22 - Skylight Bridge 1.5.7: Notes and one-off chore reliability
 
 **What changed**: Released version 1.5.7 (build 17). Apple Notes automation now dereferences account, folder, and note objects before reading their properties, preventing the folder-traversal failure that could stop sync in a large or nested Notes hierarchy. One-off Chore Chart completion and deletion no longer send recurrence-only fields that Skylight rejects with HTTP 422. Removing a Chore Chart mapping now asks whether to keep the Skylight side or the Reminders side and deletes only the other side.
