@@ -16,6 +16,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Configure private package access
+        env:
+          DEPLOY_KEY: ${{ secrets.SKYLIGHT_IOS_DEPLOY_KEY }}
+        run: |
+          key_path="${RUNNER_TEMP}/skylight-ios-deploy-key"
+          known_hosts_path="${RUNNER_TEMP}/github-known-hosts"
+          printf '%s\n' "${DEPLOY_KEY}" > "${key_path}"
+          chmod 600 "${key_path}"
+          ssh-keyscan -t ed25519 github.com > "${known_hosts_path}"
+          git config --global \
+            url."git@github.com:oliverames/skylight-bridge-ios.git".insteadOf \
+            "https://github.com/oliverames/skylight-bridge-ios.git"
+          echo "GIT_SSH_COMMAND=ssh -i ${key_path} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=${known_hosts_path}" >> "${GITHUB_ENV}"
+
       - name: Build
         run: swift build
 
