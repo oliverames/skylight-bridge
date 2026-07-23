@@ -11,9 +11,9 @@ let package = Package(
         .executable(name: "SkylightBridge", targets: ["SkylightBridge"])
     ],
     dependencies: [
-        .package(
-            url: "https://github.com/oliverames/skylight-bridge-ios.git",
-            from: "0.1.0"
+       .package(
+           url: "https://github.com/oliverames/skylight-bridge-ios.git",
+            from: "0.1.8"
         ),
         .package(
             url: "https://github.com/sparkle-project/Sparkle",

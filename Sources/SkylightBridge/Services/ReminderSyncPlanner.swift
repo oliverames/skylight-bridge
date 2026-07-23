@@ -42,8 +42,51 @@ enum ReminderSyncPlanner {
         return pairs
     }
 
-    private static func matchKey(title: String, isCompleted: Bool) -> String {
-        "\(title.trimmed.lowercased())\u{0}\(isCompleted)"
+   private static func matchKey(title: String, isCompleted: Bool) -> String {
+       "\(title.trimmed.lowercased())\u{0}\(isCompleted)"
+   }
+
+    /// A secondary adoption pass that pairs remaining unlinked items by title
+    /// alone, ignoring completion state. This catches the common
+    /// disconnect/reconnect case where one side toggled a reminder's
+    /// completion while the mapping was inactive, so the title still matches
+    /// but the completion state diverged. Without this pass, both items would
+    /// be treated as new unlinked items and duplicated on the other side.
+    /// Pairing is deterministic by identifier order, and each side's items
+    /// already consumed by the primary pass are excluded.
+    static func titleOnlyAdoptionPairs(
+        apple: [ReminderSnapshot],
+        skylight: [SkylightListItemSnapshot],
+        primaryPairs: [ReminderAdoptionPair]
+    ) -> [ReminderAdoptionPair] {
+        let consumedAppleIDs = Set(primaryPairs.map(\.appleID))
+        let consumedSkylightIDs = Set(primaryPairs.map(\.skylightID))
+
+        var candidatesByTitle: [String: [SkylightListItemSnapshot]] = [:]
+        for item in skylight where !consumedSkylightIDs.contains(item.id) {
+            candidatesByTitle[titleKey(item.title), default: []].append(item)
+        }
+        for key in candidatesByTitle.keys {
+            candidatesByTitle[key]?.sort { $0.id < $1.id }
+        }
+
+        var pairs: [ReminderAdoptionPair] = []
+        let unlinkedApple = apple
+            .filter { !consumedAppleIDs.contains($0.id) }
+            .sorted { $0.id < $1.id }
+        for reminder in unlinkedApple {
+            let key = titleKey(reminder.title)
+            guard var candidates = candidatesByTitle[key], !candidates.isEmpty else { continue }
+            pairs.append(
+                ReminderAdoptionPair(appleID: reminder.id, skylightID: candidates.removeFirst().id)
+            )
+            candidatesByTitle[key] = candidates
+        }
+        return pairs
+    }
+
+    private static func titleKey(_ title: String) -> String {
+        title.trimmed.lowercased()
     }
 
     static func plan(
