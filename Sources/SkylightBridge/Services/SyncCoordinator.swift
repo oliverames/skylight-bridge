@@ -1800,6 +1800,43 @@ actor SyncCoordinator {
                 Self.upsertChoreRecord(activeRecords[index], state: &state)
                 reboundCount += 1
             }
+            // When a recurring reminder was completed (either by the user or
+            // by a prior sync propagating a Skylight completion), EventKit
+            // generates a new uncompleted occurrence with a fresh identifier.
+            // The old completed reminder is still returned by fetchReminders,
+            // so the ID-based rebind above does not fire. Without this second
+            // pass the link stays on the stale completed reminder, the new
+            // occurrence is unlinked, and each complete→reopen cycle accumulates
+            // a duplicate Apple Reminder. Rebind the link to the new occurrence
+            // and drop the stale completed reminder from the snapshot set so
+            // the planner never sees it as an independent item.
+            var staleCompletedIDs: Set<String> = []
+            for index in activeRecords.indices {
+                let record = activeRecords[index]
+                guard liveAppleIDs.contains(record.appleReminderID),
+                      let linked = appleSnapshots.first(where: { $0.id == record.appleReminderID }),
+                      linked.isCompleted,
+                      linked.recurrence != nil else { continue }
+                let candidates = appleSnapshots.filter {
+                    !claimedAppleIDs.contains($0.id) &&
+                        !$0.isCompleted &&
+                        $0.recurrence != nil &&
+                        $0.memberKey == record.memberKey &&
+                        $0.title.trimmed.localizedCaseInsensitiveCompare(
+                            record.lastSyncedTitle?.trimmed ?? linked.title.trimmed
+                        ) == .orderedSame
+                }
+                guard candidates.count == 1, let replacement = candidates.first else { continue }
+                staleCompletedIDs.insert(record.appleReminderID)
+                activeRecords[index].appleReminderID = replacement.id
+                activeRecords[index].lastAppleModifiedAt = replacement.modifiedAt
+                claimedAppleIDs.insert(replacement.id)
+                Self.upsertChoreRecord(activeRecords[index], state: &state)
+                reboundCount += 1
+            }
+            if !staleCompletedIDs.isEmpty {
+                appleSnapshots.removeAll { staleCompletedIDs.contains($0.id) }
+            }
             let adoptionPairs = ChoreSyncPlanner.adoptionPairs(
                 apple: appleSnapshots,
                 skylight: remoteSnapshots,
