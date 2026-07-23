@@ -1,3 +1,17 @@
+## 2026-07-23 - Fix duplicate Apple Reminders and stale due dates for recurring chores
+
+**What changed**: Fixed two bugs in the Chore Chart sync that caused duplicate Apple Reminders and stale due dates for recurring chores. (1) When a recurring Apple Reminder was completed, EventKit generated a new occurrence with a fresh identifier, but the old completed reminder was still returned by fetchReminders. The existing ID-based rebind only fired when the old ID disappeared entirely, so the link stayed on the stale completed reminder and each complete-reopen cycle accumulated a duplicate. Added a second rebind pass that detects when a linked recurring reminder is completed and a matching uncompleted occurrence exists, then moves the link and drops the stale reminder from the planner snapshot. (2) When a recurring chore rolled to a new day without being completed on either side, Skylight advanced the occurrence start date but the Apple reminder kept its old due date. The planner content-change detection only compared title, notes, recurrence, and memberKey, so the due date drift was invisible and the Apple reminder stayed stuck on the previous day. Added a drift check that generates an updateApple action when the Skylight occurrence start date has advanced past the Apple reminder due date to a different calendar day.
+
+**Decisions made**: The stale-completed rebind requires exactly one matching uncompleted occurrence (same title and member) to avoid ambiguity. The due-date drift check only fires in the skylight-to-apple and two-way directions, and only when no content change was already detected, to avoid duplicate update actions.
+
+**Verification**: All 145 tests pass in 24 suites, including three new tests: stale completed recurring reminder rebind, due-date drift roll-forward, and due-date match no-op.
+
+**Left off at**: Both fixes are on `main` and pushed. No release cut.
+
+**Open questions**: None.
+
+---
+
 ## 2026-07-22 - Add and stabilize continuous integration
 
 **What changed**: Added automated build and test coverage for the Mac bridge, including authenticated access to its private shared package dependency and a deterministic Sparkle staging step.
