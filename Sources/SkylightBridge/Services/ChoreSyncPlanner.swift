@@ -124,9 +124,24 @@ enum ChoreSyncPlanner {
                     result.append(appleWins
                         ? .updateRemote(appleID: apple.id, seriesID: remote.id)
                         : .updateApple(appleID: apple.id, seriesID: remote.id))
-                case (false, false): break
-                }
-            }
+               case (false, false): break
+               }
+           }
+       }
+
+        // When a recurring chore rolls to a new day without being completed on
+        // either side, Skylight advances the occurrence's start date but the
+        // Apple reminder keeps its old due date. The content-change checks
+        // above don't cover the due date, so the Apple reminder would stay
+        // stale. Detect the drift and push an update so the Apple reminder
+        // reflects the current day.
+        if !appleContentChanged, !remoteContentChanged,
+           direction != .appleToSkylight,
+           let remoteStart = remote.startDate,
+           let appleDue = apple.dueDate,
+           appleDue < remoteStart,
+           !Calendar.current.isDate(appleDue, inSameDayAs: remoteStart) {
+            result.append(.updateApple(appleID: apple.id, seriesID: remote.id))
         }
 
         let remoteCompleted = remote.todayStatus == .complete || remote.todayStatus == .skipped

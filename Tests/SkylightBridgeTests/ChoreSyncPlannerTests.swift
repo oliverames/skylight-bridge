@@ -109,6 +109,37 @@ struct ChoreSyncPlannerTests {
         #expect(actions.isEmpty)
     }
 
+    @Test("A stale Apple due date rolls forward to match the Skylight occurrence")
+    func rollsStaleDueDateForward() {
+        let nextDay = today.addingTimeInterval(86_400)
+        let apple = appleSnapshot(id: "a", member: "oliver", due: today)
+        let remote = SkylightChoreSnapshot(
+            id: "s", title: "Water plants", notes: nil, memberKey: "oliver",
+            recurrenceRaw: ["FREQ=DAILY"],
+            recurrence: ParsedRecurrenceRule(frequency: .daily),
+            recurrenceUnsupported: false, todayStatus: .pending,
+            startDate: nextDay, modifiedAt: today
+        )
+        let actions = ChoreSyncPlanner.plan(
+            apple: [apple], skylight: [remote], links: [link(baselineDue: today)],
+            direction: .twoWay, conflictPolicy: .newestWins,
+            today: "2026-07-16", todayDate: nextDay
+        )
+        #expect(actions.contains(.updateApple(appleID: "a", seriesID: "s")))
+    }
+
+    @Test("An Apple due date matching the Skylight day does not roll forward")
+    func doesNotRollMatchingDueDate() {
+        let apple = appleSnapshot(id: "a", member: "oliver", due: today)
+        let remote = remoteSnapshot(id: "s", member: "oliver")
+        let actions = ChoreSyncPlanner.plan(
+            apple: [apple], skylight: [remote], links: [link(baselineDue: today)],
+            direction: .twoWay, conflictPolicy: .newestWins,
+            today: "2026-07-15", todayDate: today
+        )
+        #expect(!actions.contains(.updateApple(appleID: "a", seriesID: "s")))
+    }
+
     private func appleSnapshot(
         id: String,
         member: String,
