@@ -123,9 +123,9 @@ struct SyncCoordinatorTests {
         let captions = await api.messageCaptionUpdates
         let persisted = try await state.loadSyncState()
 
-        #expect(summary.photos.applied == 1)
-        #expect(captions == ["Backyard birthday"])
-        #expect(persisted.photos.first?.lastSyncedCaption == "Backyard birthday")
+       #expect(summary.photos.applied == 1)
+        #expect(captions == ["Backyard birthday [sb:rendered-has]"])
+       #expect(persisted.photos.first?.lastSyncedCaption == "Backyard birthday")
     }
 
     @Test("A live reminder sync creates its named list and only selected items")
@@ -2313,16 +2313,46 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
         calls.createdAlbums += 1
         throw CoordinatorStubError.unexpectedCall
     }
-    private(set) var deletedAlbumIDs: [String] = []
-    private var albumMessageIDsByAlbum: [String: [String]] = [:]
-    func configureAlbumMessages(_ map: [String: [String]]) { albumMessageIDsByAlbum = map }
-    func deleteAlbum(frameID: String, albumID: String) async throws {
-        deletedAlbumIDs.append(albumID)
+   private(set) var deletedAlbumIDs: [String] = []
+   private var albumMessageIDsByAlbum: [String: [String]] = [:]
+    private var albumMessagesByAlbum: [String: [String]] = [:]
+    private var albumMessageCaptions: [String: String] = [:]
+   func configureAlbumMessages(_ map: [String: [String]]) { albumMessageIDsByAlbum = map }
+    func configureAlbumMessagesWithCaptions(_ map: [String: [(id: String, caption: String?)]]) {
+        for (albumID, entries) in map {
+            albumMessagesByAlbum[albumID] = entries.map(\.id)
+            for entry in entries {
+                if let caption = entry.caption {
+                    albumMessageCaptions[entry.id] = caption
+                }
+            }
+        }
     }
-    func listAllAlbumMessageIDs(frameID: String, albumID: String) async throws -> [String] {
-        albumMessageIDsByAlbum[albumID] ?? []
+   func deleteAlbum(frameID: String, albumID: String) async throws {
+       deletedAlbumIDs.append(albumID)
+   }
+   func listAllAlbumMessageIDs(frameID: String, albumID: String) async throws -> [String] {
+       albumMessageIDsByAlbum[albumID] ?? []
+   }
+    func listAlbumMessages(frameID: String, albumID: String, page: Int?) async throws -> SkylightPhotoMessagesResponse {
+        let messages = (albumMessagesByAlbum[albumID] ?? []).map { id in
+            SkylightResource(
+                id: id,
+                attributes: SkylightPhotoMessageAttributes(
+                    status: "downloaded",
+                    assetType: "image",
+                    createdAt: nil,
+                    updatedAt: nil,
+                    thumbnailURL: nil,
+                    assetURL: nil,
+                    senderID: nil,
+                    caption: albumMessageCaptions[id]
+                )
+            )
+        }
+        return SkylightPhotoMessagesResponse(data: messages, meta: nil)
     }
-    func requestUploadURL(ext: String, frameIDs: [String], caption: String?) async throws -> SkylightUploadURLAttributes { throw CoordinatorStubError.unexpectedCall }
+   func requestUploadURL(ext: String, frameIDs: [String], caption: String?) async throws -> SkylightUploadURLAttributes { throw CoordinatorStubError.unexpectedCall }
     func upload(data: Data, to presignedURL: URL, contentType: String) async throws { throw CoordinatorStubError.unexpectedCall }
     func addMessages(frameID: String, albumIDs: [String], messageIDs: [String]) async throws { throw CoordinatorStubError.unexpectedCall }
     func removeMessages(frameID: String, albumIDs: [String], messageIDs: [String]) async throws {

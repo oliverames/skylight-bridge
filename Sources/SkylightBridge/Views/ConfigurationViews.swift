@@ -59,7 +59,13 @@ struct AccountView: View {
                     Label(connectionError, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(.red)
-                        .accessibilityIdentifier("account.connectionError")
+                       .accessibilityIdentifier("account.connectionError")
+               }
+                if let multiClientWarning = store.multiClientWarning {
+                    Label(multiClientWarning, systemImage: "exclamationmark.bubble.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .accessibilityIdentifier("account.multiClientWarning")
                 }
             } header: {
                 SectionHeader(

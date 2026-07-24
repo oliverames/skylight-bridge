@@ -1,3 +1,25 @@
+## 2026-07-24 - Multi-device coordination: photo dedup, title-only reminder adoption, heartbeat detection, CloudKit sync state
+
+**What changed**: Five improvements to make the bridge safe when the same Skylight account is used on two Macs or when a mapping is disconnected and reconnected:
+
+1. **Photo deduplication by content hash**: Before uploading, the bridge fetches existing messages in the destination album and parses captions for a `[sb:hash]` tag embedded by a previous upload. A match links the Apple asset to the existing Skylight message instead of creating a duplicate.
+
+2. **Multi-client detection via CloudKit heartbeats**: Each Mac publishes a heartbeat to the private CloudKit database. When another Mac's heartbeat is active (within 10 minutes), the Account section shows an orange warning.
+
+3. **Reminder adoption by title-only fallback**: Secondary adoption pass links remaining unlinked items by title alone, ignoring completion state. Catches the disconnect/reconnect case where one side toggled completion while the mapping was inactive.
+
+4. **CloudKit sync state sharing**: Added SharedSyncState model and CloudSyncStateStore in the shared iOS package. Each Mac publishes sync link records to CloudKit after each sync, and imports other Macs' records before each sync.
+
+5. **Shared package version bumped to 0.1.8**.
+
+**Verification**: All 145 Mac tests pass (12 new). All 14 shared-package tests pass (5 new). `swift build` succeeds in both repos.
+
+**Left off at**: Changes are on `main` and ready to push. No release cut.
+
+**Open questions**: CloudKit stores require ClientHeartbeat and SharedSyncState record types to be deployed to the production schema.
+
+---
+
 ## 2026-07-23 - Fix duplicate Apple Reminders and stale due dates for recurring chores
 
 **What changed**: Fixed two bugs in the Chore Chart sync that caused duplicate Apple Reminders and stale due dates for recurring chores. (1) When a recurring Apple Reminder was completed, EventKit generated a new occurrence with a fresh identifier, but the old completed reminder was still returned by fetchReminders. The existing ID-based rebind only fired when the old ID disappeared entirely, so the link stayed on the stale completed reminder and each complete-reopen cycle accumulated a duplicate. Added a second rebind pass that detects when a linked recurring reminder is completed and a matching uncompleted occurrence exists, then moves the link and drops the stale reminder from the planner snapshot. (2) When a recurring chore rolled to a new day without being completed on either side, Skylight advanced the occurrence start date but the Apple reminder kept its old due date. The planner content-change detection only compared title, notes, recurrence, and memberKey, so the due date drift was invisible and the Apple reminder stayed stuck on the previous day. Added a drift check that generates an updateApple action when the Skylight occurrence start date has advanced past the Apple reminder due date to a different calendar day.

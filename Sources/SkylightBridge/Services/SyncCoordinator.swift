@@ -180,10 +180,15 @@ protocol SkylightSyncAPI: Sendable {
         frameID: String,
         title: String
     ) async throws -> SkylightResource<SkylightAlbumAttributes>
-    func deleteAlbum(frameID: String, albumID: String) async throws
-    func listAllAlbumMessageIDs(frameID: String, albumID: String) async throws -> [String]
-    func requestUploadURL(
-        ext: String,
+   func deleteAlbum(frameID: String, albumID: String) async throws
+    func listAlbumMessages(
+        frameID: String,
+        albumID: String,
+        page: Int?
+    ) async throws -> SkylightPhotoMessagesResponse
+   func listAllAlbumMessageIDs(frameID: String, albumID: String) async throws -> [String]
+   func requestUploadURL(
+       ext: String,
         frameIDs: [String],
         caption: String?
     ) async throws -> SkylightUploadURLAttributes
@@ -630,9 +635,11 @@ actor SyncCoordinator {
 
     func sync(configuration: AppConfiguration) async throws -> SyncRunSummary {
         var summary = SyncRunSummary(dryRun: configuration.dryRun)
-        guard configuration.hasEnabledSync else {
-            return summary
-        }
+       guard configuration.hasEnabledSync else {
+           return summary
+       }
+
+        albumMessageCache.removeAll()
 
         let frameID = configuration.account.frameID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !frameID.isEmpty else {
@@ -950,17 +957,21 @@ actor SyncCoordinator {
                             albumIDs: oldAlbumIDs.sorted(),
                             messageIDs: [existing.skylightMessageID]
                         )
-                        summary.applied += 1
-                    }
-                    if needsCaptionUpdate, let caption {
-                        _ = try await api.updateMessageCaption(
-                            frameID: frameID,
-                            messageID: existing.skylightMessageID,
-                            caption: caption
-                        )
-                        summary.applied += 1
-                    }
-                    upsertPhotoRecord(PhotoSyncRecord(
+                       summary.applied += 1
+                   }
+                   if needsCaptionUpdate, let caption {
+                       let dedupCaption = PhotoDeduplication.caption(
+                           withUserCaption: caption,
+                           renderedHash: existing.renderedHash
+                       )
+                       _ = try await api.updateMessageCaption(
+                           frameID: frameID,
+                           messageID: existing.skylightMessageID,
+                           caption: dedupCaption ?? caption
+                       )
+                       summary.applied += 1
+                   }
+                   upsertPhotoRecord(PhotoSyncRecord(
                         mappingID: mapping.id,
                         frameID: frameID,
                         destinationAlbumID: destinationID,
@@ -975,13 +986,52 @@ actor SyncCoordinator {
                     continue
                 }
 
-                summary.planned += 1
-                if !dryRun {
+               summary.planned += 1
+               if !dryRun {
+                    let dedupCaption = PhotoDeduplication.caption(
+                        withUserCaption: caption,
+                        renderedHash: converted.sha256
+                    )
+                    if let duplicateMessageID = try await findDuplicatePhoto(
+                        renderedHash: converted.sha256,
+                        frameID: frameID,
+                        albumID: destinationID
+                    ) {
+                        try await api.addMessages(
+                            frameID: frameID,
+                            albumIDs: [destinationID],
+                            messageIDs: [duplicateMessageID]
+                        )
+                        if let dedupCaption, dedupCaption != caption {
+                            _ = try await api.updateMessageCaption(
+                                frameID: frameID,
+                                messageID: duplicateMessageID,
+                                caption: dedupCaption
+                            )
+                        }
+                        upsertPhotoRecord(
+                            PhotoSyncRecord(
+                                mappingID: mapping.id,
+                                frameID: frameID,
+                                destinationAlbumID: destinationID,
+                                appleAssetID: asset.id,
+                                renderedHash: converted.sha256,
+                                skylightMessageID: duplicateMessageID,
+                                skylightAlbumIDs: [destinationID],
+                                lastSyncedAt: now(),
+                                lastSyncedCaption: caption
+                            ),
+                            in: &state
+                        )
+                        try await checkpoint(state, dryRun: dryRun)
+                        summary.applied += 1
+                        continue
+                    }
                     let newMessageID = try await uploadPhoto(
                         converted,
                         frameID: frameID,
                         destinationAlbumID: destinationID,
-                        caption: caption
+                        caption: dedupCaption
                     )
                     upsertPhotoRecord(
                         PhotoSyncRecord(
@@ -1103,7 +1153,39 @@ actor SyncCoordinator {
             return PhotoDestinationResolution(id: nil, needsCreation: true)
         }
         let created = try await api.createAlbum(frameID: frameID, title: title)
-        return PhotoDestinationResolution(id: created.id, needsCreation: true)
+       return PhotoDestinationResolution(id: created.id, needsCreation: true)
+   }
+
+    private var albumMessageCache: [String: [SkylightResource<SkylightPhotoMessageAttributes>]] = [:]
+
+    private func findDuplicatePhoto(
+        renderedHash: String,
+        frameID: String,
+        albumID: String
+    ) async throws -> String? {
+        let cacheKey = "\(frameID):\(albumID)"
+        if let cached = albumMessageCache[cacheKey] {
+            return PhotoDeduplication.findDuplicate(
+                renderedHash: renderedHash,
+                in: cached
+            )
+        }
+        var allMessages: [SkylightResource<SkylightPhotoMessageAttributes>] = []
+        var page: Int? = nil
+        repeat {
+            let response = try await api.listAlbumMessages(
+                frameID: frameID,
+                albumID: albumID,
+                page: page
+            )
+            allMessages.append(contentsOf: response.data)
+            page = response.meta?.nextPageToken.flatMap(Int.init)
+        } while page != nil
+        albumMessageCache[cacheKey] = allMessages
+        return PhotoDeduplication.findDuplicate(
+            renderedHash: renderedHash,
+            in: allMessages
+        )
     }
 
     private func uploadPhoto(
@@ -1285,7 +1367,41 @@ actor SyncCoordinator {
                     }
                     activeRecords.append(adopted)
                 }
-                if !pairs.isEmpty {
+               if !pairs.isEmpty {
+                   try await checkpoint(state, dryRun: dryRun)
+               }
+                let secondaryPairs = ReminderSyncPlanner.titleOnlyAdoptionPairs(
+                    apple: appleSnapshots,
+                    skylight: remoteSnapshots,
+                    primaryPairs: pairs
+                )
+                for pair in secondaryPairs {
+                    guard let apple = appleForAdoption[pair.appleID],
+                          let remote = remoteForAdoption[pair.skylightID] else { continue }
+                    let adopted = ReminderSyncRecord(
+                        mappingID: mapping.id,
+                        frameID: frameID,
+                        skylightListID: destinationID,
+                        appleReminderID: apple.id,
+                        appleExternalID: apple.externalID,
+                        skylightItemID: remote.id,
+                        lastAppleModifiedAt: apple.modificationDate ?? apple.creationDate ?? .distantPast,
+                        lastSkylightModifiedAt: remote.modifiedAt,
+                        contentFingerprint: reminderFingerprint(
+                            title: apple.title,
+                            isCompleted: apple.isCompleted
+                        ),
+                        lastSyncedTitle: apple.title,
+                        lastSyncedCompleted: apple.isCompleted
+                    )
+                    upsertReminderRecord(adopted, in: &state)
+                    activeRecords.removeAll {
+                        $0.appleReminderID == adopted.appleReminderID ||
+                            $0.skylightItemID == adopted.skylightItemID
+                    }
+                    activeRecords.append(adopted)
+                }
+                if !secondaryPairs.isEmpty {
                     try await checkpoint(state, dryRun: dryRun)
                 }
             }

@@ -18,7 +18,8 @@ final class AppStore {
     var skylightAlbums: [SkylightResource<SkylightAlbumAttributes>] = []
     var skylightLists: [SkylightResource<SkylightListAttributes>] = []
     var skylightMealCategories: [SkylightResource<SkylightMealCategoryAttributes>] = []
-    var skylightChoreCategories: [SkylightResource<SkylightCategoryAttributes>] = []
+   var skylightChoreCategories: [SkylightResource<SkylightCategoryAttributes>] = []
+    var multiClientWarning: String?
     var photosAuthorizationStatus: ApplePhotosAuthorizationStatus = .notDetermined
     var remindersAuthorizationStatus: AppleRemindersAuthorizationStatus = .notDetermined
     var notesAccessGranted = false
@@ -542,8 +543,9 @@ final class AppStore {
         }
 
         do {
-            try persistence.saveConfiguration(configuration)
-            let client = try await sessionManager.client(configuration: configuration.account)
+           try persistence.saveConfiguration(configuration)
+           let client = try await sessionManager.client(configuration: configuration.account)
+            await importSharedSyncState()
             let coordinator = SyncCoordinator.live(apiClient: client)
             let summary = try await coordinator.sync(configuration: configuration)
             try await refreshSkylightDestinations(using: client)
@@ -556,6 +558,9 @@ final class AppStore {
             lastSyncFailed = false
             if !summary.dryRun {
                 recordAppliedChanges(summary.totalApplied)
+            }
+            if !summary.dryRun {
+                await publishSharedSyncState()
             }
             statusMessage = summary.dryRun
                 ? "Preview complete: \(countDescription(summary.totalPlanned, singular: "change")) planned."

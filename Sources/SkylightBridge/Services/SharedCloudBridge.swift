@@ -24,8 +24,10 @@ extension AppStore {
             } else {
                 resolvedPreferences = try await cloudPreferences.save(localPreferences)
             }
-            storeSharedPreferences(resolvedPreferences)
-            applySharedPreferences(resolvedPreferences)
+           storeSharedPreferences(resolvedPreferences)
+           applySharedPreferences(resolvedPreferences)
+
+            try await publishAndCheckHeartbeat()
 
             // Import explicit removes before publishing local selections. If a
             // phone removed a photo while this Mac was offline, publishing
@@ -51,13 +53,178 @@ extension AppStore {
                 intentionalPhotoAdditions: intentionalPhotoAdditions
             )
             recordSharediCloudSuccess()
+       } catch {
+           recordSharediCloudFailure(error, savedLocally: true)
+       }
+   }
+
+    func importSharedSyncState() async {
+        do {
+            let stateStore = SyncStateStore()
+            var state = try await stateStore.load()
+            try await importSharedSyncStateInto(&state)
+            try await stateStore.save(state)
         } catch {
-            recordSharediCloudFailure(error, savedLocally: true)
+            if !SharedCloudKitFailure.isProductionSchemaConfigurationError(error) {
+                appendActivity(.init(
+                    level: .warning,
+                    area: .system,
+                    message: "Could not import sync state from iCloud: \(error.localizedDescription)"
+                ))
+            }
+        }
+    }
+
+    func publishSharedSyncState() async {
+        do {
+            let stateStore = SyncStateStore()
+            let state = try await stateStore.load()
+            try await publishSharedSyncStateFromState(state)
+        } catch {
+            if !SharedCloudKitFailure.isProductionSchemaConfigurationError(error) {
+                appendActivity(.init(
+                    level: .warning,
+                    area: .system,
+                    message: "Could not publish sync state to iCloud: \(error.localizedDescription)"
+                ))
+            }
         }
     }
 
     private func recordSharediCloudSuccess() {
         hasLoggedSharediCloudSchemaDeploymentFailure = false
+    }
+
+    private func publishAndCheckHeartbeat() async throws {
+        let store = ClientHeartbeatStore()
+        let heartbeat = ClientHeartbeat(
+            installationID: cloudInstallationID,
+            lastSeenAt: .now,
+            frameID: configuration.account.frameID,
+            isActivelySyncing: isSyncing
+        )
+        _ = try await store.publish(heartbeat)
+        let others = try await store.otherActiveInstallations(
+            excludingInstallationID: cloudInstallationID
+        )
+        if others.isEmpty {
+            multiClientWarning = nil
+        } else {
+            let names = others.map { String($0.installationID.prefix(8)) }.joined(separator: ", ")
+            multiClientWarning = "Another Mac (\(names)) is also syncing this Skylight frame. Running two Macs against the same frame can duplicate content."
+        }
+    }
+
+    private func publishSharedSyncStateFromState(_ state: SyncState) async throws {
+        let store = CloudSyncStateStore()
+        let shared = SharedSyncState(
+            photoLinks: state.photos.map {
+                SharedPhotoLink(
+                    mappingID: $0.mappingID.uuidString,
+                    frameID: $0.frameID,
+                    appleAssetID: $0.appleAssetID,
+                    renderedHash: $0.renderedHash,
+                    skylightMessageID: $0.skylightMessageID,
+                    lastSyncedAt: $0.lastSyncedAt
+                )
+            },
+            reminderLinks: state.reminders.map {
+                SharedReminderLink(
+                    mappingID: $0.mappingID.uuidString,
+                    frameID: $0.frameID,
+                    skylightListID: $0.skylightListID,
+                    appleReminderID: $0.appleReminderID,
+                    skylightItemID: $0.skylightItemID,
+                    lastSyncedAt: $0.lastAppleModifiedAt
+                )
+            },
+            recipeLinks: state.notes.filter { $0.kind == .recipes }.map {
+                SharedRecipeLink(
+                    frameID: $0.frameID,
+                    appleNoteID: $0.appleNoteID,
+                    skylightID: $0.skylightID,
+                    lastSyncedAt: $0.lastSyncedAt
+                )
+            },
+            modifiedByInstallationID: cloudInstallationID,
+            modifiedAt: .now
+        )
+        _ = try await store.publish(shared)
+    }
+
+    private func importSharedSyncStateInto(_ state: inout SyncState) async throws {
+        let store = CloudSyncStateStore()
+        let local = SharedSyncState(
+            photoLinks: state.photos.map {
+                SharedPhotoLink(
+                    mappingID: $0.mappingID.uuidString,
+                    frameID: $0.frameID,
+                    appleAssetID: $0.appleAssetID,
+                    renderedHash: $0.renderedHash,
+                    skylightMessageID: $0.skylightMessageID,
+                    lastSyncedAt: $0.lastSyncedAt
+                )
+            },
+            reminderLinks: state.reminders.map {
+                SharedReminderLink(
+                    mappingID: $0.mappingID.uuidString,
+                    frameID: $0.frameID,
+                    skylightListID: $0.skylightListID,
+                    appleReminderID: $0.appleReminderID,
+                    skylightItemID: $0.skylightItemID,
+                    lastSyncedAt: $0.lastAppleModifiedAt
+                )
+            },
+            recipeLinks: state.notes.filter { $0.kind == .recipes }.map {
+                SharedRecipeLink(
+                    frameID: $0.frameID,
+                    appleNoteID: $0.appleNoteID,
+                    skylightID: $0.skylightID,
+                    lastSyncedAt: $0.lastSyncedAt
+                )
+            },
+            modifiedByInstallationID: cloudInstallationID,
+            modifiedAt: .distantPast
+        )
+        let merged = try await store.mergeRemote(into: local)
+        let existingPhotoKeys = Set(state.photos.map { "\($0.mappingID.uuidString):\($0.appleAssetID)" })
+        for link in merged.photoLinks where !existingPhotoKeys.contains(link.id) {
+            guard let mappingID = UUID(uuidString: link.mappingID) else { continue }
+            state.photos.append(PhotoSyncRecord(
+                mappingID: mappingID,
+                frameID: link.frameID,
+                appleAssetID: link.appleAssetID,
+                renderedHash: link.renderedHash,
+                skylightMessageID: link.skylightMessageID,
+                skylightAlbumIDs: [],
+                lastSyncedAt: link.lastSyncedAt
+            ))
+        }
+        let existingReminderKeys = Set(state.reminders.map { "\($0.mappingID.uuidString):\($0.appleReminderID)" })
+        for link in merged.reminderLinks where !existingReminderKeys.contains(link.id) {
+            guard let mappingID = UUID(uuidString: link.mappingID) else { continue }
+            state.reminders.append(ReminderSyncRecord(
+                mappingID: mappingID,
+                frameID: link.frameID,
+                skylightListID: link.skylightListID,
+                appleReminderID: link.appleReminderID,
+                skylightItemID: link.skylightItemID,
+                lastAppleModifiedAt: link.lastSyncedAt,
+                lastSkylightModifiedAt: link.lastSyncedAt,
+                contentFingerprint: ""
+            ))
+        }
+        let existingRecipeKeys = Set(state.notes.filter { $0.kind == .recipes }.map { "recipes:\($0.appleNoteID)" })
+        for link in merged.recipeLinks where !existingRecipeKeys.contains(link.id) {
+            state.notes.append(NoteSyncRecord(
+                kind: .recipes,
+                frameID: link.frameID,
+                appleNoteID: link.appleNoteID,
+                contentHash: "",
+                skylightID: link.skylightID,
+                lastSyncedAt: link.lastSyncedAt
+            ))
+        }
     }
 
     private func recordSharediCloudFailure(_ error: any Error, savedLocally: Bool) {
