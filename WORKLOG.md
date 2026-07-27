@@ -1,3 +1,7 @@
+## 2026-07-27 - Skylight Bridge 1.5.8 release
+
+**Release contents**: Version 1.5.8 (build 18) includes recurring-chore duplicate recovery, stale chore due-date correction, content-hash photo deduplication, title-only reminder adoption, sync heartbeats, and shared CloudKit sync-state coordination.
+
 ## 2026-07-27 - Collapse duplicate recurring chore occurrences
 
 **What changed**: Recurring chore recovery now handles more than one uncompleted EventKit replacement occurrence. It keeps the newest occurrence, rebinds the existing Skylight link to it, removes the extra Apple Reminders copies, and excludes those copies from the planner so they cannot become additional Skylight chores.
