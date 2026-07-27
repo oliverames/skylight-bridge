@@ -2,6 +2,10 @@
 
 **Release contents**: Version 1.5.8 (build 18) includes recurring-chore duplicate recovery, stale chore due-date correction, content-hash photo deduplication, title-only reminder adoption, sync heartbeats, and shared CloudKit sync-state coordination.
 
+**Verification**: All 146 tests pass. Apple accepted notarization submissions `171f767a-a5bf-46fe-ae3b-c5fa017dae52` for the app archive and `ce0cc019-2a43-42d3-90a8-4031ef1e243c` for the DMG. Both artifacts are stapled and pass Gatekeeper, code-signing, and disk-image verification. GitHub's published DMG digest matches the local SHA-256 `7f251f2beaa209bab82fcc4f0ce4a3e0be43002a9f61609c372633ed2df5a2a1`. Tag `v1.5.8` points to `881271c`, and the signed live appcast matches this repository at `gh-pages` commit `26405f8`.
+
+**Published**: https://github.com/oliverames/skylight-bridge/releases/tag/v1.5.8
+
 ## 2026-07-27 - Collapse duplicate recurring chore occurrences
 
 **What changed**: Recurring chore recovery now handles more than one uncompleted EventKit replacement occurrence. It keeps the newest occurrence, rebinds the existing Skylight link to it, removes the extra Apple Reminders copies, and excludes those copies from the planner so they cannot become additional Skylight chores.
