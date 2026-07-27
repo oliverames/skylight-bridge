@@ -1,3 +1,11 @@
+## 2026-07-27 - Collapse duplicate recurring chore occurrences
+
+**What changed**: Recurring chore recovery now handles more than one uncompleted EventKit replacement occurrence. It keeps the newest occurrence, rebinds the existing Skylight link to it, removes the extra Apple Reminders copies, and excludes those copies from the planner so they cannot become additional Skylight chores.
+
+**Why**: The earlier recovery required exactly one replacement. Once duplicate copies already existed, it stopped rebinding and every unlinked copy was interpreted as a separate new chore, allowing the duplication to compound.
+
+**Verification**: Added a coordinator regression test with one stale completed occurrence and three uncompleted replacements. The sync retains the newest occurrence, removes the other two, creates no Skylight chores, and leaves one persisted link.
+
 ## 2026-07-24 - Multi-device coordination: photo dedup, title-only reminder adoption, heartbeat detection, CloudKit sync state
 
 **What changed**: Five improvements to make the bridge safe when the same Skylight account is used on two Macs or when a mapping is disconnected and reconnected:

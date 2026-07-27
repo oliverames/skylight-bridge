@@ -1942,13 +1942,24 @@ actor SyncCoordinator {
                             record.lastSyncedTitle?.trimmed ?? linked.title.trimmed
                         ) == .orderedSame
                 }
-                guard candidates.count == 1, let replacement = candidates.first else { continue }
+                guard let replacement = candidates.sorted(by: Self.preferredChoreOccurrence).first else {
+                    continue
+                }
+                let duplicateIDs = Set(candidates.lazy.map(\.id).filter { $0 != replacement.id })
                 staleCompletedIDs.insert(record.appleReminderID)
                 activeRecords[index].appleReminderID = replacement.id
                 activeRecords[index].lastAppleModifiedAt = replacement.modifiedAt
                 claimedAppleIDs.insert(replacement.id)
                 Self.upsertChoreRecord(activeRecords[index], state: &state)
                 reboundCount += 1
+                summary.planned += duplicateIDs.count
+                if !dryRun {
+                    for duplicateID in duplicateIDs.sorted() {
+                        try await choreReminderSource.syncRemoveChoreReminder(withID: duplicateID)
+                        summary.applied += 1
+                    }
+                }
+                appleSnapshots.removeAll { duplicateIDs.contains($0.id) }
             }
             if !staleCompletedIDs.isEmpty {
                 appleSnapshots.removeAll { staleCompletedIDs.contains($0.id) }
@@ -3300,6 +3311,25 @@ actor SyncCoordinator {
     ) -> String {
         let series = resource.attributes.series?.trimmed ?? ""
         return series.isEmpty ? resource.id : series
+    }
+
+    private static func preferredChoreOccurrence(
+        _ lhs: ChoreReminderSnapshot,
+        _ rhs: ChoreReminderSnapshot
+    ) -> Bool {
+        switch (lhs.dueDate, rhs.dueDate) {
+        case let (lhsDate?, rhsDate?) where lhsDate != rhsDate:
+            return lhsDate > rhsDate
+        case (_?, nil):
+            return true
+        case (nil, _?):
+            return false
+        default:
+            if lhs.modifiedAt != rhs.modifiedAt {
+                return lhs.modifiedAt > rhs.modifiedAt
+            }
+            return lhs.id < rhs.id
+        }
     }
 
     private static func choreRecurrence(

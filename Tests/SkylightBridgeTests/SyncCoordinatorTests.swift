@@ -1150,6 +1150,81 @@ struct SyncCoordinatorTests {
         #expect(summary.chores.applied <= 1)
     }
 
+    @Test("A stale completed recurring reminder collapses multiple replacement occurrences")
+    func collapsesDuplicateRecurringReminderOccurrences() async throws {
+        let today = Date(timeIntervalSince1970: 1_784_131_200)
+        let nextDay = Date(timeIntervalSince1970: 1_784_217_600)
+        let api = CoordinatorAPIStub()
+        await api.configureChores([
+            SkylightResource(
+                id: "chore-1",
+                attributes: SkylightChoreAttributes(
+                    summary: "Water plants", status: .pending,
+                    start: "2026-07-16", recurring: true,
+                    recurrenceSet: ["FREQ=DAILY;INTERVAL=1"],
+                    upForGrabs: false, routine: true
+                ),
+                relationships: [
+                    "category": SkylightRelationship(
+                        data: .many([SkylightIdentifier(id: "person-1", type: "category")])
+                    )
+                ]
+            )
+        ])
+        let mappingID = UUID()
+        func reminder(_ id: String, completed: Bool, modifiedAt: Date) -> ChoreReminderSnapshot {
+            ChoreReminderSnapshot(
+                id: id, listID: "list-1", memberKey: "person-1",
+                title: "Water plants", notes: nil, isCompleted: completed,
+                dueDate: completed ? today : nextDay,
+                recurrence: ParsedRecurrenceRule(frequency: .daily),
+                recurrenceUnsupported: false, modifiedAt: modifiedAt
+            )
+        }
+        let choreSource = CoordinatorChoreReminderSource(reminders: [
+            reminder("apple-old-completed", completed: true, modifiedAt: today),
+            reminder("apple-duplicate-a", completed: false, modifiedAt: today),
+            reminder("apple-current", completed: false, modifiedAt: nextDay),
+            reminder("apple-duplicate-b", completed: false, modifiedAt: today)
+        ])
+        var initialState = SyncState()
+        initialState.chores = [ChoreSyncRecord(
+            mappingID: mappingID, frameID: "frame-1",
+            appleReminderID: "apple-old-completed", skylightSeriesID: "chore-1",
+            memberKey: "person-1", lastAppleModifiedAt: today,
+            lastSkylightModifiedAt: today, contentFingerprint: "",
+            lastSyncedTitle: "Water plants",
+            lastSyncedRecurrence: "FREQ=DAILY;INTERVAL=1",
+            baselineDueDate: today, baselineCompletedInstanceDate: "2026-07-15"
+        )]
+        let state = CoordinatorStateStore(state: initialState)
+        let coordinator = makeCoordinator(
+            api: api, reminders: [], state: state,
+            choreReminderSource: choreSource, now: { nextDay }
+        )
+        var mapping = ChoreMapping()
+        mapping.id = mappingID
+        mapping.frameID = "frame-1"
+        mapping.memberLinks = [ChoreMemberLink(
+            memberKey: "person-1", memberLabel: "Oliver",
+            appleListID: "list-1", appleListTitle: "Oliver Chores"
+        )]
+        var configuration = AppConfiguration()
+        configuration.account.frameID = "frame-1"
+        configuration.dryRun = false
+        configuration.choreMappings = [mapping]
+
+        let summary = try await coordinator.sync(configuration: configuration)
+        let persisted = try await state.loadSyncState()
+
+        #expect(persisted.chores.count == 1)
+        #expect(persisted.chores.first?.appleReminderID == "apple-current")
+        #expect(choreSource.removedReminderIDs == ["apple-duplicate-a", "apple-duplicate-b"])
+        #expect(choreSource.createdReminders.isEmpty)
+        #expect(await api.choreRequests.isEmpty)
+        #expect(summary.chores.applied == 3)
+    }
+
     @Test("Completing a one-off chore omits instance fields Skylight rejects (HTTP 422)")
     func completesNonRecurringChoreWithoutInstanceFields() async throws {
         let today = Date(timeIntervalSince1970: 1_784_131_200)
