@@ -3,6 +3,25 @@ import Testing
 @testable import SkylightBridge
 
 struct SecurityHardeningTests {
+    @Test("Permission metadata covers Photos, Reminders, and Notes")
+    func permissionMetadataCoversAppleSources() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let info = try propertyList(at: root.appending(path: "Resources/Info.plist"))
+        let entitlements = try propertyList(
+            at: root.appending(path: "Resources/SkylightBridge.entitlements")
+        )
+
+        #expect((info["NSPhotoLibraryUsageDescription"] as? String)?.isEmpty == false)
+        #expect((info["NSRemindersFullAccessUsageDescription"] as? String)?.isEmpty == false)
+        #expect((info["NSAppleEventsUsageDescription"] as? String)?.isEmpty == false)
+        #expect(entitlements["com.apple.security.personal-information.photos-library"] as? Bool == true)
+        #expect(entitlements["com.apple.security.personal-information.calendars"] as? Bool == true)
+        #expect(entitlements["com.apple.security.automation.apple-events"] as? Bool == true)
+    }
+
     @Test("Changing the account email invalidates the previous OAuth session")
     func accountSwitchInvalidatesTokens() {
         #expect(SkylightSessionManager.shouldInvalidateTokens(
@@ -63,10 +82,11 @@ struct SecurityHardeningTests {
         // because only the `errors` envelope is read.
         let leaky = SkylightAPIError.httpStatus(
             code: 401,
+            endpoint: "/oauth/token",
             body: #"{"access_token":"secret","message":"secret"}"#
         )
         #expect(!leaky.localizedDescription.contains("secret"))
-        #expect(leaky.localizedDescription == "Skylight returned HTTP 401.")
+        #expect(leaky.localizedDescription == "Skylight request to /oauth/token returned HTTP 401.")
     }
 
     @Test("Malformed meal plans fail closed instead of looking empty")

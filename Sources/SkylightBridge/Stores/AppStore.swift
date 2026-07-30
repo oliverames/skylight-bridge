@@ -162,6 +162,8 @@ final class AppStore {
     }
 
     func requestPhotosAccess() async {
+        let previousPolicy = prepareForAppleAccessPrompt()
+        defer { restoreActivationPolicy(afterAppleAccessPrompt: previousPolicy) }
         defer { photosAuthorizationStatus = photoLibrary.authorizationStatus() }
         do {
             guard await photoLibrary.requestAccess() else {
@@ -175,6 +177,8 @@ final class AppStore {
     }
 
     func requestRemindersAccess() async {
+        let previousPolicy = prepareForAppleAccessPrompt()
+        defer { restoreActivationPolicy(afterAppleAccessPrompt: previousPolicy) }
         defer { remindersAuthorizationStatus = remindersStore.authorizationStatus() }
         do {
             guard try await remindersStore.requestAccess() else {
@@ -338,7 +342,11 @@ final class AppStore {
     private static let notesAccessEverGrantedKey = "notesAccessEverGranted"
 
     func requestNotesAccess() async {
+        let previousPolicy = prepareForAppleAccessPrompt()
+        defer { restoreActivationPolicy(afterAppleAccessPrompt: previousPolicy) }
         do {
+            try await launchNotesIfNeeded()
+            try await notesStore.requestAccess()
             notesFolders = try await notesStore.folders()
             notesAccessGranted = true
             UserDefaults.standard.set(true, forKey: Self.notesAccessEverGrantedKey)
@@ -354,6 +362,49 @@ final class AppStore {
             notesAccessGranted = false
             recordSourceError(error, area: .recipes)
         }
+    }
+
+    /// The Apple Events permission API requires a live target process. Launch
+    /// Notes without activating it so macOS can present Skylight Bridge's
+    /// consent sheet while keeping the user's focus on the button they clicked.
+    private func launchNotesIfNeeded() async throws {
+        let bundleIdentifier = "com.apple.Notes"
+        guard NSRunningApplication.runningApplications(
+            withBundleIdentifier: bundleIdentifier
+        ).isEmpty else { return }
+        guard let applicationURL = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: bundleIdentifier
+        ) else {
+            throw AppleNotesStoreError.authorizationUnavailable
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = false
+        configuration.addsToRecentItems = false
+        _ = try await NSWorkspace.shared.openApplication(
+            at: applicationURL,
+            configuration: configuration
+        )
+    }
+
+    /// Privacy consent sheets must be presented by a foreground application.
+    /// When the Dock icon is hidden Skylight Bridge is an accessory app, and
+    /// macOS 26 can return "not authorized" without registering or displaying
+    /// a consent request. Temporarily use the regular activation policy while
+    /// each system prompt is in flight, then restore the user's preference.
+    private func prepareForAppleAccessPrompt() -> NSApplication.ActivationPolicy {
+        let previousPolicy = NSApp.activationPolicy()
+        if previousPolicy != .regular {
+            NSApp.setActivationPolicy(.regular)
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        return previousPolicy
+    }
+
+    private func restoreActivationPolicy(
+        afterAppleAccessPrompt previousPolicy: NSApplication.ActivationPolicy
+    ) {
+        guard NSApp.activationPolicy() != previousPolicy else { return }
+        NSApp.setActivationPolicy(previousPolicy)
     }
 
     func loadNotes(in folderID: String, area: IntegrationArea) async {

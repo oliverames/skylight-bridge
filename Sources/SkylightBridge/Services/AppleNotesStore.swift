@@ -2,6 +2,8 @@ import ApplicationServices
 @preconcurrency import Foundation
 
 enum AppleNotesStoreError: Error, LocalizedError, Sendable {
+    case accessDenied
+    case authorizationUnavailable
     case scriptCreationFailed
     case automationFailed(String)
     case malformedResponse(String)
@@ -10,6 +12,10 @@ enum AppleNotesStoreError: Error, LocalizedError, Sendable {
 
     var errorDescription: String? {
         switch self {
+        case .accessDenied:
+            "Apple Notes access is not authorized."
+        case .authorizationUnavailable:
+            "Apple Notes could not present its access request."
         case .scriptCreationFailed:
             "The Apple Notes automation script could not be created."
         case let .automationFailed(message):
@@ -37,12 +43,32 @@ actor AppleNotesStore {
     /// prompting. Returns `.unknown` when Notes is not running, because the
     /// permission check needs a live target process to resolve against.
     nonisolated static func authorizationStatus() -> AppleNotesAuthorizationStatus {
+        authorizationStatus(askUserIfNeeded: false)
+    }
+
+    /// Explicitly asks macOS for Apple Events consent. Sending an AppleScript
+    /// and relying on the destination app to prompt indirectly is denied by
+    /// Tahoe's TCC prompt policy, so the user-facing button calls this first.
+    func requestAccess() throws {
+        switch Self.authorizationStatus(askUserIfNeeded: true) {
+        case .granted:
+            return
+        case .denied:
+            throw AppleNotesStoreError.accessDenied
+        case .notDetermined, .unknown:
+            throw AppleNotesStoreError.authorizationUnavailable
+        }
+    }
+
+    private nonisolated static func authorizationStatus(
+        askUserIfNeeded: Bool
+    ) -> AppleNotesAuthorizationStatus {
         let target = NSAppleEventDescriptor(bundleIdentifier: "com.apple.Notes")
         let status = AEDeterminePermissionToAutomateTarget(
             target.aeDesc,
             typeWildCard,
             typeWildCard,
-            false
+            askUserIfNeeded
         )
         switch status {
         case noErr:
