@@ -1,3 +1,17 @@
+## 2026-07-30 - Skylight Bridge 1.5.9 permission request release
+
+**What changed**: Version 1.5.9 adds the required Reminders privacy entitlement, asks for Notes automation access directly against a running Notes app, and brings Skylight Bridge to the foreground before macOS presents Photos, Reminders, or Notes consent.
+
+**Root cause**: The 1.5.8 Reminders request was missing its EventKit entitlement, and Notes relied on an indirect AppleScript prompt that Tahoe denied. Live testing also found that `home-server` boots with SIP disabled and `amfi_get_out_of_my_way=1`; Tahoe rejects every Developer ID privacy prompt while AMFI is disabled, including correctly signed apps.
+
+**Verification**: All 147 tests pass from clean commit `d5cecf4`. Apple accepted notarization submissions `c5d88e50-03e6-48c5-9a35-493ae669387e` for the app archive and `ff5f7f12-b5a9-4bc6-9327-be44e460e4ec` for the DMG. The published checksum matches SHA-256 `9aced5f030bd615fa951902ec165b267fc6b8f8122fc14a0b28c82c45deac2e3`, and the signed live appcast matches `gh-pages` commit `0656f16`.
+
+**Published**: https://github.com/oliverames/skylight-bridge/releases/tag/v1.5.9
+
+**Home Server**: The exact published release is installed and passes strict code-signing and Gatekeeper checks. The remaining live prompt test requires removing the AMFI-disabling boot argument and restarting the Mac; that system-wide change is waiting for Oliver's approval.
+
+---
+
 ## 2026-07-27 - Skylight Bridge 1.5.8 release
 
 **Release contents**: Version 1.5.8 (build 18) includes recurring-chore duplicate recovery, stale chore due-date correction, content-hash photo deduplication, title-only reminder adoption, sync heartbeats, and shared CloudKit sync-state coordination.

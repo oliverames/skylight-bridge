@@ -6,16 +6,16 @@
     <description>Signed updates for Skylight Bridge.</description>
     <language>en</language>
     <item>
-      <title>Version 1.5.8</title>
-      <sparkle:version>18</sparkle:version>
-      <sparkle:shortVersionString>1.5.8</sparkle:shortVersionString>
-      <description><![CDATA[<p>Prevents duplicate recurring chores and improves reminder, photo, and cross-device sync reliability.</p>]]></description>
-      <pubDate>Mon, 27 Jul 2026 19:46:42 +0000</pubDate>
-      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.5.8/Skylight.Bridge-1.5.8.dmg" sparkle:edSignature="rnRQSy7Q/QihbOqnwwaCHZj8oRh5PqtcROVvh2UeDcwhSWV7LESZwlS6CjYfl9PVzSIdFUdOg6YSWKmmpiEDCA==" length="6302947" type="application/octet-stream" />
+      <title>Version 1.5.9</title>
+      <sparkle:version>19</sparkle:version>
+      <sparkle:shortVersionString>1.5.9</sparkle:shortVersionString>
+      <description><![CDATA[<p>This release fixes the Photos, Reminders, and Notes permission-request flow on macOS Tahoe.</p>]]></description>
+      <pubDate>Thu, 30 Jul 2026 21:11:30 +0000</pubDate>
+      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.5.9/Skylight.Bridge-1.5.9.dmg" sparkle:edSignature="0wpw5t8Nr5/GSsKPEaEsShpNnML2dwY4uHojgMzVltr95ZtGderYOBR1hgeRZYfmmVeI+Fy2JAf0AuGIxNbsCw==" length="6310115" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: T75DznJfQoNphVnodjTwqcQkW3wr1WO6ZSN2JZ3TDG/1LBt0S82dOxE54P4ZJ+0pJMkEJ9TWVXBgTTOdtKj9Bw==
-length: 1060
+edSignature: Sl4v3qLm6MU58kb0mjjmiuDT/kSJrPmcjo4H4PSiIW6qA1epwVKzNw/06Iq7fVk7H8DABO+DH68rVLI1jF2yAA==
+length: 1051
 -->
