@@ -82,11 +82,10 @@ struct SecurityHardeningTests {
         // because only the `errors` envelope is read.
         let leaky = SkylightAPIError.httpStatus(
             code: 401,
-            endpoint: "/oauth/token",
             body: #"{"access_token":"secret","message":"secret"}"#
         )
         #expect(!leaky.localizedDescription.contains("secret"))
-        #expect(leaky.localizedDescription == "Skylight request to /oauth/token returned HTTP 401.")
+        #expect(leaky.localizedDescription == "Skylight returned HTTP 401.")
     }
 
     @Test("Malformed meal plans fail closed instead of looking empty")
@@ -154,6 +153,13 @@ struct SecurityHardeningTests {
 
         #expect(abs(decoded.date.timeIntervalSince(original.date)) < 0.000_001)
     }
+}
+
+private func propertyList(at url: URL) throws -> [String: Any] {
+    let data = try Data(contentsOf: url)
+    return try #require(
+        PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+    )
 }
 
 private struct PreciseDatePayload: Codable {
