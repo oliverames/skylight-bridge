@@ -94,7 +94,7 @@ struct SkylightAPIClient: Sendable {
         // Presigned object-store URLs carry their own authorization. Sending the
         // Skylight bearer token here can invalidate the signature.
         let (responseData, response) = try await uploadTransport.data(for: request)
-        try validate(response: response, data: responseData)
+        try validate(request: request, response: response, data: responseData)
     }
 
     static func validatedUploadURL(_ value: String) throws -> URL {
@@ -292,7 +292,7 @@ extension SkylightAPIClient {
     private func decode<Response>(_ request: URLRequest) async throws -> Response
     where Response: Decodable & Sendable {
         let (data, response) = try await transport.data(for: request)
-        try validate(response: response, data: data)
+        try validate(request: request, response: response, data: data)
         guard !data.isEmpty else {
             throw SkylightAPIError.missingResponseBody
         }
@@ -308,13 +308,14 @@ extension SkylightAPIClient {
 
     private func executeWithoutDecoding(_ request: URLRequest) async throws {
         let (data, response) = try await transport.data(for: request)
-        try validate(response: response, data: data)
+        try validate(request: request, response: response, data: data)
     }
 
-    private func validate(response: HTTPURLResponse, data: Data) throws {
+    private func validate(request: URLRequest, response: HTTPURLResponse, data: Data) throws {
         guard (200..<300).contains(response.statusCode) else {
             throw SkylightAPIError.httpStatus(
                 code: response.statusCode,
+                endpoint: request.url?.path ?? "unknown endpoint",
                 body: String(data: data, encoding: .utf8) ?? ""
             )
         }

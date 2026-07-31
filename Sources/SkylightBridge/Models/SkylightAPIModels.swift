@@ -89,7 +89,7 @@ struct SkylightOAuthToken: Codable, Equatable, Sendable {
 enum SkylightAPIError: Error, Equatable, Sendable {
     case invalidResponse
     case invalidUploadDestination
-    case httpStatus(code: Int, body: String)
+    case httpStatus(code: Int, endpoint: String, body: String)
     case missingResponseBody
     case decodingFailed(endpoint: String, detail: String)
 }
@@ -109,11 +109,11 @@ extension SkylightAPIError: LocalizedError {
             "Skylight returned an invalid response."
         case .invalidUploadDestination:
             "Skylight returned an untrusted photo upload destination."
-        case let .httpStatus(code, body):
+        case let .httpStatus(code, endpoint, body):
             // Surface the structured validation detail (e.g. which field a 422
             // rejected) so failures are diagnosable, while never echoing a raw
             // body — auth endpoints reflect request secrets back in the body.
-            SkylightAPIError.describeHTTPStatus(code: code, body: body)
+            SkylightAPIError.describeHTTPStatus(code: code, endpoint: endpoint, body: body)
         case .missingResponseBody:
             "Skylight returned an empty response where data was expected."
         case let .decodingFailed(endpoint, detail):
@@ -124,12 +124,18 @@ extension SkylightAPIError: LocalizedError {
     /// Formats an HTTP failure, appending Skylight's JSON:API validation detail
     /// when present. Only the structured `errors` payload is surfaced — a raw
     /// body is never echoed, since auth endpoints reflect request secrets there.
-    static func describeHTTPStatus(code: Int, body: String, limit: Int = 300) -> String {
+    static func describeHTTPStatus(
+        code: Int,
+        endpoint: String,
+        body: String,
+        limit: Int = 300
+    ) -> String {
+        let prefix = "Skylight request to \(endpoint) returned HTTP \(code)"
         guard let detail = validationDetail(from: body) else {
-            return "Skylight returned HTTP \(code)."
+            return "\(prefix)."
         }
         let trimmed = detail.count > limit ? "\(detail.prefix(limit))…" : detail
-        return "Skylight returned HTTP \(code): \(trimmed)"
+        return "\(prefix): \(trimmed)"
     }
 
     /// Extracts a "field: message" summary from a JSON:API error body. Returns

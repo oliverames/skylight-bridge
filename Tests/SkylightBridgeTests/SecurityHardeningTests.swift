@@ -60,7 +60,11 @@ struct SecurityHardeningTests {
 
     @Test("Network error descriptions never expose response bodies")
     func redactsNetworkErrorBodies() {
-        let api = SkylightAPIError.httpStatus(code: 401, body: "refresh_token=secret")
+        let api = SkylightAPIError.httpStatus(
+            code: 401,
+            endpoint: "/oauth/token",
+            body: "refresh_token=secret"
+        )
         let oauth = SkylightOAuthError.invalidFormResponse(
             statusCode: 400,
             body: "authorization_code=secret"
@@ -74,6 +78,7 @@ struct SecurityHardeningTests {
     func surfacesValidationDetailSafely() {
         let validation = SkylightAPIError.httpStatus(
             code: 422,
+            endpoint: "/chores/123",
             body: #"{"errors":{"instance_date":["must be blank"]}}"#
         )
         #expect(validation.localizedDescription.contains("instance_date: must be blank"))
@@ -82,10 +87,11 @@ struct SecurityHardeningTests {
         // because only the `errors` envelope is read.
         let leaky = SkylightAPIError.httpStatus(
             code: 401,
+            endpoint: "/oauth/token",
             body: #"{"access_token":"secret","message":"secret"}"#
         )
         #expect(!leaky.localizedDescription.contains("secret"))
-        #expect(leaky.localizedDescription == "Skylight returned HTTP 401.")
+        #expect(leaky.localizedDescription == "Skylight request to /oauth/token returned HTTP 401.")
     }
 
     @Test("Malformed meal plans fail closed instead of looking empty")

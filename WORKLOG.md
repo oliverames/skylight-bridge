@@ -12,6 +12,20 @@
 
 ---
 
+## 2026-07-30 - New-Mac permissions and CloudKit schema investigation
+
+**What changed**: Added a foreground activation path around Photos, Reminders, and Notes consent requests, added the Reminders privacy entitlement, and made Skylight HTTP failures identify the endpoint while continuing to redact unstructured response bodies. Built and notarized a 1.5.9 test release and installed it on `home-server`. In CloudKit Development, created the complete `SharedSyncState` record type and created the still-incomplete `ClientHeartbeat` record type.
+
+**Decisions made**: The permission changes remain uncommitted until they are tested after a clean TCC reset and ordinary post-reboot launch. The CloudKit schema will not be deployed to Production until `ClientHeartbeat` has the code-required `payload` Bytes and `installationID` String fields.
+
+**Left off at**: Oliver reset all privacy permissions and restarted `home-server`. Automatic login and Skylight Bridge launch succeeded, but Screen Sharing remained blocked even after `kickstart` reactivated Remote Management and granted `oliverames` remote access and control. macOS 26 reported that Screen Recording and Screen Control must be enabled through local System Settings or MDM. Resume Screen Sharing recovery from `/Users/oliverames/.codex/handoffs/2026-07-30-skylight-bridge-screen-sharing-blocked.json`, then continue the app work from `/Users/oliverames/.codex/handoffs/2026-07-30-skylight-bridge-permissions-cloudkit.json`.
+
+**Open questions**: Screen Sharing first needs local System Settings or MDM approval after the TCC reset. Once GUI access returns, do Photos, Reminders, and Notes prompt correctly? Is the foreground activation workaround necessary once that clean test is complete? The earlier HTTP 422 cannot currently be reproduced because its chore mapping was removed.
+
+**Verification**: All 146 tests in 24 suites passed. Apple accepted notarization submissions `f6e132b6-e18c-4ce7-9dcf-150e5f4ceeaa` for the app archive and `f9a842c8-d5a1-4b12-8146-c2d89aacef58` for the DMG. The installed 1.5.9 app passes strict signature verification and Gatekeeper assessment as Notarized Developer ID.
+
+---
+
 ## 2026-07-27 - Skylight Bridge 1.5.8 release
 
 **Release contents**: Version 1.5.8 (build 18) includes recurring-chore duplicate recovery, stale chore due-date correction, content-hash photo deduplication, title-only reminder adoption, sync heartbeats, and shared CloudKit sync-state coordination.
