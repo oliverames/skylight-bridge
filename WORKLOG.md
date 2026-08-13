@@ -1,3 +1,19 @@
+## 2026-08-13 - Skylight Bridge 1.5.11 blocked-consent wording + verified TCC root cause
+
+**What changed**: Version 1.5.11 rewords the blocked-prompt diagnostic added in 1.5.10. The old copy claimed macOS "cannot show permission prompts" and prescribed removing the boot argument + restarting as the only fix; the new copy states that macOS suppresses consent dialogs for non-Apple apps while AMFI is disabled and that access can be restored by removing the boot argument OR granted another way.
+
+**Root cause (now proven, correcting the 1.5.9/1.5.10 record)**: The earlier "AMFI disables every Developer ID prompt" claim was overstated. Live tccd streaming on home-server (Tahoe 26.5.2, up 13 days on `amfi_get_out_of_my_way=1` + SIP off) showed the exact denial: `CS_PLATFORM_BINARY set but not AppleSigned; prompt policy is Deny`. With AMFI out of the way every third-party process is platform-flagged, and Tahoe's tccd refuses consent dialogs for a platform-flagged non-Apple binary. It is NOT a blanket block: BlueBubbles got a FocusStatus consent prompt (auth_reason=2) under the same boot args, which is why the wording changed. The on-disk bundle is flawless (spctl "Notarized Developer ID: accepted", codesign --deep --strict valid), so nothing is wrong with the app or its signature. The boot arg is load-bearing: BlueBubbles Private API on Tahoe requires SIP off + `amfi_get_out_of_my_way=1` (BlueBubbles docs), and BlueBubbles was reinstated 2026-08-12.
+
+**Fix that worked on home-server (no reboot, keeps BlueBubbles)**: Because SIP is off the user TCC.db is writable. Oliver inserted Allow rows into `~/Library/Application Support/com.apple.TCC/TCC.db` with a csreq blob (`codesign -d -r-` -> `csreq -r- -b` -> hex) for kTCCServiceReminders and kTCCServicePhotos, then `killall tccd`. Both went to Authorized immediately (confirmed in the app's Apple access panel). Notes (kTCCServiceAppleEvents targeting com.apple.Notes) still needs its row: same client csreq plus indirect_object_identifier='com.apple.Notes' and indirect_object_code_identity = Notes' own csreq. Claude is walled off from executing TCC-database edits (auto-mode classifier blocks the write and even the csreq generation), so Oliver runs those commands.
+
+**Verification**: All 149 tests pass (SecurityHardeningTests covers boot-arg detection + explanation gating). `./script/build_and_run.sh --verify` launched the signed bundle cleanly. Apple notarized and stapled the app and DMG; Gatekeeper accepts both. Published checksum SHA-256 `305cb3fb95d731c13c7d1f3451a49429535ea0c24f592651dbce318423c07626` matches the local digest; the signed live appcast matches the repo copy (gh-pages `098debd`).
+
+**Published**: https://github.com/oliverames/skylight-bridge/releases/tag/v1.5.11
+
+**Open questions**: None. Notes TCC row is a manual one-liner for Oliver; everything else is done.
+
+---
+
 ## 2026-08-13 - Skylight Bridge 1.5.10 blocked-consent diagnosis release
 
 **What changed**: Version 1.5.10 detects AMFI-disabling boot arguments (`kern.bootargs` via the new `SystemSecurityDiagnostics`) and, when a Photos, Reminders, or Notes permission request ends with no recorded TCC decision, replaces the generic "not authorized" error with the actionable explanation (remove the boot argument, restart, request again). The same warning appears in Diagnostics.
