@@ -159,6 +159,36 @@ struct SecurityHardeningTests {
 
         #expect(abs(decoded.date.timeIntervalSince(original.date)) < 0.000_001)
     }
+
+    @Test("AMFI-disabling boot arguments are detected")
+    func detectsAMFIDisablingBootArguments() {
+        let homeServerArguments =
+            "-arm64e_preview_abi amfi_get_out_of_my_way=1 ipc_control_port_options=0"
+        #expect(
+            SystemSecurityDiagnostics.amfiDisablingBootArguments(in: homeServerArguments)
+                == ["amfi_get_out_of_my_way=1"]
+        )
+        #expect(
+            SystemSecurityDiagnostics.amfiDisablingBootArguments(in: "amfi=0xff cs_enforcement_disable=1")
+                == ["amfi=0xff", "cs_enforcement_disable=1"]
+        )
+        #expect(SystemSecurityDiagnostics.amfiDisablingBootArguments(in: "").isEmpty)
+        #expect(SystemSecurityDiagnostics.amfiDisablingBootArguments(in: "-v keepsyms=1").isEmpty)
+        // A name that merely contains "amfi" must not match.
+        #expect(SystemSecurityDiagnostics.amfiDisablingBootArguments(in: "notamfi=1 amfitest=1").isEmpty)
+    }
+
+    @Test("Blocked-consent explanation appears only for AMFI-disabling boot arguments")
+    func blockedConsentExplanationGating() throws {
+        #expect(SystemSecurityDiagnostics.blockedConsentPromptExplanation(bootArguments: "-v") == nil)
+        let explanation = try #require(
+            SystemSecurityDiagnostics.blockedConsentPromptExplanation(
+                bootArguments: "amfi_get_out_of_my_way=1"
+            )
+        )
+        #expect(explanation.contains("amfi_get_out_of_my_way=1"))
+        #expect(explanation.contains("restart"))
+    }
 }
 
 private func propertyList(at url: URL) throws -> [String: Any] {

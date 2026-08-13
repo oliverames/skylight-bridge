@@ -173,6 +173,9 @@ final class AppStore {
             statusMessage = "Loaded \(photoCollections.count) Photos collections."
         } catch {
             recordSourceError(error, area: .photos)
+            if photoLibrary.authorizationStatus() == .notDetermined {
+                reportBlockedConsentPromptIfNeeded(area: .photos)
+            }
         }
     }
 
@@ -188,6 +191,9 @@ final class AppStore {
             statusMessage = "Loaded \(reminderLists.count) Reminders lists."
         } catch {
             recordSourceError(error, area: .reminders)
+            if remindersStore.authorizationStatus() == .notDetermined {
+                reportBlockedConsentPromptIfNeeded(area: .reminders)
+            }
         }
     }
 
@@ -361,6 +367,12 @@ final class AppStore {
         } catch {
             notesAccessGranted = false
             recordSourceError(error, area: .recipes)
+            switch AppleNotesStore.authorizationStatus() {
+            case .notDetermined, .unknown:
+                reportBlockedConsentPromptIfNeeded(area: .recipes)
+            case .granted, .denied:
+                break
+            }
         }
     }
 
@@ -898,6 +910,18 @@ final class AppStore {
     private func applyLaunchAtLoginPreference() throws {
         guard LaunchAtLoginService.isEnabled != configuration.launchAtLogin else { return }
         try LaunchAtLoginService.setEnabled(configuration.launchAtLogin)
+    }
+
+    /// A permission request that ends with no recorded decision usually means
+    /// macOS refused to present the consent prompt at all. When the boot
+    /// configuration explains that refusal, replace the generic error with
+    /// the actionable diagnosis.
+    private func reportBlockedConsentPromptIfNeeded(area: IntegrationArea) {
+        guard let explanation = SystemSecurityDiagnostics.blockedConsentPromptExplanation() else {
+            return
+        }
+        statusMessage = explanation
+        appendActivity(.init(level: .warning, area: area, message: explanation))
     }
 
     private func recordSourceError(_ error: any Error, area: IntegrationArea) {

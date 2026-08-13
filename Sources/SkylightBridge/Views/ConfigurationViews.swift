@@ -211,6 +211,14 @@ struct DiagnosticsView: View {
                 LabeledContent("Version", value: AppVersion.description)
                 LabeledContent("Minimum system", value: "macOS 26")
                 LabeledContent("Status", value: store.statusMessage)
+                if let warning = SystemSecurityDiagnostics.blockedConsentPromptExplanation() {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                        Text(warning)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
 
             Section("Advanced account details") {
