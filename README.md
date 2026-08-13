@@ -48,7 +48,7 @@ This is a practical Mac utility, not a second household database. Every mapping 
 3. Open Skylight Bridge from Applications. The app is Developer ID-signed, notarized, and stapled for Gatekeeper.
 4. The app checks for signed updates, and **Skylight Bridge > Check for Updates…** is always available when you want to check manually.
 
-Version 1.5.12 adds a guided fix for the blocked-prompt condition: when a Mac disables Apple Mobile File Integrity in its boot arguments, macOS suppresses privacy consent dialogs for non-Apple apps, and Diagnostics now explains the condition, links to Privacy settings, and can copy the exact Terminal commands that grant access. Skylight Bridge never edits the privacy database itself. If you want to verify the download, compare the output below with the checksum file beside the DMG on the release page.
+Version 1.5.12 adds a guided fix for the blocked-prompt condition: when a Mac disables Apple Mobile File Integrity in its boot arguments, macOS suppresses privacy consent dialogs for non-Apple apps, and Diagnostics now explains the condition, links to Privacy settings, and can copy the exact Terminal commands that grant access. Skylight Bridge never edits the privacy database itself. This version also launches Apple Notes before a scheduled sync so recipe and meal syncing no longer fails when Notes is closed, and it stops repeating the iCloud sharing warning when its CloudKit schema is not yet deployed. If you want to verify the download, compare the output below with the checksum file beside the DMG on the release page.
 
 ```bash
 shasum -a 256 ~/Downloads/Skylight.Bridge-1.5.12.dmg

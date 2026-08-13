@@ -608,6 +608,13 @@ final class AppStore {
         do {
            try persistence.saveConfiguration(configuration)
            let client = try await sessionManager.client(configuration: configuration.account)
+            // Notes automation reaches Apple Notes over Apple Events, which need
+            // a live target process. A scheduled sync usually runs while Notes
+            // is closed, so launch it first (without stealing focus); otherwise
+            // the recipe and meal domains fail with "Connection is invalid".
+            if configuration.recipeSelection.enabled || configuration.mealSelection.enabled {
+                try? await launchNotesIfNeeded()
+            }
             await importSharedSyncState()
             let coordinator = SyncCoordinator.live(apiClient: client)
             let summary = try await coordinator.sync(configuration: configuration)

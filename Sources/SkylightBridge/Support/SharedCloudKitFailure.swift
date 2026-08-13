@@ -6,8 +6,14 @@ import Foundation
 enum SharedCloudKitFailure {
     static func isProductionSchemaConfigurationError(_ error: any Error) -> Bool {
         let description = error.localizedDescription
-        return description.localizedCaseInsensitiveContains("cannot create new type") &&
+        // Publishing to an undeployed production schema fails with "cannot
+        // create new type … in the production schema".
+        let cannotCreateType = description.localizedCaseInsensitiveContains("cannot create new type") &&
             description.localizedCaseInsensitiveContains("production schema")
+        // Reading the same undeployed type fails with "Did not find record
+        // type: …". Both are the one condition: the schema is not deployed yet.
+        let recordTypeMissing = description.localizedCaseInsensitiveContains("did not find record type")
+        return cannotCreateType || recordTypeMissing
     }
 
     static func activityMessage(for error: any Error, savedLocally: Bool) -> String {

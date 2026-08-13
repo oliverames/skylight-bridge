@@ -20,6 +20,19 @@ struct SharedCloudKitFailureTests {
         )
     }
 
+    @Test("A missing production record type reads as the same schema-deployment condition")
+    func identifiesMissingRecordType() {
+        let error = NSError(
+            domain: "CKErrorDomain",
+            code: 11,
+            userInfo: [
+                NSLocalizedDescriptionKey: "Did not find record type: SharedSyncState"
+            ]
+        )
+
+        #expect(SharedCloudKitFailure.isProductionSchemaConfigurationError(error))
+    }
+
     @Test("Temporary iCloud failures retain their original message")
     func preservesTemporaryErrorMessage() {
         let error = NSError(
