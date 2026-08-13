@@ -49,9 +49,10 @@ enum SystemSecurityDiagnostics {
         )
         guard !offenders.isEmpty else { return nil }
         let list = offenders.joined(separator: ", ")
-        return "macOS cannot show permission prompts on this Mac because a boot "
-            + "argument disables Apple Mobile File Integrity (\(list)). "
-            + "Remove it from the boot arguments (sudo nvram boot-args=…), "
-            + "restart the Mac, then request access again."
+        return "macOS did not show a permission prompt. A boot argument on this "
+            + "Mac disables Apple Mobile File Integrity (\(list)), and macOS "
+            + "suppresses privacy consent dialogs for non-Apple apps while it is "
+            + "disabled. Remove that boot argument and restart the Mac to restore "
+            + "prompts, or grant Skylight Bridge access another way."
     }
 }

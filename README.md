@@ -48,10 +48,10 @@ This is a practical Mac utility, not a second household database. Every mapping 
 3. Open Skylight Bridge from Applications. The app is Developer ID-signed, notarized, and stapled for Gatekeeper.
 4. The app checks for signed updates, and **Skylight Bridge > Check for Updates…** is always available when you want to check manually.
 
-Version 1.5.10 explains blocked permission prompts: when a Mac's boot arguments disable Apple Mobile File Integrity, Tahoe silently refuses consent dialogs, and the app now reports that condition with the fix instead of a generic error. If you want to verify the download, compare the output below with the checksum file beside the DMG on the release page.
+Version 1.5.11 refines the blocked-prompt diagnostic: when a Mac disables Apple Mobile File Integrity in its boot arguments, macOS suppresses privacy consent dialogs for non-Apple apps, and Skylight Bridge now reports that condition and points to the remedy instead of showing a generic error. If you want to verify the download, compare the output below with the checksum file beside the DMG on the release page.
 
 ```bash
-shasum -a 256 ~/Downloads/Skylight.Bridge-1.5.10.dmg
+shasum -a 256 ~/Downloads/Skylight.Bridge-1.5.11.dmg
 ```
 
 <p align="center">
