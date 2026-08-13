@@ -1,3 +1,21 @@
+## 2026-08-13 - Skylight Bridge 1.5.12: guided permission fix + Notes-sync and iCloud-warning fixes
+
+**What changed**: Three things. (1) A guided fix for the AMFI-suppressed-prompt condition: when a boot argument disables Apple Mobile File Integrity, macOS suppresses privacy consent dialogs for non-Apple apps, so Diagnostics now explains the condition, links to Privacy settings, and can copy a self-contained Terminal script (`SystemSecurityDiagnostics.permissionGrantScript()`, csreq blobs + bundle identity resolved at runtime) that grants Photos/Reminders/Notes. The app never writes the TCC database itself. (2) Scheduled syncs failed with "Apple Notes automation failed: Connection is invalid" because `syncNow()` never launched Notes and Apple Events need a live target; it now calls `launchNotesIfNeeded()` (no focus steal) before a sync whose recipe or meal source is enabled. (3) The import path logged "Could not import sync state from iCloud: Did not find record type: SharedSyncState" every run; `SharedCloudKitFailure.isProductionSchemaConfigurationError` now also matches "did not find record type" (the read-side face of the undeployed-production-schema condition the publish path already suppressed), leaving only the single actionable "needs its schema deployed" message.
+
+**Design decision (declined a request)**: Oliver asked for a "Fix Permissions" button that runs the grant commands. Shipping a programmatic TCC.db write inside a signed app is a bypass that only works with SIP disabled and that Apple treats as malware (Developer ID revocation risk), and it defeats consent/audit. Chose the guide-and-copy design via AskUserQuestion instead; the user agreed. The peer session apple-core-88 was told the same, with the cross-session-permission caveat.
+
+**Underlying infra still open**: The `SharedSyncState` (CloudSyncStateStore) record type is not deployed to the CloudKit **production** schema, so multi-device sync-state sharing does not actually run; 1.5.12 only silences the benign repeat warning. Deploying that record type via the CloudKit console/cktool is the real fix and is Oliver's action.
+
+**Verification**: 151 tests pass (new coverage for the grant-script contents, the boot-arg detection, and the "did not find record type" matcher). `./script/build_and_run.sh --verify` launched the signed bundle cleanly. Apple notarized and stapled the app and DMG; Gatekeeper accepts both. Published checksum SHA-256 `46566f5c19ba279b300ce08a0f6a6f0a5100ec7f7e2de5b4b19a67f33b74379b` matches; signed live appcast matches the repo copy (gh-pages `1edc130`). The BlockedPromptFix UI and the Notes-launch-at-sync path are logic-verified but not visually confirmed on this Mac (clean boot-args); best confirmed on home-server after it updates to 1.5.12.
+
+**Earlier today**: 1.5.10 (detect AMFI-suppressed prompts), 1.5.11 (reworded the diagnostic after proving the boot arg is not a blanket block: BlueBubbles got a FocusStatus consent prompt under the same boot args). Oliver granted Photos/Reminders/Notes on home-server via direct TCC.db inserts (SIP off), all three now Authorized.
+
+**Published**: https://github.com/oliverames/skylight-bridge/releases/tag/v1.5.12
+
+**Open questions**: Deploy the SharedSyncState record type to CloudKit production (Oliver). Verify Notes sync succeeds on home-server after it updates to 1.5.12.
+
+---
+
 ## 2026-08-13 - Skylight Bridge 1.5.11 blocked-consent wording + verified TCC root cause
 
 **What changed**: Version 1.5.11 rewords the blocked-prompt diagnostic added in 1.5.10. The old copy claimed macOS "cannot show permission prompts" and prescribed removing the boot argument + restarting as the only fix; the new copy states that macOS suppresses consent dialogs for non-Apple apps while AMFI is disabled and that access can be restored by removing the boot argument OR granted another way.
