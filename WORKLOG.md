@@ -1,3 +1,17 @@
+## 2026-08-13 - Skylight Bridge 1.5.10 blocked-consent diagnosis release
+
+**What changed**: Version 1.5.10 detects AMFI-disabling boot arguments (`kern.bootargs` via the new `SystemSecurityDiagnostics`) and, when a Photos, Reminders, or Notes permission request ends with no recorded TCC decision, replaces the generic "not authorized" error with the actionable explanation (remove the boot argument, restart, request again). The same warning appears in Diagnostics.
+
+**Root cause**: The 1.5.9 code fix was correct but could not help on `home-server`: that Mac still boots Tahoe 26.5.2 with `amfi_get_out_of_my_way=1` (live-verified 2026-08-13 via `sysctl kern.bootargs`), and Tahoe refuses every Developer ID consent prompt while AMFI is disabled. TCC on the server holds no Photos/Reminders/AppleEvents rows for the app, confirming prompts were never registered. The boot argument is load-bearing again: BlueBubbles was reinstated on 2026-08-12 (LaunchAgent `com.bluebubbles.server`, app running), and its Private API mode is the standard reason for SIP-off + AMFI-off. Removing the boot argument therefore trades Skylight Bridge prompts against BlueBubbles Private API, needs `sudo` and a restart, and is left as Oliver's decision.
+
+**Verification**: All 149 tests pass (two new SecurityHardeningTests cover boot-argument detection, including the literal home-server string, and explanation gating). `./script/build_and_run.sh --verify` launched the signed bundle cleanly; the Diagnostics warning row cannot render on this Mac (clean boot-args), so the on-server presentation is built but not visually verified. Apple notarized and stapled the app and DMG; Gatekeeper accepts both. Published checksum SHA-256 `72cd64a7a04213a2faf33c2980f03a456543c70220fd65a9d94131b242f726ec` matches the local digest, and the signed live appcast matches the repo copy (gh-pages `c33a00b`).
+
+**Published**: https://github.com/oliverames/skylight-bridge/releases/tag/v1.5.10
+
+**Open questions**: Whether to remove `amfi_get_out_of_my_way=1` from home-server's boot-args (breaks BlueBubbles Private API, needs sudo + restart) or leave Skylight Bridge permissions ungrantable on that Mac.
+
+---
+
 ## 2026-07-30 - Skylight Bridge 1.5.9 permission request release
 
 **What changed**: Version 1.5.9 adds the required Reminders privacy entitlement, asks for Notes automation access directly against a running Notes app, and brings Skylight Bridge to the foreground before macOS presents Photos, Reminders, or Notes consent.
