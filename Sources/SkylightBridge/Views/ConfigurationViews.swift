@@ -212,12 +212,7 @@ struct DiagnosticsView: View {
                 LabeledContent("Minimum system", value: "macOS 26")
                 LabeledContent("Status", value: store.statusMessage)
                 if let warning = SystemSecurityDiagnostics.blockedConsentPromptExplanation() {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                        Text(warning)
-                            .foregroundStyle(.secondary)
-                    }
+                    BlockedPromptFix(warning: warning)
                 }
             }
 
@@ -261,6 +256,51 @@ struct DiagnosticsView: View {
     private func redacted(_ value: String) -> String {
         guard value.count > 8 else { return value.isEmpty ? "Not selected" : "••••" }
         return "\(value.prefix(4))…\(value.suffix(4))"
+    }
+}
+
+/// Shown when macOS is suppressing privacy prompts because a boot argument
+/// disables Apple Mobile File Integrity. The app never edits the privacy
+/// database itself; it explains the condition and hands the user the exact
+/// Terminal commands to run, plus a shortcut to the System Settings pane.
+private struct BlockedPromptFix: View {
+    let warning: String
+    @State private var didCopy = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                Text(warning)
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 8) {
+                Button("Open Privacy Settings", action: openPrivacySettings)
+                Button(didCopy ? "Copied" : "Copy Fix Commands…", action: copyCommands)
+                    .disabled(didCopy)
+            }
+            Text("The commands grant access by editing this Mac's privacy database, which only works while System Integrity Protection is disabled. Review them before running, then reopen Skylight Bridge and click Refresh.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func openPrivacySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func copyCommands() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(SystemSecurityDiagnostics.permissionGrantScript(), forType: .string)
+        didCopy = true
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            didCopy = false
+        }
     }
 }
 

@@ -189,6 +189,24 @@ struct SecurityHardeningTests {
         #expect(explanation.contains("amfi_get_out_of_my_way=1"))
         #expect(explanation.contains("restart"))
     }
+
+    @Test("Permission-grant script targets the app's own identity and services")
+    func permissionGrantScriptContents() {
+        let script = SystemSecurityDiagnostics.permissionGrantScript(
+            bundleIdentifier: "com.oliverames.SkylightBridge",
+            bundlePath: "/Applications/Skylight Bridge.app"
+        )
+        // Grants the three Apple sources the app uses, for its own bundle ID.
+        #expect(script.contains("kTCCServiceReminders"))
+        #expect(script.contains("kTCCServicePhotos"))
+        #expect(script.contains("kTCCServiceAppleEvents"))
+        #expect(script.contains("'com.apple.Notes'"))
+        #expect(script.contains("'com.oliverames.SkylightBridge'"))
+        #expect(script.contains("/Applications/Skylight Bridge.app"))
+        // Only ever grants (auth_value=2), never denies, and reloads tccd.
+        #expect(script.contains("killall tccd"))
+        #expect(!script.contains("DELETE"))
+    }
 }
 
 private func propertyList(at url: URL) throws -> [String: Any] {

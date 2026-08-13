@@ -55,4 +55,49 @@ enum SystemSecurityDiagnostics {
             + "disabled. Remove that boot argument and restart the Mac to restore "
             + "prompts, or grant Skylight Bridge access another way."
     }
+
+    /// A self-contained shell script the user can run in Terminal to grant the
+    /// Apple privacy permissions macOS refused to prompt for. The app never
+    /// writes the privacy database itself: doing so is a TCC bypass that only
+    /// works where SIP is disabled and that Apple treats as malware, so the
+    /// decision and the action stay with the user in their own shell. Paths and
+    /// identifiers are resolved at runtime so the script matches this install.
+    static func permissionGrantScript(
+        bundleIdentifier: String = Bundle.main.bundleIdentifier ?? "",
+        bundlePath: String = Bundle.main.bundleURL.path
+    ) -> String {
+        """
+        #!/bin/bash
+        # Grant Skylight Bridge its Apple privacy permissions on a Mac where a
+        # boot argument disables Apple Mobile File Integrity and macOS therefore
+        # suppresses consent dialogs. This edits your own privacy database, so it
+        # only works while System Integrity Protection is disabled. Review before
+        # running.
+        set -e
+        APP="\(bundlePath)"
+        DB="$HOME/Library/Application Support/com.apple.TCC/TCC.db"
+
+        requirement() { codesign -d -r- "$1" 2>&1 | sed -n 's/^designated => //p'; }
+        blob() { printf '%s' "$1" | csreq -r- -b "$2" && xxd -p "$2" | tr -d '\\n'; }
+
+        CHEX=$(blob "$(requirement "$APP")" /tmp/sb_client.csreq)
+        NHEX=$(blob "$(requirement /System/Applications/Notes.app)" /tmp/sb_notes.csreq)
+
+        for SVC in kTCCServiceReminders kTCCServicePhotos; do
+          sqlite3 "$DB" "INSERT OR REPLACE INTO access \\
+        (service,client,client_type,auth_value,auth_reason,auth_version,csreq,flags,last_modified) \\
+        VALUES('$SVC','\(bundleIdentifier)',0,2,2,1,X'$CHEX',0,strftime('%s','now'));"
+        done
+
+        sqlite3 "$DB" "INSERT OR REPLACE INTO access \\
+        (service,client,client_type,auth_value,auth_reason,auth_version,csreq,\\
+        indirect_object_identifier_type,indirect_object_identifier,indirect_object_code_identity,flags,last_modified) \\
+        VALUES('kTCCServiceAppleEvents','\(bundleIdentifier)',0,2,2,1,X'$CHEX',\\
+        0,'com.apple.Notes',X'$NHEX',0,strftime('%s','now'));"
+
+        rm -f /tmp/sb_client.csreq /tmp/sb_notes.csreq
+        killall tccd
+        echo "Done. Reopen Skylight Bridge and click Refresh."
+        """
+    }
 }
