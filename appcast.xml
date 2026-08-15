@@ -6,16 +6,16 @@
     <description>Signed updates for Skylight Bridge.</description>
     <language>en</language>
     <item>
-      <title>Version 1.5.12</title>
-      <sparkle:version>22</sparkle:version>
-      <sparkle:shortVersionString>1.5.12</sparkle:shortVersionString>
+      <title>Version 1.5.13</title>
+      <sparkle:version>23</sparkle:version>
+      <sparkle:shortVersionString>1.5.13</sparkle:shortVersionString>
       <description><![CDATA[<p>This release includes improvements and fixes.</p>]]></description>
-      <pubDate>Thu, 13 Aug 2026 14:31:20 +0000</pubDate>
-      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.5.12/Skylight.Bridge-1.5.12.dmg" sparkle:edSignature="+IYeatzsNTlKc4fZoGLr6Z4KoLilUuxV8aMet0HIUbcIOupSXDpG6ScOfPXbuZXZbpAxeMOApBA5PqCPFcW3Dw==" length="6340324" type="application/octet-stream" />
+      <pubDate>Sat, 15 Aug 2026 01:11:27 +0000</pubDate>
+      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.5.13/Skylight.Bridge-1.5.13.dmg" sparkle:edSignature="2Zur3TkL+JTD1fvV45s0NBOvfi6ovRZrbMzvmN2w/6JpMhpGXI2GysLyf0q+AIhWDVoZwqtKLzRtK7WGnRovBQ==" length="6312675" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: FopurEgQ+KHd2dNTiHHX7WNopytZgjbGU9fUMnJfY19Otbzp5hlIAfoCybZ4qItCuF7xOIPhCkaC4wzA4M3aDA==
+edSignature: YIA5bt32YsMC3qBJMf3W2V8lFDIAEcQrMFleS+0CWESYZzaFEzg3EjmnkhQ+UaNWUD6jv6gRefn1b/xjYK1zDA==
 length: 1009
 -->
