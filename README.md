@@ -13,8 +13,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/oliverames/skylight-bridge/releases/tag/v1.5.12">
-    <img src="https://img.shields.io/badge/macOS-v1.5.12-f5a542?style=flat-square&logo=apple&logoColor=white" alt="macOS release 1.5.12">
+  <a href="https://github.com/oliverames/skylight-bridge/releases/tag/v1.5.13">
+    <img src="https://img.shields.io/badge/macOS-v1.5.13-f5a542?style=flat-square&logo=apple&logoColor=white" alt="macOS release 1.5.13">
   </a>
   <a href="#license">
     <img src="https://img.shields.io/badge/license-all%20rights%20reserved-f5a542?style=flat-square" alt="All rights reserved">
@@ -48,10 +48,10 @@ This is a practical Mac utility, not a second household database. Every mapping 
 3. Open Skylight Bridge from Applications. The app is Developer ID-signed, notarized, and stapled for Gatekeeper.
 4. The app checks for signed updates, and **Skylight Bridge > Check for Updates…** is always available when you want to check manually.
 
-Version 1.5.12 adds a guided fix for the blocked-prompt condition: when a Mac disables Apple Mobile File Integrity in its boot arguments, macOS suppresses privacy consent dialogs for non-Apple apps, and Diagnostics now explains the condition, links to Privacy settings, and can copy the exact Terminal commands that grant access. Skylight Bridge never edits the privacy database itself. This version also launches Apple Notes before a scheduled sync so recipe and meal syncing no longer fails when Notes is closed, and it stops repeating the iCloud sharing warning when its CloudKit schema is not yet deployed. If you want to verify the download, compare the output below with the checksum file beside the DMG on the release page.
+Version 1.5.13 turns off the experimental multi-device coordination that published to a CloudKit record type not yet deployed, so the Activity feed no longer shows an iCloud sharing / schema message. Selected-photo and preference sync across devices is unaffected. If you want to verify the download, compare the output below with the checksum file beside the DMG on the release page.
 
 ```bash
-shasum -a 256 ~/Downloads/Skylight.Bridge-1.5.12.dmg
+shasum -a 256 ~/Downloads/Skylight.Bridge-1.5.13.dmg
 ```
 
 <p align="center">

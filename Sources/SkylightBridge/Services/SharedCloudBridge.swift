@@ -27,7 +27,11 @@ extension AppStore {
            storeSharedPreferences(resolvedPreferences)
            applySharedPreferences(resolvedPreferences)
 
-            try await publishAndCheckHeartbeat()
+            if FeatureFlags.multiDeviceCoordinationEnabled {
+                try await publishAndCheckHeartbeat()
+            } else {
+                multiClientWarning = nil
+            }
 
             // Import explicit removes before publishing local selections. If a
             // phone removed a photo while this Mac was offline, publishing
@@ -59,6 +63,7 @@ extension AppStore {
    }
 
     func importSharedSyncState() async {
+        guard FeatureFlags.multiDeviceCoordinationEnabled else { return }
         do {
             let stateStore = SyncStateStore()
             var state = try await stateStore.load()
@@ -76,6 +81,7 @@ extension AppStore {
     }
 
     func publishSharedSyncState() async {
+        guard FeatureFlags.multiDeviceCoordinationEnabled else { return }
         do {
             let stateStore = SyncStateStore()
             let state = try await stateStore.load()

@@ -20,6 +20,13 @@ struct SharedCloudKitFailureTests {
         )
     }
 
+    @Test("Multi-device coordination stays off until its CloudKit schema is deployed")
+    func multiDeviceCoordinationDisabledByDefault() {
+        // ClientHeartbeat and SharedSyncState are not in the production schema.
+        // Enabling this would surface "needs its schema deployed" to every user.
+        #expect(FeatureFlags.multiDeviceCoordinationEnabled == false)
+    }
+
     @Test("A missing production record type reads as the same schema-deployment condition")
     func identifiesMissingRecordType() {
         let error = NSError(
