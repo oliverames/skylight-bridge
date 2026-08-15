@@ -43,19 +43,7 @@ struct SkylightBridgeApp: App {
         WindowGroup("Skylight Bridge", id: "main") {
             ContentView(store: store)
                 .frame(minWidth: 720, minHeight: 520)
-                .task {
-                    // Debug-only: publish one real record of each shared-iCloud
-                    // type to the current CloudKit environment, then quit. Used
-                    // once to populate the Development schema so its record types
-                    // can be promoted to Production. Never runs in shipping use.
-                    if ProcessInfo.processInfo.environment["SKYLIGHT_BOOTSTRAP_DEV_SCHEMA"] == "1" {
-                        await store.refreshSharediCloudState()
-                        await store.publishSharedSyncState()
-                        try? await Task.sleep(for: .seconds(2))
-                        exit(0)
-                    }
-                    await store.start()
-                }
+                .task { await store.start() }
         }
         // Let the window shrink to the content minimum instead of pinning a
         // large fixed size; pages are scrollable columns, so they adapt.

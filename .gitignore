@@ -4,3 +4,4 @@
 dist/
 DerivedData/
 *.xcuserstate
+dist-dev/
