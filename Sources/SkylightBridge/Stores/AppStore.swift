@@ -158,7 +158,30 @@ final class AppStore {
             reminderLists = []
         }
 
+        // Reading folders sends an Apple Event, which launches Notes when it is
+        // not running. At startup only do that when the permission check is
+        // already definite, which means Notes is running anyway.
+        if AppleNotesStore.authorizationStatus() == .granted {
+            await loadNotesFolders()
+        }
+
         statusMessage = "Sources refreshed."
+    }
+
+    /// Reads the Notes folder list whenever Automation access already exists.
+    /// Without this the folders arrived only from `requestNotesAccess()`, so
+    /// on later launches the folder picker was empty until the user pressed
+    /// Refresh on the access row.
+    func loadNotesFolders() async {
+        guard notesAccessGranted else {
+            notesFolders = []
+            return
+        }
+        do {
+            notesFolders = try await notesStore.folders()
+        } catch {
+            recordSourceError(error, area: .recipes)
+        }
     }
 
     func requestPhotosAccess() async {
@@ -417,6 +440,31 @@ final class AppStore {
     ) {
         guard NSApp.activationPolicy() != previousPolicy else { return }
         NSApp.setActivationPolicy(previousPolicy)
+    }
+
+    /// Clears a Notes folder link so the page returns to its unconfigured
+    /// state. The notes themselves are untouched; only the bridge's record of
+    /// which folder to read is removed.
+    func removeNotesSelection(kind: NotesContentKind) {
+        let title = (kind == .recipes
+            ? configuration.recipeSelection.folderTitle
+            : configuration.mealSelection.folderTitle) ?? "a folder"
+        var replacement = NotesSelection(kind: kind)
+        replacement.id = kind == .recipes
+            ? configuration.recipeSelection.id
+            : configuration.mealSelection.id
+        if kind == .recipes {
+            configuration.recipeSelection = replacement
+        } else {
+            configuration.mealSelection = replacement
+        }
+        saveConfiguration()
+        statusMessage = "\(kind.label) sync is no longer linked to a Notes folder."
+        appendActivity(.init(
+            level: .info,
+            area: kind == .recipes ? .recipes : .meals,
+            message: "Unlinked \(kind.label.lowercased()) sync from the Apple Notes folder “\(title)”. No notes were changed."
+        ))
     }
 
     func loadNotes(in folderID: String, area: IntegrationArea) async {

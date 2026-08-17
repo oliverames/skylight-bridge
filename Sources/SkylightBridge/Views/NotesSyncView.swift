@@ -4,6 +4,7 @@ struct NotesSyncView: View {
     @Bindable var store: AppStore
     let kind: NotesContentKind
     @State private var editedSelection: NotesSelection?
+    @State private var isConfirmingRemoval = false
 
     private var selection: NotesSelection {
         kind == .recipes ? store.configuration.recipeSelection : store.configuration.mealSelection
@@ -51,6 +52,21 @@ struct NotesSyncView: View {
         .formStyle(.grouped)
         .groupedPageLayout()
         .navigationTitle(kind.label)
+        // Folders are read through Apple Events, so they are fetched when this
+        // page appears rather than held from launch.
+        .task { await store.loadNotesFolders() }
+        .confirmationDialog(
+            "Remove the \(kind.label.lowercased()) folder link?",
+            isPresented: $isConfirmingRemoval,
+            titleVisibility: .visible
+        ) {
+            Button("Remove Link", role: .destructive) {
+                store.removeNotesSelection(kind: kind)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("\(kind.label) sync stops and forgets the selected folder. Nothing in Apple Notes or on Skylight is deleted.")
+        }
         .sheet(item: $editedSelection) { value in
             NotesSelectionEditor(
                 selection: value,
@@ -65,6 +81,10 @@ struct NotesSyncView: View {
                 },
                 notesForFolder: { folderID in store.notesByFolderID[folderID] ?? [] },
                 onCancel: { editedSelection = nil },
+                onRemove: value.folderID == nil ? nil : {
+                    editedSelection = nil
+                    isConfirmingRemoval = true
+                },
                 onSave: save
             )
         }
@@ -104,6 +124,10 @@ struct NotesSyncView: View {
 
             Menu {
                 Button("Edit…", systemImage: "pencil") { editedSelection = selection }
+                Divider()
+                Button("Remove Link…", systemImage: "trash", role: .destructive) {
+                    isConfirmingRemoval = true
+                }
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
@@ -115,6 +139,7 @@ struct NotesSyncView: View {
         .padding(.vertical, 4)
         .contextMenu {
             Button("Edit…") { editedSelection = selection }
+            Button("Remove Link…", role: .destructive) { isConfirmingRemoval = true }
         }
     }
 
@@ -172,6 +197,9 @@ private struct NotesSelectionEditor: View {
     let loadNotes: (String) async -> Void
     let notesForFolder: (String) -> [AppleNoteSummarySnapshot]
     let onCancel: () -> Void
+    /// Present only when a folder is already linked, so the editor offers the
+    /// same unlink action as the row menu.
+    let onRemove: (() -> Void)?
     let onSave: (NotesSelection) -> Void
 
     init(
@@ -182,6 +210,7 @@ private struct NotesSelectionEditor: View {
         loadNotes: @escaping (String) async -> Void,
         notesForFolder: @escaping (String) -> [AppleNoteSummarySnapshot],
         onCancel: @escaping () -> Void,
+        onRemove: (() -> Void)?,
         onSave: @escaping (NotesSelection) -> Void
     ) {
         _draft = State(initialValue: selection)
@@ -191,6 +220,7 @@ private struct NotesSelectionEditor: View {
         self.loadNotes = loadNotes
         self.notesForFolder = notesForFolder
         self.onCancel = onCancel
+        self.onRemove = onRemove
         self.onSave = onSave
     }
 
@@ -232,6 +262,21 @@ private struct NotesSelectionEditor: View {
                 ForEach(folders) { folder in
                     Text(folder.name).tag(folder.id)
                 }
+                // A folder saved earlier still has to appear in the list, or
+                // the picker would silently show no selection and saving would
+                // drop the link.
+                if let folderID = draft.folderID,
+                   !folders.contains(where: { $0.id == folderID }) {
+                    Text(draft.folderTitle ?? "Previously selected folder").tag(folderID)
+                }
+            }
+            if folders.isEmpty {
+                Label(
+                    "No Notes folders loaded. Allow Notes access on this page, then reopen this editor.",
+                    systemImage: "exclamationmark.circle"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
 
             Picker("Include", selection: $draft.selectionMode) {
@@ -325,6 +370,10 @@ private struct NotesSelectionEditor: View {
             }
 
             Toggle("Enable \(draft.kind.label) sync", isOn: $draft.enabled)
+
+            if let onRemove {
+                Button("Remove Folder Link…", systemImage: "trash", role: .destructive, action: onRemove)
+            }
         } header: {
             SectionHeader(title: "Sync behavior")
         } footer: {
