@@ -265,7 +265,8 @@ struct DiagnosticsView: View {
 /// Terminal commands to run, plus a shortcut to the System Settings pane.
 private struct BlockedPromptFix: View {
     let warning: String
-    @State private var didCopy = false
+    @State private var scriptURL: URL?
+    @State private var failureMessage: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -277,10 +278,22 @@ private struct BlockedPromptFix: View {
             }
             HStack(spacing: 8) {
                 Button("Open Privacy Settings", action: openPrivacySettings)
-                Button(didCopy ? "Copied" : "Copy Fix Commands…", action: copyCommands)
-                    .disabled(didCopy)
+                Button("Save Fix Script…", action: saveScript)
             }
-            Text("The commands grant access by editing this Mac's privacy database, which only works while System Integrity Protection is disabled. Review them before running, then reopen Skylight Bridge and click Refresh.")
+            if let scriptURL {
+                Text("Saved the script and copied its Terminal command. Paste this in Terminal, press Return, then reopen Skylight Bridge and click Refresh.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(SystemSecurityDiagnostics.permissionGrantCommand(forScriptAt: scriptURL))
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+            }
+            if let failureMessage {
+                Text(failureMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+            Text("The script grants access by editing this Mac's privacy database, which only works while System Integrity Protection is disabled. Open it and read it before running it.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -292,14 +305,25 @@ private struct BlockedPromptFix: View {
         }
     }
 
-    private func copyCommands() {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(SystemSecurityDiagnostics.permissionGrantScript(), forType: .string)
-        didCopy = true
-        Task {
-            try? await Task.sleep(for: .seconds(2))
-            didCopy = false
+    /// Writes the script to disk, reveals it so the user can read it first, and
+    /// copies the one-line command that runs it. Copying the script body itself
+    /// did not work: zsh treats the `!` in its shebang as a history event and
+    /// rejects the paste.
+    private func saveScript() {
+        do {
+            let url = try SystemSecurityDiagnostics.writePermissionGrantScript()
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(
+                SystemSecurityDiagnostics.permissionGrantCommand(forScriptAt: url),
+                forType: .string
+            )
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+            failureMessage = nil
+            scriptURL = url
+        } catch {
+            scriptURL = nil
+            failureMessage = "Could not save the script: \(error.localizedDescription)"
         }
     }
 }

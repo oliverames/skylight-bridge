@@ -100,4 +100,34 @@ enum SystemSecurityDiagnostics {
         echo "Done. Reopen Skylight Bridge and click Refresh."
         """
     }
+
+    /// Writes the grant script next to the app's own support files and returns
+    /// its URL. The script used to go on the pasteboard whole, but an
+    /// interactive zsh expands the `!` in its `#!/bin/bash` line as a history
+    /// event and refuses the paste ("event not found: /bin/bash"), so the user
+    /// saw the fix fail before it ran. A file the user runs by path has no
+    /// such shell parsing, and it stays reviewable before it executes.
+    static func writePermissionGrantScript(
+        to directory: URL? = nil,
+        fileManager: FileManager = .default
+    ) throws -> URL {
+        let root = try directory ?? fileManager.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        ).appendingPathComponent("SkylightBridge", isDirectory: true)
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let scriptURL = root.appendingPathComponent("grant-skylight-bridge-access.sh")
+        try Data(permissionGrantScript().utf8).write(to: scriptURL, options: .atomic)
+        try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: scriptURL.path)
+        return scriptURL
+    }
+
+    /// The single line to paste in Terminal to run the saved script. It carries
+    /// no comment marker and no `!`, so every common shell takes it verbatim.
+    static func permissionGrantCommand(forScriptAt scriptURL: URL) -> String {
+        "bash '\(scriptURL.path.replacingOccurrences(of: "'", with: "'\\''"))'"
+    }
 }

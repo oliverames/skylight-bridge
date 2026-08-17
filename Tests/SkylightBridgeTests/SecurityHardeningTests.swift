@@ -207,6 +207,30 @@ struct SecurityHardeningTests {
         #expect(script.contains("killall tccd"))
         #expect(!script.contains("DELETE"))
     }
+
+    @Test("The permission fix is delivered as a file plus a paste-safe command")
+    func permissionGrantScriptIsWrittenToDisk() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let scriptURL = try SystemSecurityDiagnostics.writePermissionGrantScript(to: directory)
+        let contents = try String(contentsOf: scriptURL, encoding: .utf8)
+        #expect(contents.hasPrefix("#!/bin/bash"))
+
+        let permissions = try FileManager.default
+            .attributesOfItem(atPath: scriptURL.path)[.posixPermissions] as? NSNumber
+        #expect(permissions?.int16Value == 0o700)
+
+        // The copied command is what the user pastes. An interactive zsh
+        // expands "!" as a history event, so the command must not contain one.
+        let command = SystemSecurityDiagnostics.permissionGrantCommand(forScriptAt: scriptURL)
+        #expect(command.hasPrefix("bash '"))
+        #expect(command.contains(scriptURL.path))
+        #expect(!command.contains("!"))
+        #expect(!command.contains("#"))
+        #expect(!command.contains("\n"))
+    }
 }
 
 private func propertyList(at url: URL) throws -> [String: Any] {
