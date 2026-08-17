@@ -36,6 +36,7 @@ enum SyncCoordinatorError: Error, LocalizedError, Sendable {
     case photoCollectionTooLarge(count: Int, maximum: Int)
     case photoProcessingTimedOut(String)
     case photoProcessingFailed(messageID: String, status: String)
+    case missingRenderedPhoto(String)
     case unsupportedMealDay(String)
     case invalidMealReference(String)
     case missingReminderDestination(UUID)
@@ -72,6 +73,8 @@ enum SyncCoordinatorError: Error, LocalizedError, Sendable {
             "Skylight did not finish processing uploaded photo \(messageID) in time."
         case let .photoProcessingFailed(messageID, status):
             "Skylight could not process uploaded photo \(messageID): \(status)."
+        case let .missingRenderedPhoto(assetID):
+            "Photo \(assetID) needed uploading but was not rendered."
         case let .unsupportedMealDay(day):
             "The meal day '\(day)' is not an ISO date or weekday name."
         case let .invalidMealReference(value):
@@ -640,6 +643,7 @@ actor SyncCoordinator {
        }
 
         albumMessageCache.removeAll()
+        pendingCheckpointCount = 0
 
         let frameID = configuration.account.frameID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !frameID.isEmpty else {
@@ -920,20 +924,34 @@ actor SyncCoordinator {
                 guard let destinationID else {
                     throw SyncCoordinatorError.missingPhotoDestination(mapping.id)
                 }
-                let rendered = try await photoSource.syncRenderedPhoto(
-                    withID: asset.id,
-                    maximumLongEdge: mapping.maximumLongEdge
-                )
-                let converted = try await imageConverter.syncConvert(
-                    rendered,
-                    options: AppleImageConversionOptions(
-                        maximumLongEdge: mapping.maximumLongEdge,
-                        jpegQuality: mapping.jpegQuality
-                    )
-                )
                 let existing = mappingRecords.first { $0.appleAssetID == asset.id }
+                let fingerprint = PhotoDeduplication.sourceFingerprint(
+                    for: asset,
+                    maximumLongEdge: mapping.maximumLongEdge,
+                    jpegQuality: mapping.jpegQuality
+                )
 
-                if let existing, existing.renderedHash == converted.sha256 {
+                // Rendering an asset downloads it from iCloud when needed and
+                // re-encodes it, which dominates a large mapping's run time.
+                // An unchanged asset already has its hash on record, so only
+                // render when the source or the render settings moved.
+                var converted: AppleConvertedImage?
+                if existing?.sourceFingerprint != fingerprint {
+                    let rendered = try await photoSource.syncRenderedPhoto(
+                        withID: asset.id,
+                        maximumLongEdge: mapping.maximumLongEdge
+                    )
+                    converted = try await imageConverter.syncConvert(
+                        rendered,
+                        options: AppleImageConversionOptions(
+                            maximumLongEdge: mapping.maximumLongEdge,
+                            jpegQuality: mapping.jpegQuality
+                        )
+                    )
+                }
+                let renderedHash = converted?.sha256 ?? existing?.renderedHash
+
+                if let existing, existing.renderedHash == renderedHash {
                     let oldAlbumIDs = existing.skylightAlbumIDs.subtracting([destinationID])
                     let needsAdd = !existing.skylightAlbumIDs.contains(destinationID)
                     let needsCaptionUpdate = caption.map { $0 != existing.lastSyncedCaption } ?? false
@@ -941,6 +959,16 @@ actor SyncCoordinator {
                         + (oldAlbumIDs.isEmpty ? 0 : 1)
                         + (needsCaptionUpdate ? 1 : 0)
                     guard !dryRun, needsAdd || !oldAlbumIDs.isEmpty || needsCaptionUpdate else {
+                        // State written before fingerprints existed, or an
+                        // asset whose fingerprint moved without changing the
+                        // encoded bytes: record the new one so the next run
+                        // takes the fast path. No remote call is involved.
+                        if !dryRun, existing.sourceFingerprint != fingerprint {
+                            var refreshed = existing
+                            refreshed.sourceFingerprint = fingerprint
+                            upsertPhotoRecord(refreshed, in: &state)
+                            markStateDirty()
+                        }
                         continue
                     }
                     if needsAdd {
@@ -980,14 +1008,21 @@ actor SyncCoordinator {
                         skylightMessageID: existing.skylightMessageID,
                         skylightAlbumIDs: [destinationID],
                         lastSyncedAt: now(),
-                        lastSyncedCaption: caption ?? existing.lastSyncedCaption
+                        lastSyncedCaption: caption ?? existing.lastSyncedCaption,
+                        sourceFingerprint: fingerprint
                     ), in: &state)
-                    try await checkpoint(state, dryRun: dryRun)
+                    markStateDirty()
+                    try await checkpointIfDue(state, dryRun: dryRun)
                     continue
                 }
 
                summary.planned += 1
                if !dryRun {
+                    // Every path below needs the encoded bytes, and they exist
+                    // unless the record already matched, which returned above.
+                    guard let converted else {
+                        throw SyncCoordinatorError.missingRenderedPhoto(asset.id)
+                    }
                     let dedupCaption = PhotoDeduplication.caption(
                         withUserCaption: caption,
                         renderedHash: converted.sha256
@@ -1019,11 +1054,13 @@ actor SyncCoordinator {
                                 skylightMessageID: duplicateMessageID,
                                 skylightAlbumIDs: [destinationID],
                                 lastSyncedAt: now(),
-                                lastSyncedCaption: caption
+                                lastSyncedCaption: caption,
+                                sourceFingerprint: fingerprint
                             ),
                             in: &state
                         )
-                        try await checkpoint(state, dryRun: dryRun)
+                        markStateDirty()
+                        try await checkpointIfDue(state, dryRun: dryRun)
                         summary.applied += 1
                         continue
                     }
@@ -1043,10 +1080,14 @@ actor SyncCoordinator {
                             skylightMessageID: newMessageID,
                             skylightAlbumIDs: [destinationID],
                             lastSyncedAt: now(),
-                            lastSyncedCaption: caption
+                            lastSyncedCaption: caption,
+                            sourceFingerprint: fingerprint
                         ),
                         in: &state
                     )
+                    markStateDirty()
+                    // An upload is the one photo step worth a durable write on
+                    // its own: losing it would re-upload the same bytes.
                     try await checkpoint(state, dryRun: dryRun)
                     if let previous = existing {
                         if !previous.skylightAlbumIDs.isEmpty {
@@ -1157,6 +1198,8 @@ actor SyncCoordinator {
    }
 
     private var albumMessageCache: [String: [SkylightResource<SkylightPhotoMessageAttributes>]] = [:]
+    /// Changes made to the sync state since it was last written to disk.
+    private var pendingCheckpointCount = 0
 
     private func findDuplicatePhoto(
         renderedHash: String,
@@ -3512,10 +3555,30 @@ actor SyncCoordinator {
         SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
+    /// Writes the whole sync state: a JSON encode, an HMAC seal, and an atomic
+    /// file replacement. Cost grows with the number of records, so calling it
+    /// once per item makes a large mapping quadratic.
     private func checkpoint(_ state: SyncState, dryRun: Bool) async throws {
         guard !dryRun else { return }
+        pendingCheckpointCount = 0
         try await stateStore.saveSyncState(state)
     }
+
+    /// Records that `state` moved since the last write.
+    private func markStateDirty() {
+        pendingCheckpointCount += 1
+    }
+
+    /// Writes only once every `checkpointInterval` changes. Each domain flushes
+    /// with `checkpoint` when it finishes, so at most that many bookkeeping
+    /// updates are lost if a run is interrupted, and every one of them is
+    /// recomputed for free on the next run.
+    private func checkpointIfDue(_ state: SyncState, dryRun: Bool) async throws {
+        guard !dryRun, pendingCheckpointCount >= Self.checkpointInterval else { return }
+        try await checkpoint(state, dryRun: dryRun)
+    }
+
+    private static let checkpointInterval = 25
 
     private func upsertPhotoRecord(_ record: PhotoSyncRecord, in state: inout SyncState) {
         state.photos.removeAll { $0.id == record.id }

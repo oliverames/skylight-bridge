@@ -14,6 +14,12 @@ struct PhotoSyncRecord: Identifiable, Codable, Sendable, Hashable {
     /// a selected-photo name update its existing remote message without an
     /// unnecessary re-upload.
     var lastSyncedCaption: String?
+    /// Identifies the Apple asset revision and the render settings that
+    /// produced `renderedHash`. When it still matches, the photo cannot have
+    /// changed, so a sync skips the expensive render and JPEG encode instead of
+    /// redoing them only to compare hashes. Absent in state written before
+    /// this field existed, which simply means the first run re-renders once.
+    var sourceFingerprint: String?
 
     init(
         mappingID: UUID,
@@ -24,7 +30,8 @@ struct PhotoSyncRecord: Identifiable, Codable, Sendable, Hashable {
         skylightMessageID: String,
         skylightAlbumIDs: Set<String>,
         lastSyncedAt: Date,
-        lastSyncedCaption: String? = nil
+        lastSyncedCaption: String? = nil,
+        sourceFingerprint: String? = nil
     ) {
         self.mappingID = mappingID
         self.frameID = frameID
@@ -35,6 +42,7 @@ struct PhotoSyncRecord: Identifiable, Codable, Sendable, Hashable {
         self.skylightAlbumIDs = skylightAlbumIDs
         self.lastSyncedAt = lastSyncedAt
         self.lastSyncedCaption = lastSyncedCaption
+        self.sourceFingerprint = sourceFingerprint
     }
 
     // Persisted struct: synthesized decoding throws on any missing key, so a
@@ -51,6 +59,7 @@ struct PhotoSyncRecord: Identifiable, Codable, Sendable, Hashable {
         skylightAlbumIDs = try container.decodeIfPresent(Set<String>.self, forKey: .skylightAlbumIDs) ?? []
         lastSyncedAt = try container.decodeIfPresent(Date.self, forKey: .lastSyncedAt) ?? .distantPast
         lastSyncedCaption = try container.decodeIfPresent(String.self, forKey: .lastSyncedCaption)
+        sourceFingerprint = try container.decodeIfPresent(String.self, forKey: .sourceFingerprint)
     }
 }
 

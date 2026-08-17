@@ -54,6 +54,30 @@ enum PhotoDeduplication {
         return stripped.isEmpty ? nil : stripped
     }
 
+    /// Describes the Apple asset revision and the render settings that produce
+    /// a converted image. Two runs that agree on this string cannot produce
+    /// different JPEG bytes, so a sync can trust its stored hash and skip the
+    /// render and encode entirely. Photos bumps `modificationDate` on any edit
+    /// and `adjustmentDate` on an edit to the rendered appearance, and pixel
+    /// dimensions catch a replaced original.
+    static func sourceFingerprint(
+        for asset: ApplePhotoAssetSnapshot,
+        maximumLongEdge: Int,
+        jpegQuality: Double
+    ) -> String {
+        let fields: [String] = [
+            asset.id,
+            asset.modificationDate.map { String($0.timeIntervalSinceReferenceDate) } ?? "-",
+            asset.adjustmentDate.map { String($0.timeIntervalSinceReferenceDate) } ?? "-",
+            String(asset.pixelWidth),
+            String(asset.pixelHeight),
+            asset.hasAdjustments ? "adjusted" : "original",
+            String(maximumLongEdge),
+            String(format: "%.4f", jpegQuality)
+        ]
+        return fields.joined(separator: "|")
+    }
+
     /// Searches messages for one whose caption contains a matching tag.
     static func findDuplicate(
         renderedHash: String,

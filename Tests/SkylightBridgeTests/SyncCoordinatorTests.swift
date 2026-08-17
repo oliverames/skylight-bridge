@@ -71,6 +71,137 @@ struct SyncCoordinatorTests {
         #expect(calls.createdAlbums == 0)
     }
 
+    @Test("An unchanged photo is not rendered again, and older state gains a fingerprint")
+    func unchangedPhotoIsNotReRendered() async throws {
+        let mappingID = UUID()
+        let asset = photoAsset(id: "apple-photo")
+        var mapping = PhotoMapping(
+            name: "Our House",
+            sourceCollectionID: "apple-album",
+            sourceCollectionTitle: "Our House",
+            destinationAlbumID: "album-1",
+            destinationAlbumTitle: "Our House"
+        )
+        mapping.id = mappingID
+        var configuration = AppConfiguration.empty
+        configuration.account.frameID = "frame-1"
+        configuration.dryRun = false
+        configuration.photoMappings = [mapping]
+
+        func run(storedFingerprint: String?) async throws -> (renders: Int, persisted: SyncState) {
+            let api = CoordinatorAPIStub()
+            await api.configureAlbums([
+                SkylightResource(
+                    id: "album-1",
+                    attributes: SkylightAlbumAttributes(
+                        title: "Our House",
+                        messageCount: 1,
+                        createdAt: nil,
+                        updatedAt: nil
+                    )
+                )
+            ])
+            var stateValue = SyncState()
+            stateValue.photos = [PhotoSyncRecord(
+                mappingID: mappingID,
+                frameID: "frame-1",
+                destinationAlbumID: "album-1",
+                appleAssetID: "apple-photo",
+                renderedHash: "rendered-hash",
+                skylightMessageID: "message-1",
+                skylightAlbumIDs: ["album-1"],
+                lastSyncedAt: Date(timeIntervalSince1970: 100),
+                sourceFingerprint: storedFingerprint
+            )]
+            let state = CoordinatorStateStore(state: stateValue)
+            let photoSource = CoordinatorPhotoSource(assets: [asset])
+            let coordinator = makeCoordinator(
+                api: api,
+                reminders: [],
+                photoSource: photoSource,
+                imageConverter: CoordinatorImageConverter(convertedAssetID: "apple-photo"),
+                state: state
+            )
+            _ = try await coordinator.sync(configuration: configuration)
+            return (await photoSource.renderCount, try await state.loadSyncState())
+        }
+
+        // State written before fingerprints existed renders once more, then
+        // records the fingerprint so later runs can skip the work.
+        let upgrade = try await run(storedFingerprint: nil)
+        #expect(upgrade.renders == 1)
+        let fingerprint = try #require(upgrade.persisted.photos.first?.sourceFingerprint)
+
+        let steady = try await run(storedFingerprint: fingerprint)
+        #expect(steady.renders == 0)
+    }
+
+    @Test("A photo whose Apple asset changed is rendered again")
+    func editedPhotoIsReRendered() async throws {
+        let mappingID = UUID()
+        let api = CoordinatorAPIStub()
+        await api.configureAlbums([
+            SkylightResource(
+                id: "album-1",
+                attributes: SkylightAlbumAttributes(
+                    title: "Our House",
+                    messageCount: 1,
+                    createdAt: nil,
+                    updatedAt: nil
+                )
+            )
+        ])
+        let edited = ApplePhotoAssetSnapshot(
+            id: "apple-photo",
+            mediaKind: .image,
+            pixelWidth: 1,
+            pixelHeight: 1,
+            creationDate: nil,
+            modificationDate: nil,
+            adjustmentDate: Date(timeIntervalSince1970: 900),
+            contentTypeIdentifier: "public.jpeg",
+            isFavorite: false,
+            isHidden: false,
+            hasAdjustments: true
+        )
+        var stateValue = SyncState()
+        stateValue.photos = [PhotoSyncRecord(
+            mappingID: mappingID,
+            frameID: "frame-1",
+            destinationAlbumID: "album-1",
+            appleAssetID: "apple-photo",
+            renderedHash: "rendered-hash",
+            skylightMessageID: "message-1",
+            skylightAlbumIDs: ["album-1"],
+            lastSyncedAt: Date(timeIntervalSince1970: 100),
+            sourceFingerprint: "stale-fingerprint"
+        )]
+        let photoSource = CoordinatorPhotoSource(assets: [edited])
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            photoSource: photoSource,
+            imageConverter: CoordinatorImageConverter(convertedAssetID: "apple-photo"),
+            state: CoordinatorStateStore(state: stateValue)
+        )
+        var mapping = PhotoMapping(
+            name: "Our House",
+            sourceCollectionID: "apple-album",
+            sourceCollectionTitle: "Our House",
+            destinationAlbumID: "album-1",
+            destinationAlbumTitle: "Our House"
+        )
+        mapping.id = mappingID
+        var configuration = AppConfiguration.empty
+        configuration.account.frameID = "frame-1"
+        configuration.dryRun = false
+        configuration.photoMappings = [mapping]
+
+        _ = try await coordinator.sync(configuration: configuration)
+
+        #expect(await photoSource.renderCount == 1)
+    }
+
     @Test("A selected photo name updates its linked Skylight caption")
     func selectedPhotoNameUpdatesSkylightCaption() async throws {
         let mappingID = UUID()
@@ -1810,6 +1941,7 @@ private enum CoordinatorStubError: Error {
 @MainActor
 private final class CoordinatorPhotoSource: PhotoSyncSource {
     let assets: [ApplePhotoAssetSnapshot]
+    private(set) var renderCount = 0
 
     init(assets: [ApplePhotoAssetSnapshot] = []) {
         self.assets = assets
@@ -1819,6 +1951,7 @@ private final class CoordinatorPhotoSource: PhotoSyncSource {
     func syncPhotoAssets(in collectionID: String) async throws -> [ApplePhotoAssetSnapshot] { assets }
     func syncPhotoAssets(withIDs assetIDs: [String]) async throws -> [ApplePhotoAssetSnapshot] { [] }
     func syncRenderedPhoto(withID assetID: String, maximumLongEdge: Int) async throws -> AppleRenderedPhoto {
+        renderCount += 1
         guard let asset = assets.first(where: { $0.id == assetID }),
               let context = CGContext(
                   data: nil,

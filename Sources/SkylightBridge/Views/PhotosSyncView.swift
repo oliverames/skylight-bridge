@@ -126,6 +126,11 @@ private struct PhotoMappingEditor: View {
     @State private var photoNameGenerationAssetIDs: Set<String> = []
     @State private var savedMappingID: UUID?
     @State private var selectedAssetToRemove: String?
+    /// Display order, held rather than derived. Sorting through the name
+    /// dictionary inside `body` re-ran on every state change, so each generated
+    /// name re-sorted the whole selection.
+    @State private var displayOrder: [String] = []
+    @State private var namingProgress: (completed: Int, total: Int)?
     let collections: [ApplePhotoCollectionSnapshot]
     let skylightAlbums: [SkylightResource<SkylightAlbumAttributes>]
     let onCancel: () -> Void
@@ -232,6 +237,7 @@ private struct PhotoMappingEditor: View {
                     }
                 )
             }
+            .onAppear { refreshDisplayOrder() }
             .onChange(of: pickedPhotos) {
                 acceptPickedPhotos()
             }
@@ -247,6 +253,7 @@ private struct PhotoMappingEditor: View {
                     if let selectedAssetToRemove {
                         draft.selectedAssetIDs.remove(selectedAssetToRemove)
                         draft.selectedPhotoNames.removeValue(forKey: selectedAssetToRemove)
+                        refreshDisplayOrder()
                     }
                     selectedAssetToRemove = nil
                 }
@@ -290,21 +297,30 @@ private struct PhotoMappingEditor: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if !draft.selectedAssetIDs.isEmpty {
-                ForEach(selectedAssetIDs, id: \.self) { assetID in
-                    HStack {
-                        Label(photoTitle(for: assetID), systemImage: "photo")
-                        if photoNameGenerationAssetIDs.contains(assetID) {
-                            ProgressView()
-                                .controlSize(.small)
-                        }
-                        Spacer()
-                        Button("Remove", role: .destructive) {
-                            selectedAssetToRemove = assetID
+                // A Form builds every row it is given. A large selection made
+                // the sheet crawl, so the rows scroll in their own lazy stack
+                // and only the visible ones are built.
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 6) {
+                        ForEach(displayOrder, id: \.self) { assetID in
+                            HStack {
+                                Label(photoTitle(for: assetID), systemImage: "photo")
+                                if photoNameGenerationAssetIDs.contains(assetID) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                }
+                                Spacer()
+                                Button("Remove", role: .destructive) {
+                                    selectedAssetToRemove = assetID
+                                }
+                            }
                         }
                     }
+                    .padding(.vertical, 2)
                 }
-                if !photoNameGenerationAssetIDs.isEmpty {
-                    Text("Naming selected photos with Apple Intelligence…")
+                .frame(maxHeight: 220)
+                if let namingProgress {
+                    Text("Naming selected photos with Apple Intelligence… \(namingProgress.completed) of \(namingProgress.total)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else if #unavailable(macOS 27.0) {
@@ -331,6 +347,8 @@ private struct PhotoMappingEditor: View {
                 draft.selectedPhotoNames = [:]
                 photoNameGenerationAssetIDs = []
                 pickedPhotos = []
+                displayOrder = []
+                namingProgress = nil
                 if sourceKind == .favorites {
                     draft.sourceCollectionTitle = "Favorites"
                 }
@@ -379,8 +397,10 @@ private struct PhotoMappingEditor: View {
         }
     }
 
-    private var selectedAssetIDs: [String] {
-        draft.selectedAssetIDs.sorted {
+    /// Rebuilds the display order. Called when the selection changes and when a
+    /// batch of names finishes, never from `body`.
+    private func refreshDisplayOrder() {
+        displayOrder = draft.selectedAssetIDs.sorted {
             photoTitle(for: $0).localizedStandardCompare(photoTitle(for: $1)) == .orderedAscending
         }
     }
@@ -400,10 +420,12 @@ private struct PhotoMappingEditor: View {
 
         draft.selectedAssetIDs.formUnion(selectedPhotos.map(\.assetID))
         pickedPhotos = []
+        refreshDisplayOrder()
 
         guard !photosToName.isEmpty else { return }
         guard #available(macOS 27.0, *) else { return }
         photoNameGenerationAssetIDs.formUnion(photosToName.map(\.assetID))
+        namingProgress = (completed: 0, total: photosToName.count)
 
         Task { @MainActor in
             await Task.yield()
@@ -411,11 +433,35 @@ private struct PhotoMappingEditor: View {
         }
     }
 
+    /// Names run one at a time because the on-device model is a single shared
+    /// resource, but the results are applied in batches. Writing each name
+    /// straight into the draft re-rendered the whole editor once per photo.
     @available(macOS 27.0, *)
     private func generatePhotoNames(for selectedPhotos: [(assetID: String, item: PhotosPickerItem)]) async {
+        let batchSize = 10
+        var pendingNames: [String: String] = [:]
+        var completed = 0
+
+        func applyPendingNames() {
+            guard !pendingNames.isEmpty else { return }
+            draft.selectedPhotoNames.merge(pendingNames) { _, new in new }
+            if let savedMappingID {
+                onPhotoNamesResolved(savedMappingID, pendingNames)
+            }
+            pendingNames.removeAll()
+            refreshDisplayOrder()
+        }
+
         for selectedPhoto in selectedPhotos {
             let assetID = selectedPhoto.assetID
-            defer { photoNameGenerationAssetIDs.remove(assetID) }
+            defer {
+                photoNameGenerationAssetIDs.remove(assetID)
+                completed += 1
+                namingProgress = (completed: completed, total: selectedPhotos.count)
+                if completed.isMultiple(of: batchSize) {
+                    applyPendingNames()
+                }
+            }
 
             guard draft.selectedAssetIDs.contains(assetID),
                   let data = try? await selectedPhoto.item.loadTransferable(type: Data.self),
@@ -423,10 +469,10 @@ private struct PhotoMappingEditor: View {
                   draft.selectedAssetIDs.contains(assetID) else {
                 continue
             }
-            draft.selectedPhotoNames[assetID] = name
-            if let savedMappingID {
-                onPhotoNamesResolved(savedMappingID, [assetID: name])
-            }
+            pendingNames[assetID] = name
         }
+
+        applyPendingNames()
+        namingProgress = nil
     }
 }
