@@ -1,3 +1,21 @@
+## 2026-08-17 - Skylight Bridge 1.6.0: sign-out, security sweep, dead-code cleanup, published release
+
+**What changed**: Second sweep of the day on top of the four field fixes, then the 1.6.0 release. Commits `5719215` (review fixes), `f947a43` (dead code), `2a1a25b` (bump).
+
+Review findings, all fixed: (1) No sign-out existed — credentials and tokens persisted forever and the OAuth revoke endpoint had no caller; the Account page now has a confirmed Sign Out backed by `SkylightSessionManager.signOut()`, and a scheduled sync retries the connection then goes quiet when signed out. (2) `createLegacySession` sent plaintext credentials to a deprecated endpoint with zero callers; removed with its models and three other dead symbols. (3) The hidden Meals workflow still synced for anyone who enabled it before it was hidden; `FeatureFlags.mealSyncEnabled = false` now gates the engine in lockstep with the hidden UI (ship-state test added). (4) A denied Notes Automation permission rendered as "Not requested" with a dead request button; denial is now tracked and routed to System Settings. (5) The Overview sync button offered syncs that immediately failed when signed out; it now shares the toolbar's conditions.
+
+Dead-code sweep: removed `PhotoSyncPlanner` + `PhotoSyncModels` + tests (superseded by `SyncCoordinator.syncPhotos`), `Bootstrap`, `purgeChoreMapping` (superseded by `teardownChoreMapping`), `currentTokenPair`, `requiredDescriptor`, `userVisibleCaption`. Pruned the merged `claude/blissful-herschel-8fb46f` worktree and branch. Cleared the last build warning (`String(cString:)` → `String(decoding:)`). The large block of unused `SkylightAPIClient+*` endpoint methods was deliberately kept: they are the documented "Discovered API coverage" surfaced in Diagnostics.
+
+**Decisions made**: Endpoint-coverage methods are product surface, not dead code. Meals gating lives in `AppStore.syncConfiguration` (forced-off copy) so the coordinator and tests stay flag-free. The 1.5.14 bump (`fa5eaa5`) was folded into 1.6.0; no 1.5.14 was published.
+
+**Verification**: 153 tests pass, zero build warnings. `build_release.sh` notarized and stapled app + DMG; Gatekeeper accepts both ("Notarized Developer ID"). Published https://github.com/oliverames/skylight-bridge/releases/tag/v1.6.0 ; downloaded `.sha256` diffs clean against local (`35b43397cec111a0325196300abce94a0477f26f0b0a4b46d8888271089915c2`). Signed appcast published to gh-pages (`9182bac`), serving 1.6.0 build 25.
+
+**Left off at**: 1.6.0 is live. The new UI (Sign Out, Remove Link, denial states) is built and logic-tested but NOT visually verified — another Claude session held the computer-use bridge for the whole session and `screencapture` lacks Screen Recording permission. Verify visually on next launch or on home-server after it updates.
+
+**Open questions**: Visual verification of the 1.6.0 UI. Carried: CloudKit production schema deploy for `ClientHeartbeat`/`SharedSyncState`, then flip `multiDeviceCoordinationEnabled`; decide on revoking the 2026-08-13 Apple Development cert; decide whether the Meals workflow gets finished or removed outright.
+
+---
+
 ## 2026-08-17 - Four field-reported fixes: Notes folders, Notes unlink, TCC script paste, photo sync performance
 
 **What changed**: Four defects Oliver reported from home-server use, in three commits on top of 1.5.13 (unreleased; version still 1.5.13).
