@@ -50,6 +50,25 @@ actor SkylightSessionManager {
         try await credentials.string(for: Key.email)
     }
 
+    /// Removes every stored account secret. The access token is revoked with
+    /// Skylight first on a best-effort basis: a revoke that fails (offline,
+    /// token already expired) must not leave the secrets behind, so deletion
+    /// always proceeds. The device fingerprint is kept — it identifies this
+    /// install, not the account, and reusing it keeps Skylight from counting
+    /// every sign-in as a new device.
+    func signOut() async throws {
+        if let accessToken = try? await credentials.string(for: Key.accessToken),
+           !accessToken.isEmpty,
+           let fingerprint = try? await credentials.string(for: Key.deviceFingerprint) {
+            let authenticator = SkylightOAuthAuthenticator(deviceFingerprint: fingerprint)
+            try? await authenticator.revoke(token: accessToken)
+        }
+        try await credentials.delete(for: Key.accessToken)
+        try await credentials.delete(for: Key.refreshToken)
+        try await credentials.delete(for: Key.password)
+        try await credentials.delete(for: Key.email)
+    }
+
     func saveCredentials(email: String, password: String) async throws {
         let storedEmail = try await credentials.string(for: Key.email)
         if Self.shouldInvalidateTokens(storedEmail: storedEmail, replacementEmail: email) {

@@ -9,6 +9,7 @@ struct AccountView: View {
     @Bindable var store: AppStore
     @State private var email = ""
     @State private var password = ""
+    @State private var isConfirmingSignOut = false
 
     var body: some View {
         Form {
@@ -32,6 +33,12 @@ struct AccountView: View {
 
                     if let device = store.skylightDevices.first(where: { $0.id == store.configuration.account.deviceID }) {
                         LabeledContent("Device", value: device.attributes.name ?? "Selected Automatically")
+                    }
+                }
+
+                if store.isSkylightConnected {
+                    LabeledContent("Session") {
+                        Button("Sign Out…") { isConfirmingSignOut = true }
                     }
                 }
             }
@@ -98,8 +105,10 @@ struct AccountView: View {
                 accessRow(
                     title: "Notes",
                     isAuthorized: store.notesAccessGranted,
-                    detail: store.notesAccessGranted ? "Authorized" : "Not requested",
-                    isBlocked: false,
+                    detail: store.notesAccessGranted
+                        ? "Authorized"
+                        : (store.notesAccessDenied ? "Denied" : "Not requested"),
+                    isBlocked: store.notesAccessDenied,
                     privacyPane: "Privacy_Automation"
                 )
             }
@@ -112,6 +121,22 @@ struct AccountView: View {
             if email.isEmpty {
                 email = await store.storedAccountEmail()
             }
+        }
+        .confirmationDialog(
+            "Sign Out of Skylight?",
+            isPresented: $isConfirmingSignOut,
+            titleVisibility: .visible
+        ) {
+            Button("Sign Out", role: .destructive) {
+                Task {
+                    await store.signOut()
+                    email = ""
+                    password = ""
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The saved email, password, and session tokens are removed from the macOS Keychain, and scheduled syncs stop until you sign in again. Mappings and sync history are kept.")
         }
     }
 

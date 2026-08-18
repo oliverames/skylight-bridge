@@ -23,6 +23,10 @@ final class AppStore {
     var photosAuthorizationStatus: ApplePhotosAuthorizationStatus = .notDetermined
     var remindersAuthorizationStatus: AppleRemindersAuthorizationStatus = .notDetermined
     var notesAccessGranted = false
+    /// True when macOS recorded an explicit Automation denial for Notes. macOS
+    /// never re-prompts after a denial, so the UI must route to System
+    /// Settings instead of offering a request that silently does nothing.
+    var notesAccessDenied = false
     var isConnecting = false
     /// Most recent sign-in or reconnect failure, shown inline on the Account
     /// screen. Cleared when a new attempt starts or succeeds.
@@ -109,12 +113,23 @@ final class AppStore {
         }
     }
 
+    /// The configuration a sync actually runs with. Hidden features are forced
+    /// off here so a stale enabled flag cannot run a workflow that has no
+    /// visible interface to inspect or stop it.
+    private var syncConfiguration: AppConfiguration {
+        var value = configuration
+        if !FeatureFlags.mealSyncEnabled {
+            value.mealSelection.enabled = false
+        }
+        return value
+    }
+
     /// Runs a sync (a preview while Dry Run is on) right after a mapping is added,
     /// edited, or enabled, so the change lands in Activity without waiting for the
     /// background schedule. Skipped when nothing is connected or a sync is already
     /// in flight.
     private func autoSync() {
-        guard configuration.hasEnabledSync, !isSyncing else { return }
+        guard syncConfiguration.hasEnabledSync, !isSyncing else { return }
         guard isSkylightConnected else {
             // The mapping was saved, but nothing can sync until sign-in; say so
             // instead of silently skipping the promised automatic sync.
@@ -361,10 +376,16 @@ final class AppStore {
         switch AppleNotesStore.authorizationStatus() {
         case .granted:
             notesAccessGranted = true
-        case .denied, .notDetermined:
+            notesAccessDenied = false
+        case .denied:
             notesAccessGranted = false
+            notesAccessDenied = true
+        case .notDetermined:
+            notesAccessGranted = false
+            notesAccessDenied = false
         case .unknown:
             notesAccessGranted = UserDefaults.standard.bool(forKey: Self.notesAccessEverGrantedKey)
+            notesAccessDenied = false
         }
     }
 
@@ -378,6 +399,7 @@ final class AppStore {
             try await notesStore.requestAccess()
             notesFolders = try await notesStore.folders()
             notesAccessGranted = true
+            notesAccessDenied = false
             UserDefaults.standard.set(true, forKey: Self.notesAccessEverGrantedKey)
             let configuredFolderIDs = Set([
                 configuration.recipeSelection.folderID,
@@ -388,6 +410,7 @@ final class AppStore {
             }
             statusMessage = "Loaded \(notesFolders.count) Notes folders."
         } catch {
+            refreshNotesAccessStatus()
             notesAccessGranted = false
             recordSourceError(error, area: .recipes)
             switch AppleNotesStore.authorizationStatus() {
@@ -571,6 +594,34 @@ final class AppStore {
         (try? await sessionManager.storedEmail()) ?? ""
     }
 
+    /// Disconnects the Skylight account: revokes the session (best effort) and
+    /// deletes the stored email, password, and OAuth tokens from the Keychain.
+    /// Mappings and sync history stay, so signing back in resumes where the
+    /// account left off.
+    func signOut() async {
+        guard !isConnecting else { return }
+        do {
+            try await sessionManager.signOut()
+        } catch {
+            recordSourceError(error, area: .account)
+            return
+        }
+        skylightFrames = []
+        skylightDevices = []
+        skylightAlbums = []
+        skylightLists = []
+        skylightMealCategories = []
+        skylightChoreCategories = []
+        connectionError = nil
+        multiClientWarning = nil
+        statusMessage = "Signed out of Skylight."
+        appendActivity(.init(
+            level: .info,
+            area: .account,
+            message: "Signed out of Skylight. The saved email, password, and session tokens were removed from the Keychain. Mappings were kept."
+        ))
+    }
+
     func restoreAccountConnection() async {
         guard !isConnecting else { return }
         isConnecting = true
@@ -631,7 +682,20 @@ final class AppStore {
         }
         defer { withExtendedLifetime(processLock) {} }
 
-        guard configuration.hasEnabledSync else {
+        // A launch-time restore can fail on a transient network error, so a
+        // scheduled sync first retries the connection. After sign-out the
+        // retry finds no credentials and returns quietly, so the schedule
+        // stops logging a missing-credentials error every interval.
+        if !isSkylightConnected {
+            await restoreAccountConnection()
+        }
+        guard isSkylightConnected else {
+            statusMessage = "Sign in to Skylight to sync."
+            return
+        }
+
+        let syncConfiguration = self.syncConfiguration
+        guard syncConfiguration.hasEnabledSync else {
             statusMessage = "No sources are enabled."
             appendActivity(.init(
                 level: .warning,
@@ -660,12 +724,12 @@ final class AppStore {
             // a live target process. A scheduled sync usually runs while Notes
             // is closed, so launch it first (without stealing focus); otherwise
             // the recipe and meal domains fail with "Connection is invalid".
-            if configuration.recipeSelection.enabled || configuration.mealSelection.enabled {
+            if syncConfiguration.recipeSelection.enabled || syncConfiguration.mealSelection.enabled {
                 try? await launchNotesIfNeeded()
             }
             await importSharedSyncState()
             let coordinator = SyncCoordinator.live(apiClient: client)
-            let summary = try await coordinator.sync(configuration: configuration)
+            let summary = try await coordinator.sync(configuration: syncConfiguration)
             try await refreshSkylightDestinations(using: client)
             record(summary.photos, area: .photos, dryRun: summary.dryRun)
             record(summary.reminders, area: .reminders, dryRun: summary.dryRun)

@@ -85,10 +85,15 @@ struct OverviewView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 12)
+            // Same conditions as the toolbar's Sync button, so the two never
+            // disagree about whether a sync can run.
             Button(syncButtonTitle) {
                 Task { await store.syncNow() }
             }
-            .disabled(store.isSyncing || !store.configuration.hasEnabledSync)
+            .disabled(store.isSyncing
+                || !store.configuration.hasEnabledSync
+                || !store.isSkylightConnected)
+            .help(syncButtonHelp)
         }
         .padding(.vertical, 4)
     }
@@ -122,6 +127,16 @@ struct OverviewView: View {
             return "Syncing…"
         }
         return store.configuration.dryRun ? "Preview Sync" : "Sync Now"
+    }
+
+    private var syncButtonHelp: String {
+        if !store.isSkylightConnected {
+            return "Sign in to Skylight to sync"
+        }
+        if !store.configuration.hasEnabledSync {
+            return "Add and enable a source mapping first"
+        }
+        return "Synchronize enabled sources"
     }
 
     private var connectedFrameDescription: String {

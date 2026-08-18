@@ -3,7 +3,6 @@ import Foundation
 struct SkylightAPIClient: Sendable {
     static let currentBaseURL = URL(string: "https://app.ourskylight.com/api")!
     static let currentOAuthTokenURL = URL(string: "https://app.ourskylight.com/oauth/token")!
-    static let currentOAuthAuthorizeURL = URL(string: "https://app.ourskylight.com/oauth/authorize")!
     static let currentAPIVersion = "2026-05-01"
 
     let accessToken: String
@@ -29,20 +28,6 @@ struct SkylightAPIClient: Sendable {
         self.uploadTransport = uploadTransport
     }
 
-    @available(*, deprecated, message: "Use SkylightOAuthAuthenticator.login(email:password:) instead")
-    func createLegacySession(
-        email: String,
-        password: String
-    ) async throws -> SkylightResource<SkylightSessionAttributes> {
-        let response: SkylightSingleResponse<SkylightSessionAttributes> = try await sendJSON(
-            method: "POST",
-            path: ["sessions"],
-            body: SkylightLegacySessionRequest(email: email, password: password),
-            authenticated: false
-        )
-        return response.data
-    }
-
     func refreshOAuthToken(
         refreshToken: String,
         deviceFingerprint: String
@@ -56,27 +41,6 @@ struct SkylightAPIClient: Sendable {
                 "skylight_api_client_device_fingerprint": deviceFingerprint
             ]
         )
-    }
-
-    func oauthAuthorizeURL(
-        deviceFingerprint: String,
-        redirectURI: String = "https://ourskylight.com/welcome"
-    ) -> URL? {
-        var components = URLComponents(
-            url: SkylightAPIClient.currentOAuthAuthorizeURL,
-            resolvingAgainstBaseURL: false
-        )
-        components?.queryItems = [
-            URLQueryItem(name: "client_id", value: "skylight-mobile"),
-            URLQueryItem(name: "response_type", value: "code"),
-            URLQueryItem(name: "redirect_uri", value: redirectURI),
-            URLQueryItem(name: "scope", value: "everything"),
-            URLQueryItem(
-                name: "skylight_api_client_device_fingerprint",
-                value: deviceFingerprint
-            )
-        ]
-        return components?.url
     }
 
     func upload(

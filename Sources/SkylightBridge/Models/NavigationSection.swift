@@ -15,7 +15,8 @@ enum NavigationSection: String, CaseIterable, Identifiable, Sendable {
     /// Sync-source sections, shown as the top sidebar group.
     static let sources: [NavigationSection] = [
         .overview, .photos, .reminders, .chores, .recipes
-        // .meals // Temporarily hidden from the sidebar. Keep the implementation for re-enablement.
+        // .meals is hidden while unfinished. FeatureFlags.mealSyncEnabled keeps
+        // the sync engine off in lockstep; re-enable both together.
     ]
 
     /// Account and configuration sections, shown as the lower sidebar group.

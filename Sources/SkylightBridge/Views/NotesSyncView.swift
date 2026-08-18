@@ -18,7 +18,9 @@ struct NotesSyncView: View {
                     detail: store.notesAccessGranted
                         ? "\(store.notesFolders.count) folders are available."
                         : "macOS will ask permission to read the folders and notes you choose.",
-                    isAuthorized: store.notesAccessGranted
+                    isAuthorized: store.notesAccessGranted,
+                    deniedPane: "Privacy_Automation",
+                    isDenied: store.notesAccessDenied
                 ) {
                     Task { await store.requestNotesAccess() }
                 }

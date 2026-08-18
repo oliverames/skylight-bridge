@@ -78,7 +78,6 @@ struct ReminderSyncRecord: Identifiable, Codable, Sendable, Hashable {
     // files written before merge support.
     var lastSyncedTitle: String?
     var lastSyncedCompleted: Bool?
-    var tombstonedAt: Date?
 
     init(
         mappingID: UUID,
@@ -91,8 +90,7 @@ struct ReminderSyncRecord: Identifiable, Codable, Sendable, Hashable {
         lastSkylightModifiedAt: Date,
         contentFingerprint: String,
         lastSyncedTitle: String? = nil,
-        lastSyncedCompleted: Bool? = nil,
-        tombstonedAt: Date? = nil
+        lastSyncedCompleted: Bool? = nil
     ) {
         self.mappingID = mappingID
         self.frameID = frameID
@@ -105,7 +103,6 @@ struct ReminderSyncRecord: Identifiable, Codable, Sendable, Hashable {
         self.contentFingerprint = contentFingerprint
         self.lastSyncedTitle = lastSyncedTitle
         self.lastSyncedCompleted = lastSyncedCompleted
-        self.tombstonedAt = tombstonedAt
     }
 
     // Persisted struct: decode per field so future additions never strand old
@@ -123,7 +120,6 @@ struct ReminderSyncRecord: Identifiable, Codable, Sendable, Hashable {
         contentFingerprint = try container.decodeIfPresent(String.self, forKey: .contentFingerprint) ?? ""
         lastSyncedTitle = try container.decodeIfPresent(String.self, forKey: .lastSyncedTitle)
         lastSyncedCompleted = try container.decodeIfPresent(Bool.self, forKey: .lastSyncedCompleted)
-        tombstonedAt = try container.decodeIfPresent(Date.self, forKey: .tombstonedAt)
     }
 }
 

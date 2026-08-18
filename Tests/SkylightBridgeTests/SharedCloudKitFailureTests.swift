@@ -27,6 +27,14 @@ struct SharedCloudKitFailureTests {
         #expect(FeatureFlags.multiDeviceCoordinationEnabled == false)
     }
 
+    @Test("Meal sync stays off while its UI is hidden")
+    func mealSyncDisabledWhileHidden() {
+        // The Meals section is hidden from the sidebar and Overview. A meal
+        // selection enabled before the hiding must not keep syncing with no
+        // interface to see or stop it.
+        #expect(FeatureFlags.mealSyncEnabled == false)
+    }
+
     @Test("A missing production record type reads as the same schema-deployment condition")
     func identifiesMissingRecordType() {
         let error = NSError(

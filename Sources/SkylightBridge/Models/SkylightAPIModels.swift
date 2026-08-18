@@ -63,15 +63,6 @@ enum SkylightRelationshipData: Codable, Equatable, Sendable {
     }
 }
 
-struct SkylightLegacySessionRequest: Codable, Equatable, Sendable {
-    let email: String
-    let password: String
-}
-
-struct SkylightSessionAttributes: Codable, Equatable, Sendable {
-    let token: String
-}
-
 struct SkylightOAuthToken: Codable, Equatable, Sendable {
     let accessToken: String
     let refreshToken: String
