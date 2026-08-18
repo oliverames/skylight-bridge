@@ -1,3 +1,36 @@
+## 2026-08-17 - Four field-reported fixes: Notes folders, Notes unlink, TCC script paste, photo sync performance
+
+**What changed**: Four defects Oliver reported from home-server use, in three commits on top of 1.5.13 (unreleased; version still 1.5.13).
+
+1. **Notes folders never appeared** (`dca936e`). `notesFolders` was populated only inside `AppStore.requestNotesAccess()`, while `refreshSources()` reloaded Photos collections and Reminders lists and skipped Notes entirely. After the first launch the folder picker was empty even with Automation access already granted, so a saved folder showed no selection. Added `AppStore.loadNotesFolders()`, called from a `.task` on the Notes pages and from `refreshSources()` only when `AppleNotesStore.authorizationStatus() == .granted` (a definite answer implies Notes is already running, so no Apple Event silently launches it at startup). The picker also keeps a previously saved folder as an entry when the live list has not arrived, which otherwise made saving drop the link.
+
+2. **No way to unlink a Notes folder** (`dca936e`). The row menu offered only Edit. Added Remove Link to the row menu, the context menu, and the editor, behind a `confirmationDialog`, backed by `AppStore.removeNotesSelection(kind:)` which resets the `NotesSelection` while preserving its `id`, saves, and logs an Activity entry naming the unlinked folder.
+
+3. **The permission-fix paste did not work** (`a52aab8`). Root cause is zsh, not TCC: pasting the whole script into an interactive shell makes zsh treat the `!` in `#!/bin/bash` as a history expansion, producing exactly the `zsh: event not found: /bin/bash` in Oliver's screenshot. Interactive zsh also does not enable comments by default, so the comment block would have failed next. Replaced "Copy Fix Commands…" with "Save Fix Script…": `SystemSecurityDiagnostics.writePermissionGrantScript()` writes the script into Application Support at 0700, the view reveals it in Finder so it can be read before running, and the pasteboard gets only `permissionGrantCommand(forScriptAt:)`, a single `bash '<path>'` line with no `!` and no `#`.
+
+4. **Photo sync was slow and overwhelmed the machine** (`27ff5a0`). Three separate costs:
+   - `syncPhotos` rendered and JPEG-encoded **every** asset on **every** run, downloading from iCloud when needed, purely to compare the resulting hash with the hash already stored. Added `PhotoSyncRecord.sourceFingerprint` (asset id, modification date, adjustment date, pixel dimensions, adjustment state, mapping's `maximumLongEdge` and `jpegQuality`) via `PhotoDeduplication.sourceFingerprint(for:maximumLongEdge:jpegQuality:)`. A matching fingerprint skips the render and encode entirely. Records written before the field existed render once more and then store it, so the upgrade is self-healing.
+   - `checkpoint()` JSON-encodes, HMAC-seals, and atomically rewrites the *whole* sync state, and was called after every photo, making a run quadratic in record count. Added `markStateDirty()` / `checkpointIfDue()` coalescing at 25 changes; each domain still flushes at its end, and an upload keeps its own immediate write because losing that record means re-uploading the same bytes.
+   - The selected-photos editor sorted the whole selection through a `photoTitle`-lookup comparator *inside* `body` and built one non-lazy Form row per asset, so every generated Apple Intelligence name re-sorted and re-rendered the entire list. Display order now lives in `@State` and is rebuilt only on real changes, rows scroll in a `LazyVStack`, and names apply in batches of 10 with an "n of N" progress line.
+
+**Decisions made**:
+- Notes folders are **not** loaded unconditionally at startup. Reading them sends an Apple Event, which launches Notes; doing that on every launch is intrusive. The startup path runs only when the permission answer is already definite, and the Notes pages carry the general case.
+- Rejected a hard cap on Apple Intelligence photo naming. The on-device model is a single shared resource so the work stays sequential; the fix is that the UI no longer stalls while it runs, and progress is now visible. Hundreds of photos still take minutes.
+- The upload path keeps a per-item checkpoint while bookkeeping updates coalesce. Losing a bookkeeping update costs a recomputation; losing an upload record costs a duplicate upload.
+- `docs/PRODUCT_SPEC.md:21` already claimed the bridge records a "render fingerprint". It did not until now. The implementation moved to match the spec rather than the other way round; no doc edit was needed.
+
+**Verification**: 155 tests pass (`swift test`), up from 152. New coverage: an unchanged photo renders zero times when its fingerprint matches and older state gains a fingerprint on one more render; a photo with a stale fingerprint is re-rendered; the grant script is written 0700 and its copied command contains no `!`, `#`, or newline. `./script/build_and_run.sh build` produces a signed bundle. Commits `dca936e`, `a52aab8`, `27ff5a0` pushed to `origin/main`.
+
+**Left off at**: All four fixes are on `main`, unreleased. Version is still 1.5.13; no appcast, notarization, or DMG was produced this session.
+
+**Open questions**:
+- NEW: The new UI (Remove Link, the Save Fix Script panel) is built and logic-tested but **not visually verified**. Computer-use access was denied when requested. The BlockedPromptFix panel only renders under AMFI-disabling boot arguments anyway, so home-server is the only place to see it.
+- NEW: Decide whether these fixes ship as 1.5.14 or wait for more work. They are user-visible fixes to reports from real use, which argues for a release.
+- Still open (from 1.5.13): deploy the `ClientHeartbeat` and `SharedSyncState` record types to the CloudKit **production** schema, then flip `FeatureFlags.multiDeviceCoordinationEnabled` on. Needs a registered development device to run a Development build that publishes real records, then a console promote.
+- Still open (from 1.5.13): decide whether to revoke the Apple Development certificate created on 2026-08-13 (identity SHA-1 `6FFCB2B37E85086E8150CE4C7AD0F6CA0023A99A`).
+
+---
+
 ## 2026-08-13 - Skylight Bridge 1.5.13: gate undeployed multi-device coordination
 
 **What changed**: Added `FeatureFlags.multiDeviceCoordinationEnabled` (default false) and gated the three CloudKit paths that touch record types not deployed to production — `publishAndCheckHeartbeat` (ClientHeartbeat) inside `refreshSharediCloudState`, and `importSharedSyncState`/`publishSharedSyncState` (SharedSyncState). Shared preferences and selected-photo sync use already-deployed types (SharedPreferences, SharedPhotoMapping, SharedPhotoSelection) and keep running. A test asserts the flag ships off.
