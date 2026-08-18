@@ -92,7 +92,7 @@ The safe Skylight representation uses the recipe summary and freeform descriptio
 
 ### Meals
 
-The user chooses a separate Apple Notes folder, then selects every note or individual meal-plan notes. Meal entries are parsed from structured lines and matched to synchronized recipes when possible.
+The Meals workflow is hidden from the interface and its sync engine is gated off (`FeatureFlags.mealSyncEnabled`) until the workflow is finished; the description below is the intended behavior. The user chooses a separate Apple Notes folder, then selects every note or individual meal-plan notes. Meal entries are parsed from structured lines and matched to synchronized recipes when possible.
 
 ## Explicit exclusions
 
