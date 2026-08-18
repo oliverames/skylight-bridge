@@ -307,17 +307,6 @@ actor AppleNotesStore {
         return (1 ... descriptor.numberOfItems).compactMap { descriptor.atIndex($0) }
     }
 
-    private func requiredDescriptor(
-        in row: NSAppleEventDescriptor,
-        at index: Int,
-        field: String
-    ) throws -> NSAppleEventDescriptor {
-        guard let value = row.atIndex(index) else {
-            throw AppleNotesStoreError.malformedResponse("Missing \(field).")
-        }
-        return value
-    }
-
     private func requiredString(
         in row: NSAppleEventDescriptor,
         at index: Int,

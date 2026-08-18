@@ -45,15 +45,6 @@ enum PhotoDeduplication {
         return "\(userCaption) \(tag)"
     }
 
-    /// Strips the dedup tag from a caption for display.
-    static func userVisibleCaption(_ caption: String?) -> String? {
-        guard let caption else { return nil }
-        guard let range = caption.range(of: tagPrefix) else { return caption }
-        let stripped = String(caption[..<range.lowerBound])
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return stripped.isEmpty ? nil : stripped
-    }
-
     /// Describes the Apple asset revision and the render settings that produce
     /// a converted image. Two runs that agree on this string cannot produce
     /// different JPEG bytes, so a sync can trust its stored hash and skip the

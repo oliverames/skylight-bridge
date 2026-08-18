@@ -32,11 +32,11 @@ enum SystemSecurityDiagnostics {
         guard sysctlbyname("kern.bootargs", nil, &size, nil, 0) == 0, size > 0 else {
             return ""
         }
-        var buffer = [CChar](repeating: 0, count: size)
+        var buffer = [UInt8](repeating: 0, count: size)
         guard sysctlbyname("kern.bootargs", &buffer, &size, nil, 0) == 0 else {
             return ""
         }
-        return String(cString: buffer)
+        return String(decoding: buffer.prefix(while: { $0 != 0 }), as: UTF8.self)
     }
 
     /// A user-facing explanation when consent prompts cannot appear, or nil

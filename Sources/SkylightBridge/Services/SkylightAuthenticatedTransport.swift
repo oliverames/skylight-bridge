@@ -53,10 +53,6 @@ actor SkylightAuthenticatedTransport: SkylightTransport {
         return result
     }
 
-    func currentTokenPair() -> (accessToken: String, refreshToken: String) {
-        (accessToken, refreshToken)
-    }
-
     private func isIdempotent(method: String?) -> Bool {
         switch method {
         case "GET", "HEAD", "OPTIONS", "PUT", "DELETE": true

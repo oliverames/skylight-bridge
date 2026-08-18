@@ -836,38 +836,6 @@ actor SyncCoordinator {
         return result
     }
 
-    func purgeChoreMapping(
-        mappingID: UUID,
-        frameID: String,
-        side: ReminderMappingCleanupSide = .none
-    ) async throws -> Int {
-        var state = try await stateStore.loadSyncState()
-        let records = state.chores
-            .filter { $0.mappingID == mappingID && $0.frameID == frameID }
-            .sorted { $0.appleReminderID < $1.appleReminderID }
-        var affected = 0
-        for record in records {
-            switch side {
-            case .skylight:
-                try? await api.deleteChore(
-                    frameID: frameID,
-                    choreID: record.skylightSeriesID,
-                    applyToAll: record.lastSyncedRecurrence != nil
-                )
-                affected += 1
-            case .appleReminders:
-                try? await choreReminderSource?.syncRemoveChoreReminder(
-                    withID: record.appleReminderID
-                )
-                affected += 1
-            case .none:
-                break
-            }
-            state.chores.removeAll { $0.id == record.id }
-            try await stateStore.saveSyncState(state)
-        }
-        return affected
-    }
 
     private func syncPhotos(
         mappings: [PhotoMapping],

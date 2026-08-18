@@ -32,13 +32,6 @@ func dedupTagMissing() {
     #expect(hash == nil)
 }
 
-@Test("Photo dedup user-visible caption strips the tag")
-func dedupUserVisibleCaption() {
-    #expect(PhotoDeduplication.userVisibleCaption("Birthday [sb:a1b2c3d4e5f6]") == "Birthday")
-    #expect(PhotoDeduplication.userVisibleCaption("Just a regular caption") == "Just a regular caption")
-    #expect(PhotoDeduplication.userVisibleCaption("[sb:a1b2c3d4e5f6]") == nil)
-}
-
 @Test("Photo dedup finds a matching message in existing album messages")
 func dedupFindsDuplicate() {
     let hash = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"
