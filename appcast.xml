@@ -6,16 +6,16 @@
     <description>Signed updates for Skylight Bridge.</description>
     <language>en</language>
     <item>
-      <title>Version 1.5.13</title>
-      <sparkle:version>23</sparkle:version>
-      <sparkle:shortVersionString>1.5.13</sparkle:shortVersionString>
-      <description><![CDATA[<p>This release includes improvements and fixes.</p>]]></description>
-      <pubDate>Sat, 15 Aug 2026 01:11:27 +0000</pubDate>
-      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.5.13/Skylight.Bridge-1.5.13.dmg" sparkle:edSignature="2Zur3TkL+JTD1fvV45s0NBOvfi6ovRZrbMzvmN2w/6JpMhpGXI2GysLyf0q+AIhWDVoZwqtKLzRtK7WGnRovBQ==" length="6312675" type="application/octet-stream" />
+      <title>Version 1.6.0</title>
+      <sparkle:version>25</sparkle:version>
+      <sparkle:shortVersionString>1.6.0</sparkle:shortVersionString>
+      <description><![CDATA[<p>Adds Sign Out and Notes-folder unlinking, fixes the empty Notes folder pickers and the Diagnostics fix script, and makes photo sync dramatically faster on unchanged photos.</p>]]></description>
+      <pubDate>Tue, 18 Aug 2026 00:29:25 +0000</pubDate>
+      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.6.0/Skylight.Bridge-1.6.0.dmg" sparkle:edSignature="YHwzOXRRESKktTKfq1y7ZCTP9jBtknDUJVqnPSdMH8fIkqK+GegtonFAnnr06T4F04I6me8wtv8uMBHBmuuBCg==" length="6391011" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: YIA5bt32YsMC3qBJMf3W2V8lFDIAEcQrMFleS+0CWESYZzaFEzg3EjmnkhQ+UaNWUD6jv6gRefn1b/xjYK1zDA==
-length: 1009
+edSignature: cRR+fJAmPFuapVLknKuKTeMgNFE4bJFLDmeF5yBjBJAUBz1PPtFMI0RbMXoEHQNXtNuG92J4xO1DwokzomKlCQ==
+length: 1132
 -->
