@@ -32,6 +32,25 @@ func dedupTagMissing() {
     #expect(hash == nil)
 }
 
+@Test("Tag extraction ignores bracketed name text and keeps the last valid tag")
+func dedupTagSurvivesBracketedNameText() {
+    let shadowed = PhotoDeduplication.hash(
+        fromCaption: "My [sb:zzzzzzzzzzzz] pic [sb:a1b2c3d4e5f6]"
+    )
+    #expect(shadowed == "a1b2c3d4e5f6")
+
+    let shortPrefix = PhotoDeduplication.hash(
+        fromCaption: "Note [sb:oops] about the [sb:a1b2c3d4e5f6] day"
+    )
+    #expect(shortPrefix == "a1b2c3d4e5f6")
+}
+
+@Test("Tag extraction rejects tags that are not twelve hex characters")
+func dedupTagRejectsNonHex() {
+    let hash = PhotoDeduplication.hash(fromCaption: "Beach [sb:notahexvalue]")
+    #expect(hash == nil)
+}
+
 @Test("Photo dedup finds a matching message in existing album messages")
 func dedupFindsDuplicate() {
     let hash = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"

@@ -18,9 +18,15 @@ extension String {
 
         if let separator = value.firstIndex(where: { $0 == "." || $0 == ")" }) {
             let prefix = value[..<separator]
-            if !prefix.isEmpty, prefix.allSatisfy(\.isNumber) {
-                return String(value[value.index(after: separator)...]).trimmed
+            let after = value.index(after: separator)
+            // A numbered marker is digits followed by ".", ")" and then
+            // whitespace or the end of the line. A leading decimal such as
+            // "0.5 cup sugar" continues with another character, so it stays.
+            guard !prefix.isEmpty, prefix.allSatisfy(\.isNumber),
+                  after == value.endIndex || value[after].isWhitespace else {
+                return value
             }
+            return String(value[after...]).trimmed
         }
 
         return value

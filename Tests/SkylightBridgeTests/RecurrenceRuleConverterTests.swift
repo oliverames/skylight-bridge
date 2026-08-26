@@ -42,6 +42,30 @@ struct RecurrenceRuleConverterTests {
         #expect(try RecurrenceRuleConverter.parsedRule(from: eventKit) == parsed)
     }
 
+    @Test("A date-only UNTIL covers its whole final day in local time")
+    func dateOnlyUntilCoversFinalDay() throws {
+        let rule = try RecurrenceRuleConverter.parse("FREQ=DAILY;UNTIL=20260731")
+        let until = try #require(rule.until)
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone.current
+        let components = calendar.dateComponents(
+            [.year, .month, .day, .hour, .minute], from: until
+        )
+        #expect(components.year == 2026)
+        #expect(components.month == 7)
+        #expect(components.day == 31)
+        #expect(components.hour == 23)
+        #expect(components.minute == 59)
+    }
+
+    @Test("COUNT together with UNTIL is rejected instead of dropping COUNT")
+    func rejectsCountWithUntil() {
+        #expect(throws: RecurrenceRuleConverter.ConversionError.self) {
+            try RecurrenceRuleConverter.parse("FREQ=WEEKLY;COUNT=8;UNTIL=20260731T235959Z")
+        }
+    }
+
     @Test("Skylight chore time slots parse and format without loss")
     func roundTripsByHour() throws {
         let parsed = try RecurrenceRuleConverter.parse(

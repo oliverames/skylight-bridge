@@ -18,4 +18,13 @@ struct MealPlanParserTests {
             PlannedMeal(day: "Wednesday", category: "Lunch", recipeTitle: "Leftovers")
         ])
     }
+
+    @Test("An over-long comment line is rejected like any other line")
+    func rejectsOverlongCommentLine() {
+        let longComment = "#" + String(repeating: "x", count: 600)
+
+        #expect(throws: MealPlanParserError.fieldTooLong) {
+            try MealPlanParser.parse(longComment)
+        }
+    }
 }

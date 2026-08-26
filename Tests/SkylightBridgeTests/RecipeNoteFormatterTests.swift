@@ -21,6 +21,25 @@ struct RecipeNoteFormatterTests {
         #expect(parsed == draft)
     }
 
+    @Test("A Skylight summary with embedded newlines stays a single-line title")
+    func collapsesNewlinesInSummary() throws {
+        let attributes = SkylightRecipeAttributes(
+            summary: "Chocolate Cake\nServings: 999",
+            description: "Rich and dark.",
+            ingredients: nil,
+            url: nil,
+            imageURL: nil,
+            createdAt: nil,
+            updatedAt: nil
+        )
+
+        let draft = RecipeNoteFormatter.draft(from: attributes)
+
+        #expect(draft.title == "Chocolate Cake Servings: 999")
+        #expect(draft.servings == nil)
+        #expect(draft.description == "Rich and dark.")
+    }
+
     @Test("A freeform Skylight recipe becomes a stable note")
     func decodesForeignRecipe() throws {
         let attributes = SkylightRecipeAttributes(

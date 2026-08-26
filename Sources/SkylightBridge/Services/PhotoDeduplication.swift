@@ -24,15 +24,24 @@ enum PhotoDeduplication {
     }
 
     /// Returns the short hash extracted from a dedup tag, or nil if the
-    /// caption does not contain one.
+    /// caption does not contain one. A user-visible name may itself embed
+    /// bracketed text, so every `[sb:` occurrence is considered and the last
+    /// well-formed tag (12 hex characters) wins.
     static func hash(fromCaption caption: String?) -> String? {
         guard let caption else { return nil }
-        guard let range = caption.range(of: tagPrefix) else { return nil }
-        let afterPrefix = caption[range.upperBound...]
-        guard let closeBracket = afterPrefix.firstIndex(of: "]") else { return nil }
-        let extracted = String(afterPrefix[..<closeBracket])
-        guard extracted.count == hashLength else { return nil }
-        return extracted
+        var extractedHash: String?
+        var searchStart = caption.startIndex
+        while let range = caption.range(of: tagPrefix, range: searchStart..<caption.endIndex) {
+            defer { searchStart = range.upperBound }
+            let afterPrefix = caption[range.upperBound...]
+            guard let closeBracket = afterPrefix.firstIndex(of: "]") else { continue }
+            let candidate = String(afterPrefix[..<closeBracket])
+            guard candidate.count == hashLength, candidate.allSatisfy(\.isHexDigit) else {
+                continue
+            }
+            extractedHash = candidate
+        }
+        return extractedHash
     }
 
     /// Builds the caption sent to Skylight: the user-visible name (if any)
@@ -51,12 +60,17 @@ enum PhotoDeduplication {
     /// render and encode entirely. Photos bumps `modificationDate` on any edit
     /// and `adjustmentDate` on an edit to the rendered appearance, and pixel
     /// dimensions catch a replaced original.
+    ///
+    /// Pass `backgroundColor` once a call site can vary it; omitting it (the
+    /// default) keeps fingerprints written before that field existed valid, so
+    /// existing libraries do not re-render.
     static func sourceFingerprint(
         for asset: ApplePhotoAssetSnapshot,
         maximumLongEdge: Int,
-        jpegQuality: Double
+        jpegQuality: Double,
+        backgroundColor: AppleRGBColor? = nil
     ) -> String {
-        let fields: [String] = [
+        var fields: [String] = [
             asset.id,
             asset.modificationDate.map { String($0.timeIntervalSinceReferenceDate) } ?? "-",
             asset.adjustmentDate.map { String($0.timeIntervalSinceReferenceDate) } ?? "-",
@@ -66,6 +80,13 @@ enum PhotoDeduplication {
             String(maximumLongEdge),
             String(format: "%.4f", jpegQuality)
         ]
+        if let backgroundColor {
+            fields.append(contentsOf: [
+                String(backgroundColor.red),
+                String(backgroundColor.green),
+                String(backgroundColor.blue)
+            ])
+        }
         return fields.joined(separator: "|")
     }
 

@@ -100,7 +100,14 @@ enum RecipeNoteFormatter {
     /// from the Skylight app stay as description text with the structured
     /// ingredient list merged in.
     static func draft(from attributes: SkylightRecipeAttributes) -> RecipeDraft {
-        let title = (attributes.summary ?? "").trimmed
+        // A Skylight-authored summary is a single line by convention; collapse
+        // any embedded newline so it cannot masquerade as the note's title
+        // line or push the real title into a metadata field during parsing.
+        let title = (attributes.summary ?? "")
+            .replacingOccurrences(of: "\r\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmed
         let safeTitle = title.isEmpty ? "Untitled Recipe" : title
         let structuredIngredients = (attributes.ingredients ?? [])
             .map(\.trimmed)

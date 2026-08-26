@@ -116,6 +116,13 @@ enum RecurrenceRuleConverter {
         }
 
         guard let frequency else { throw ConversionError.malformed(rrule) }
+        // RFC 5545 forbids UNTIL and COUNT in one rule. EventKit could hold
+        // only one of them, so accepting both would silently drop COUNT and
+        // narrow the schedule; throwing degrades to recurrenceUnsupported
+        // instead, which both sync directions already fence off.
+        if until != nil, count != nil {
+            throw ConversionError.unsupportedComponent("COUNT together with UNTIL")
+        }
         return ParsedRecurrenceRule(
             frequency: frequency,
             interval: interval,
@@ -258,13 +265,27 @@ enum RecurrenceRuleConverter {
     }
 
     /// UNTIL appears both as a bare date ("20260731") and as a UTC timestamp
-    /// ("20260731T235959Z") in the wild; accept both.
+    /// ("20260731T235959Z") in the wild; accept both. A bare date means the
+    /// whole final day (RFC 5545), so it becomes 23:59:59 in the local time
+    /// zone rather than UTC midnight, which would cut off that day's
+    /// occurrences for any event later in the day.
     private static func parseUntilDate(_ value: String) -> Date? {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(identifier: "UTC")
-        formatter.dateFormat = value.contains("T") ? "yyyyMMdd'T'HHmmss'Z'" : "yyyyMMdd"
-        return formatter.date(from: value)
+        if value.contains("T") {
+            formatter.timeZone = TimeZone(identifier: "UTC")
+            formatter.dateFormat = "yyyyMMdd'T'HHmmss'Z'"
+            return formatter.date(from: value)
+        }
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyyMMdd"
+        guard let dayStart = formatter.date(from: value) else { return nil }
+        return Calendar.current.date(
+            bySettingHour: 23,
+            minute: 59,
+            second: 59,
+            of: dayStart
+        )
     }
 
     private static func formatUntilDate(_ date: Date) -> String {

@@ -41,6 +41,26 @@ struct RecipeParserTests {
         #expect(recipe.instructions.isEmpty)
     }
 
+    @Test("Decimal quantities survive list-marker stripping")
+    func preservesDecimalQuantities() throws {
+        let note = """
+        Cookies
+
+        Ingredients
+        0.5 cup sugar
+        1.5 cups milk
+        2) one whole egg
+
+        Instructions
+        1. Whisk the dry mix.
+        """
+
+        let recipe = try RecipeParser.parse(note)
+
+        #expect(recipe.ingredients == ["0.5 cup sugar", "1.5 cups milk", "one whole egg"])
+        #expect(recipe.instructions == ["Whisk the dry mix."])
+    }
+
     @Test("A bullet-packed metadata line splits into separate fields")
     func splitsBulletPackedFields() throws {
         let note = """

@@ -34,11 +34,11 @@ enum MealPlanParser {
         for (index, rawLine) in note.components(separatedBy: .newlines).enumerated() {
             let line = rawLine.trimmed
             guard !line.isEmpty else { continue }
-            if line.hasPrefix("#") || ["meal plan", "weekly meal plan"].contains(line.lowercased()) {
-                continue
-            }
             guard line.count <= maximumLineCharacters else {
                 throw MealPlanParserError.fieldTooLong
+            }
+            if line.hasPrefix("#") || ["meal plan", "weekly meal plan"].contains(line.lowercased()) {
+                continue
             }
             guard let meal = parseLine(line) else {
                 throw MealPlanParserError.invalidLine(index + 1)
