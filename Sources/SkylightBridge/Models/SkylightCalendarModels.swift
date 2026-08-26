@@ -88,7 +88,6 @@ struct SkylightCalendarAccountAttributes: Codable, Equatable, Sendable {
 struct SkylightSourceCalendarAttributes: Codable, Equatable, Sendable {
     let label: String?
     let kind: String?
-    let editable: Bool?
     let enabled: Bool?
     let color: String?
 }

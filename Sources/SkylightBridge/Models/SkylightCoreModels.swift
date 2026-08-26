@@ -37,13 +37,11 @@ struct SkylightFrameAttributes: Codable, Equatable, Sendable {
     let name: String?
     let timezone: String?
     let plus: Bool?
-    let featureBundle: SkylightJSONValue?
 
     enum CodingKeys: String, CodingKey {
         case name
         case timezone
         case plus
-        case featureBundle = "feature_bundle"
     }
 }
 
@@ -190,14 +188,12 @@ struct SkylightUserAccessRequest: Codable, Equatable, Sendable {
 struct SkylightCategoryAttributes: Codable, Equatable, Sendable {
     let label: String?
     let color: String?
-    let profilePicURL: String?
     let linkedToProfile: Bool?
     let selectedForChoreChart: Bool?
 
     enum CodingKeys: String, CodingKey {
         case label
         case color
-        case profilePicURL = "profile_pic_url"
         case linkedToProfile = "linked_to_profile"
         case selectedForChoreChart = "selected_for_chore_chart"
     }

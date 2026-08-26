@@ -70,7 +70,6 @@ final class ApplePhotoLibrary: NSObject {
         for index in 0 ..< topLevel.count {
             append(
                 collection: topLevel.object(at: index),
-                parentID: nil,
                 results: &results,
                 seenIdentifiers: &seenIdentifiers
             )
@@ -94,8 +93,7 @@ final class ApplePhotoLibrary: NSObject {
                 ApplePhotoCollectionSnapshot(
                     id: collection.localIdentifier,
                     title: collection.localizedTitle ?? "Untitled Smart Album",
-                    kind: kind,
-                    parentID: nil
+                    kind: kind
                 )
             )
         }
@@ -116,8 +114,7 @@ final class ApplePhotoLibrary: NSObject {
                 ApplePhotoCollectionSnapshot(
                     id: collection.localIdentifier,
                     title: collection.localizedTitle ?? "Untitled Shared Album",
-                    kind: .sharedAlbum,
-                    parentID: nil
+                    kind: .sharedAlbum
                 )
             )
         }
@@ -278,7 +275,6 @@ final class ApplePhotoLibrary: NSObject {
 
     private func append(
         collection: PHCollection,
-        parentID: String?,
         results: inout [ApplePhotoCollectionSnapshot],
         seenIdentifiers: inout Set<String>
     ) {
@@ -291,8 +287,7 @@ final class ApplePhotoLibrary: NSObject {
                 ApplePhotoCollectionSnapshot(
                     id: album.localIdentifier,
                     title: album.localizedTitle ?? "Untitled Album",
-                    kind: .album,
-                    parentID: parentID
+                    kind: .album
                 )
             )
             return
@@ -306,8 +301,7 @@ final class ApplePhotoLibrary: NSObject {
             ApplePhotoCollectionSnapshot(
                 id: folder.localIdentifier,
                 title: folder.localizedTitle ?? "Untitled Folder",
-                kind: .folder,
-                parentID: parentID
+                kind: .folder
             )
         )
 
@@ -315,7 +309,6 @@ final class ApplePhotoLibrary: NSObject {
         for index in 0 ..< children.count {
             append(
                 collection: children.object(at: index),
-                parentID: folder.localIdentifier,
                 results: &results,
                 seenIdentifiers: &seenIdentifiers
             )

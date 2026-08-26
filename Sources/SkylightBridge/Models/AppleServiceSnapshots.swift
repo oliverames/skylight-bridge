@@ -36,7 +36,6 @@ struct ApplePhotoCollectionSnapshot: Identifiable, Sendable, Hashable {
     let id: String
     let title: String
     let kind: ApplePhotoCollectionKind
-    let parentID: String?
 }
 
 enum ApplePhotoMediaKind: String, Sendable, Codable {
@@ -237,7 +236,6 @@ struct AppleNotesFolderSnapshot: Identifiable, Sendable, Hashable {
 struct AppleNoteAttachmentSnapshot: Identifiable, Sendable, Hashable {
     let id: String
     let name: String
-    let contentIdentifier: String
     let url: URL?
     let creationDate: Date?
     let modificationDate: Date?
