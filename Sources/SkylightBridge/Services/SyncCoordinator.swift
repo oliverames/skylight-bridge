@@ -1995,9 +1995,12 @@ actor SyncCoordinator {
                     todayStatus: status
                 )
                 let record = records.first { $0.skylightSeriesID == seriesID }
-                let modifiedAt = record?.contentFingerprint == fingerprint
-                    ? record!.lastSkylightModifiedAt
-                    : syncTime
+                let modifiedAt: Date
+                if let record, record.contentFingerprint == fingerprint {
+                    modifiedAt = record.lastSkylightModifiedAt
+                } else {
+                    modifiedAt = syncTime
+                }
                 return SkylightChoreSnapshot(
                     id: seriesID,
                     title: resource.attributes.summary ?? "Untitled Chore",
