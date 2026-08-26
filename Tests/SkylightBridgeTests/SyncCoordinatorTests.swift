@@ -1728,6 +1728,65 @@ struct SyncCoordinatorTests {
         #expect(Set(persisted.photos.map(\.skylightMessageID)) == ["message-1"])
     }
 
+    @Test("A run over unchanged photos renders nothing and writes state a bounded number of times")
+    func unchangedPhotosCoalesceCheckpoints() async throws {
+        let mappingID = UUID()
+        let assets = (1...30).map { photoAsset(id: "asset-\($0)") }
+        var mapping = PhotoMapping(
+            name: "Our House",
+            sourceCollectionID: "apple-album",
+            sourceCollectionTitle: "Our House",
+            destinationAlbumID: "album-1",
+            destinationAlbumTitle: "Our House"
+        )
+        mapping.id = mappingID
+
+        var initialState = SyncState()
+        initialState.photos = assets.map { asset -> PhotoSyncRecord in
+            var record = photoRecord(
+                mappingID: mappingID, appleAssetID: asset.id, messageID: "msg-\(asset.id)"
+            )
+            record.sourceFingerprint = PhotoDeduplication.sourceFingerprint(
+                for: asset,
+                maximumLongEdge: mapping.maximumLongEdge,
+                jpegQuality: mapping.jpegQuality
+            )
+            return record
+        }
+        let api = CoordinatorAPIStub()
+        await api.configureAlbums([
+            SkylightResource(
+                id: "album-1",
+                attributes: SkylightAlbumAttributes(
+                    title: "Our House", messageCount: 30, createdAt: nil, updatedAt: nil
+                )
+            )
+        ])
+        let state = CoordinatorStateStore(state: initialState)
+        let photoSource = CoordinatorPhotoSource(collections: ["apple-album": assets])
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            photoSource: photoSource,
+            imageConverter: CoordinatorImageConverter(convertedAssetID: nil),
+            state: state
+        )
+        var configuration = AppConfiguration.empty
+        configuration.account.frameID = "frame-1"
+        configuration.dryRun = false
+        configuration.photoMappings = [mapping]
+
+        _ = try await coordinator.sync(configuration: configuration)
+
+        let persisted = try await state.loadSyncState()
+
+        // Every asset matches its fingerprint, so the run neither renders
+        // nor writes per photo; only domain-end bookkeeping saves remain.
+        #expect(await photoSource.renderCount == 0)
+        #expect(await state.saveCount < assets.count)
+        #expect(persisted.photos.count == assets.count)
+    }
+
     @Test("Completing a one-off chore omits instance fields Skylight rejects (HTTP 422)")
     func completesNonRecurringChoreWithoutInstanceFields() async throws {
         let today = Date(timeIntervalSince1970: 1_784_131_200)
@@ -3024,27 +3083,26 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
             )
         )
     }
-    func getMessage(frameID: String, messageID: String) async throws -> SkylightResource<SkylightPhotoMessageAttributes> { throw CoordinatorStubError.unexpectedCall }
-    func listMessages(frameID: String, page: Int?, syncToken: String?, pageToken: String?) async throws -> SkylightPhotoMessagesResponse {
-        SkylightPhotoMessagesResponse(
-            data: uploadedMessages.map { message in
-                SkylightResource(
-                    id: message.id,
-                    attributes: SkylightPhotoMessageAttributes(
-                        status: "downloaded",
-                        assetType: "image",
-                        createdAt: nil,
-                        updatedAt: nil,
-                        thumbnailURL: nil,
-                        assetURL: nil,
-                        senderID: nil,
-                        caption: message.caption
-                    )
-                )
-            },
-            meta: nil
+    func getMessage(frameID: String, messageID: String) async throws -> SkylightResource<SkylightPhotoMessageAttributes> {
+        guard let message = uploadedMessages.first(where: { $0.id == messageID }) else {
+            // The normal post-PUT processing window: not queryable yet.
+            throw SkylightAPIError.httpStatus(code: 404, endpoint: "messages", body: "")
+        }
+        return SkylightResource(
+            id: message.id,
+            attributes: SkylightPhotoMessageAttributes(
+                status: "downloaded",
+                assetType: "image",
+                createdAt: nil,
+                updatedAt: nil,
+                thumbnailURL: nil,
+                assetURL: nil,
+                senderID: nil,
+                caption: message.caption
+            )
         )
     }
+    func listMessages(frameID: String, page: Int?, syncToken: String?, pageToken: String?) async throws -> SkylightPhotoMessagesResponse { throw CoordinatorStubError.unexpectedCall }
     func createRecipe(frameID: String, request: SkylightRecipeRequest) async throws -> SkylightResource<SkylightRecipeAttributes> {
         calls.createdRecipes += 1
         recipeRequests.append(request)

@@ -1304,26 +1304,25 @@ actor SyncCoordinator {
         var consecutiveFailures = 0
         for _ in 0..<40 {
             do {
-                let response = try await api.listMessages(
+                let message = try await api.getMessage(
                     frameID: frameID,
-                    page: nil,
-                    syncToken: nil,
-                    pageToken: "__START__"
+                    messageID: messageID
                 )
                 consecutiveFailures = 0
-                if let message = response.data.first(where: { $0.id == messageID }) {
-                    switch message.attributes.status {
-                    case "awaiting_download", "downloaded":
-                        return
-                    case "invalid_asset_type":
-                        throw SyncCoordinatorError.photoProcessingFailed(
-                            messageID: messageID,
-                            status: "invalid asset type"
-                        )
-                    default:
-                        break
-                    }
+                switch message.attributes.status {
+                case "awaiting_download", "downloaded":
+                    return
+                case "invalid_asset_type":
+                    throw SyncCoordinatorError.photoProcessingFailed(
+                        messageID: messageID,
+                        status: "invalid asset type"
+                    )
+                default:
+                    break
                 }
+            } catch where Self.isAlreadyAbsent(error) {
+                // Immediately after the PUT the message may not be queryable
+                // yet; that is the normal processing window, not a failure.
             } catch {
                 // An API failure is not "still processing". A brief burst is
                 // tolerated, but a persistent one surfaces its real error;
@@ -1600,7 +1599,10 @@ actor SyncCoordinator {
                         ),
                         in: &state
                     )
-                    try await checkpoint(state, dryRun: dryRun)
+                    // Updates replay idempotently, so their record writes
+                    // coalesce like photos; a lost one costs a re-update.
+                    markStateDirty()
+                    try await checkpointIfDue(state, dryRun: dryRun)
 
                 case let .updateApple(appleID, remoteID):
                     guard let remote = remoteByID[remoteID] else { continue }
@@ -1622,7 +1624,8 @@ actor SyncCoordinator {
                         ),
                         in: &state
                     )
-                    try await checkpoint(state, dryRun: dryRun)
+                    markStateDirty()
+                    try await checkpointIfDue(state, dryRun: dryRun)
 
                 case let .merge(appleID, remoteID, title, isCompleted):
                     guard appleByID[appleID] != nil else { continue }
@@ -1650,7 +1653,10 @@ actor SyncCoordinator {
                         ),
                         in: &state
                     )
-                    try await checkpoint(state, dryRun: dryRun)
+                    // A lost merge replays to the same values from the same
+                    // baselines, so its write coalesces too.
+                    markStateDirty()
+                    try await checkpointIfDue(state, dryRun: dryRun)
 
                 case let .deleteRemote(remoteID):
                     try await api.deleteListItem(
