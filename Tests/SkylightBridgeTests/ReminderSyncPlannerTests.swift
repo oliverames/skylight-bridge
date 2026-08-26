@@ -24,9 +24,38 @@ struct ReminderSyncPlannerTests {
         #expect(actions == [.createRemote(appleID: "apple-1")])
     }
 
+    @Test("A remote-suppressed link plans nothing and blocks re-creation")
+    func suppressedLinkPlansNothing() {
+        let date = Date(timeIntervalSince1970: 100)
+        let apple = ReminderSnapshot(
+            id: "apple-1", title: "Take meds", notes: nil,
+            isCompleted: false, modifiedAt: date
+        )
+        let link = ReminderSyncLink(
+            appleID: "apple-1",
+            skylightID: "remote-gone",
+            lastAppleModifiedAt: date,
+            lastSkylightModifiedAt: date,
+            baselineTitle: "Take meds",
+            baselineCompleted: false,
+            remoteSuppressedAt: date
+        )
+
+        let actions = ReminderSyncPlanner.plan(
+            apple: [apple],
+            skylight: [],
+            links: [link],
+            direction: .twoWay,
+            conflictPolicy: .newestWins
+        )
+
+        // Neither a delete of the spared Apple reminder nor a re-create of
+        // the deleted Skylight item may be planned.
+        #expect(actions.isEmpty)
+    }
+
     @Test("A sub-millisecond baseline drift plans no update")
-    func toleratesLossyBaselineRoundtrip() {
-        // The sealed state file stores dates as Unix seconds; the 1970↔2001
+    func toleratesLossyBaselineRoundtrip() {        // The sealed state file stores dates as Unix seconds; the 1970↔2001
         // epoch conversion can decode a baseline fractionally below the live
         // EventKit date it was copied from. That drift must not read as an edit.
         let liveDate = Date(timeIntervalSinceReferenceDate: 805_000_000.123456789)

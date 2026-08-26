@@ -91,9 +91,11 @@ struct RemindersSyncView: View {
             Button("Also Delete Items from Skylight", role: .destructive) {
                 delete(mapping, cleanup: .skylight)
             }
+            .disabled(store.isSyncing)
             Button("Also Delete Items from Apple Reminders", role: .destructive) {
                 delete(mapping, cleanup: .appleReminders)
             }
+            .disabled(store.isSyncing)
             Button("Cancel", role: .cancel) { mappingToDelete = nil }
         } message: { mapping in
             Text("“\(mapping.sourceListTitle)” is linked to “\(mapping.destinationListTitle)”. Choose whether to also remove the items this mapping synced from one side. Neither list itself is deleted.")

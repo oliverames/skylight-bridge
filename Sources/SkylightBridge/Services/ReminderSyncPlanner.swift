@@ -101,8 +101,11 @@ enum ReminderSyncPlanner {
         let linkedAppleIDs = Set(links.map(\.appleID))
         let linkedSkylightIDs = Set(links.map(\.skylightID))
 
+        // Remote-suppressed links (Skylight deleted a recurring item and the
+        // Apple side was spared) plan no actions of their own. They still
+        // count as linked above, so neither side re-creates the item.
         var actions = linkedActions(
-            links: links,
+            links: links.filter { $0.remoteSuppressedAt == nil },
             appleByID: appleByID,
             skylightByID: skylightByID,
             direction: direction,

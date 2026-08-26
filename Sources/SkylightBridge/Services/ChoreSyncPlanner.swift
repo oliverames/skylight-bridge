@@ -146,7 +146,14 @@ enum ChoreSyncPlanner {
 
         let remoteCompleted = remote.todayStatus == .complete || remote.todayStatus == .skipped
         let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: todayDate) ?? .distantFuture
-        let appleRolledForward = if let baseline = link.baselineDueDate, let due = apple.dueDate {
+        // A rolled-forward due date signals completion only for a genuinely
+        // recurring chore (EventKit spawns the next occurrence), including a
+        // degraded rule it still advances. Postponing a one-off chore is a
+        // reschedule, not a completion.
+        let rollsOccurrenceForward = apple.recurrence != nil || apple.recurrenceUnsupported
+        let appleRolledForward = if rollsOccurrenceForward,
+                                     let baseline = link.baselineDueDate,
+                                     let due = apple.dueDate {
             due > baseline && baseline < tomorrow
         } else {
             false

@@ -85,9 +85,10 @@ struct PhotosSyncView: View {
         ) { mapping in
             Button("Cancel", role: .cancel) { mappingToDelete = nil }
             Button("Delete", role: .destructive) { delete(mapping) }
-        } message: { mapping in
-            Text("This removes the “\(mapping.name)” configuration and deletes the photos it added to Skylight. Your Apple Photos library is not changed.")
-        }
+                .disabled(store.isSyncing)
+            } message: { _ in
+                Text("The Skylight copies this mapping created are removed. Your Apple Photos library is never changed.")
+            }
     }
 
     private func save(_ mapping: PhotoMapping) {

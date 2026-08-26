@@ -220,8 +220,13 @@ extension AppStore {
                 contentFingerprint: ""
             ))
         }
-        let existingRecipeKeys = Set(state.notes.filter { $0.kind == .recipes }.map { "recipes:\($0.appleNoteID)" })
-        for link in merged.recipeLinks where !existingRecipeKeys.contains(link.id) {
+        // Keyed by frame and note, mirroring NoteSyncRecord.id, so links from
+        // another device are not re-imported as duplicates for this frame.
+        let existingRecipeKeys = Set(state.notes.filter { $0.kind == .recipes }.map {
+            "\($0.frameID):\($0.appleNoteID)"
+        })
+        for link in merged.recipeLinks
+        where !existingRecipeKeys.contains("\(link.frameID):\(link.appleNoteID)") {
             state.notes.append(NoteSyncRecord(
                 kind: .recipes,
                 frameID: link.frameID,

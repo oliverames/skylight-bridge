@@ -847,9 +847,56 @@ struct SyncCoordinatorTests {
         #expect(persisted.photoAlbums.isEmpty)
     }
 
-    @Test("A bridge album that still holds photos is kept when the mapping is deleted")
-    func purgePhotoMappingKeepsNonEmptyAlbum() async throws {
+    @Test("A transient failure during photo purge keeps the records for a retry")
+    func transientPurgeFailureKeepsRecords() async throws {
         let mappingID = UUID()
+        var initial = SyncState()
+        initial.photos = [
+            photoRecord(mappingID: mappingID, appleAssetID: "a1", messageID: "m1"),
+            photoRecord(mappingID: mappingID, appleAssetID: "a2", messageID: "m2")
+        ]
+        let api = CoordinatorAPIStub()
+        await api.configureDeleteMessageFailure(
+            SkylightAPIError.httpStatus(code: 503, endpoint: "messages", body: "")
+        )
+        let state = CoordinatorStateStore(state: initial)
+        let coordinator = makeCoordinator(api: api, reminders: [], state: state)
+
+        var caught: (any Error)?
+        do {
+            _ = try await coordinator.purgePhotoMapping(mappingID: mappingID, frameID: "frame-1")
+        } catch {
+            caught = error
+        }
+        let persisted = try await state.loadSyncState()
+
+        #expect(caught != nil)
+        #expect(persisted.photos.count == 2)
+    }
+
+    @Test("A Skylight copy that is already gone counts as purged")
+    func alreadyAbsentMessageCountsAsPurged() async throws {
+        let mappingID = UUID()
+        var initial = SyncState()
+        initial.photos = [
+            photoRecord(mappingID: mappingID, appleAssetID: "a1", messageID: "m1")
+        ]
+        let api = CoordinatorAPIStub()
+        await api.configureDeleteMessageFailure(
+            SkylightAPIError.httpStatus(code: 404, endpoint: "messages", body: "")
+        )
+        let state = CoordinatorStateStore(state: initial)
+        let coordinator = makeCoordinator(api: api, reminders: [], state: state)
+
+        let purge = try await coordinator.purgePhotoMapping(mappingID: mappingID, frameID: "frame-1")
+        let persisted = try await state.loadSyncState()
+
+        #expect(purge.photos == 1)
+        #expect(persisted.photos.isEmpty)
+    }
+
+    @Test("A bridge album that still holds photos is kept when the mapping is deleted")
+    func purgePhotoMappingKeepsNonEmptyAlbum() async throws {        let mappingID = UUID()
         var initial = SyncState()
         initial.photos = [photoRecord(mappingID: mappingID, appleAssetID: "a1", messageID: "m1")]
         initial.photoAlbums = [
@@ -1354,6 +1401,331 @@ struct SyncCoordinatorTests {
         #expect(choreSource.createdReminders.isEmpty)
         #expect(await api.choreRequests.isEmpty)
         #expect(summary.chores.applied == 3)
+    }
+
+    @Test("A Skylight-deleted recurring reminder is not resurrected on the next sync")
+    func skylightDeletedRecurringReminderStaysDeleted() async throws {
+        let fixedNow = Date(timeIntervalSince1970: 1_000_000)
+        let mappingID = UUID()
+        let api = CoordinatorAPIStub()
+        await api.configureLists(
+            [SkylightResource(
+                id: "remote-list",
+                attributes: SkylightListAttributes(
+                    label: "Family",
+                    color: nil,
+                    kind: .toDo,
+                    hideOnDevice: nil
+                )
+            )],
+            items: []
+        )
+        var initialState = SyncState()
+        initialState.reminders = [
+            reminderRecordFor(mappingID: mappingID, appleID: "apple-recur", itemID: "remote-item-1")
+        ]
+        let state = CoordinatorStateStore(state: initialState)
+
+        // The recurring item was deleted on Skylight; the Apple reminder and
+        // its record survive with a suppression marker.
+        _ = try await coordinatorSyncingRecurringReminders(
+            api: api, state: state, mappingID: mappingID,
+            reminders: [recurringReminder(id: "apple-recur", title: "Item")],
+            now: fixedNow
+        )
+        // The next run plans nothing: no re-creation, no deletion.
+        _ = try await coordinatorSyncingRecurringReminders(
+            api: api, state: state, mappingID: mappingID,
+            reminders: [recurringReminder(id: "apple-recur", title: "Item")],
+            now: fixedNow
+        )
+
+        let calls = await api.snapshot()
+        let persisted = try await state.loadSyncState()
+
+        #expect(calls.createdItems == 0)
+        #expect(await api.deletedListItemIDs.isEmpty)
+        #expect(persisted.reminders.count == 1)
+        #expect(persisted.reminders.first?.appleReminderID == "apple-recur")
+        #expect(persisted.reminders.first?.remoteSuppressedAt != nil)
+    }
+
+    @Test("Editing the spared Apple reminder after a Skylight deletion re-creates it")
+    func editedRecurringReminderRecreatesAfterSkylightDeletion() async throws {
+        let fixedNow = Date(timeIntervalSince1970: 1_000_000)
+        let mappingID = UUID()
+        let api = CoordinatorAPIStub()
+        await api.configureLists(
+            [SkylightResource(
+                id: "remote-list",
+                attributes: SkylightListAttributes(
+                    label: "Family",
+                    color: nil,
+                    kind: .toDo,
+                    hideOnDevice: nil
+                )
+            )],
+            items: []
+        )
+        var initialState = SyncState()
+        initialState.reminders = [
+            reminderRecordFor(mappingID: mappingID, appleID: "apple-recur", itemID: "remote-item-1")
+        ]
+        let state = CoordinatorStateStore(state: initialState)
+
+        _ = try await coordinatorSyncingRecurringReminders(
+            api: api, state: state, mappingID: mappingID,
+            reminders: [recurringReminder(id: "apple-recur", title: "Item")],
+            now: fixedNow
+        )
+
+        // An edit on Apple after the suppression lifts it and pushes a fresh
+        // copy to Skylight.
+        _ = try await coordinatorSyncingRecurringReminders(
+            api: api, state: state, mappingID: mappingID,
+            reminders: [
+                recurringReminder(
+                    id: "apple-recur",
+                    title: "Item",
+                    modifiedAt: fixedNow.addingTimeInterval(60)
+                )
+            ],
+            now: fixedNow
+        )
+
+        let calls = await api.snapshot()
+        let persisted = try await state.loadSyncState()
+
+        #expect(calls.createdItems == 1)
+        #expect(persisted.reminders.count == 1)
+        #expect(persisted.reminders.first?.skylightItemID == "remote-item-1")
+        #expect(persisted.reminders.first?.remoteSuppressedAt == nil)
+    }
+
+    private func coordinatorSyncingRecurringReminders(
+        api: CoordinatorAPIStub,
+        state: CoordinatorStateStore,
+        mappingID: UUID,
+        reminders: [AppleReminderSnapshot],
+        now: Date
+    ) async throws -> SyncRunSummary {
+        var mapping = ReminderListMapping(
+            sourceListID: "apple-list",
+            sourceListTitle: "Groceries",
+            destinationListTitle: "Family",
+            destinationKind: .toDo,
+            direction: .twoWay,
+            enabled: true
+        )
+        mapping.id = mappingID
+        mapping.destinationListID = "remote-list"
+        var configuration = AppConfiguration.empty
+        configuration.account.frameID = "frame-1"
+        configuration.dryRun = false
+        configuration.reminderMappings = [mapping]
+        let coordinator = makeCoordinator(
+            api: api, reminders: reminders, state: state, now: { now }
+        )
+        return try await coordinator.sync(configuration: configuration)
+    }
+
+    @Test("Occurrence collapse spares a same-title reminder with a different due date")
+    func collapseSparesUnrelatedSameTitleReminder() async throws {
+        let today = Date(timeIntervalSince1970: 1_784_131_200)
+        let nextDay = Date(timeIntervalSince1970: 1_784_217_600)
+        let api = CoordinatorAPIStub()
+        await api.configureChores([
+            SkylightResource(
+                id: "chore-1",
+                attributes: SkylightChoreAttributes(
+                    summary: "Water plants", status: .pending,
+                    start: "2026-07-16", recurring: true,
+                    recurrenceSet: ["FREQ=DAILY;INTERVAL=1"],
+                    upForGrabs: false, routine: true
+                ),
+                relationships: [
+                    "category": SkylightRelationship(
+                        data: .many([SkylightIdentifier(id: "person-1", type: "category")])
+                    )
+                ]
+            )
+        ])
+        let mappingID = UUID()
+
+        func reminder(_ id: String, completed: Bool, due: Date) -> ChoreReminderSnapshot {
+            ChoreReminderSnapshot(
+                id: id, listID: "list-1", memberKey: "person-1",
+                title: "Water plants", notes: nil, isCompleted: completed,
+                dueDate: due,
+                recurrence: ParsedRecurrenceRule(frequency: .daily),
+                recurrenceUnsupported: false, modifiedAt: today
+            )
+        }
+
+        // The stale completed occurrence rolled forward into two fresh
+        // occurrences of the same series (same due date) plus an unrelated
+        // second reminder with the same title but its own schedule.
+        let choreSource = CoordinatorChoreReminderSource(reminders: [
+            reminder("apple-old-completed", completed: true, due: today),
+            reminder("apple-duplicate-a", completed: false, due: nextDay),
+            reminder("apple-current", completed: false, due: nextDay),
+            reminder("apple-duplicate-b", completed: false, due: nextDay),
+            reminder("apple-other-series", completed: false, due: today.addingTimeInterval(3_600))
+        ])
+        var initialState = SyncState()
+        initialState.chores = [ChoreSyncRecord(
+            mappingID: mappingID, frameID: "frame-1",
+            appleReminderID: "apple-old-completed", skylightSeriesID: "chore-1",
+            memberKey: "person-1", lastAppleModifiedAt: today,
+            lastSkylightModifiedAt: today, contentFingerprint: "",
+            lastSyncedTitle: "Water plants",
+            lastSyncedRecurrence: "FREQ=DAILY;INTERVAL=1",
+            baselineDueDate: today, baselineCompletedInstanceDate: "2026-07-15"
+        )]
+        let state = CoordinatorStateStore(state: initialState)
+        let coordinator = makeCoordinator(
+            api: api, reminders: [], state: state,
+            choreReminderSource: choreSource, now: { nextDay }
+        )
+        var mapping = ChoreMapping()
+        mapping.id = mappingID
+        mapping.frameID = "frame-1"
+        mapping.memberLinks = [ChoreMemberLink(
+            memberKey: "person-1", memberLabel: "Oliver",
+            appleListID: "list-1", appleListTitle: "Oliver Chores"
+        )]
+        var configuration = AppConfiguration()
+        configuration.account.frameID = "frame-1"
+        configuration.dryRun = false
+        configuration.choreMappings = [mapping]
+
+        _ = try await coordinator.sync(configuration: configuration)
+        let persisted = try await state.loadSyncState()
+
+        #expect(choreSource.removedReminderIDs == ["apple-duplicate-a", "apple-duplicate-b"])
+        #expect(persisted.chores.contains { $0.appleReminderID == "apple-other-series" })
+    }
+
+    @Test("A shared dedup message survives one of its owners being removed")
+    func sharedMessageSurvivesSingleOwnerRemoval() async throws {
+        let api = CoordinatorAPIStub()
+        await api.configureAlbums([
+            SkylightResource(
+                id: "album-1",
+                attributes: SkylightAlbumAttributes(
+                    title: "Our House", messageCount: 1, createdAt: nil, updatedAt: nil
+                )
+            )
+        ])
+        await api.configureAlbumMessagesWithCaptions([
+            "album-1": [(id: "message-1", caption: "[sb:rendered-has]")]
+        ])
+        let mappingAID = UUID()
+        let mappingBID = UUID()
+
+        var mappingA = PhotoMapping(
+            name: "Favorites",
+            sourceCollectionID: "col-a",
+            sourceCollectionTitle: "col-a",
+            destinationAlbumID: "album-1",
+            destinationAlbumTitle: "Our House"
+        )
+        mappingA.id = mappingAID
+        var mappingB = PhotoMapping(
+            name: "Our House",
+            sourceCollectionID: "col-b",
+            sourceCollectionTitle: "col-b",
+            destinationAlbumID: "album-1",
+            destinationAlbumTitle: "Our House"
+        )
+        mappingB.id = mappingBID
+
+        var stateValue = SyncState()
+        var recordA = photoRecord(
+            mappingID: mappingAID, appleAssetID: "asset-a", messageID: "message-1"
+        )
+        recordA.renderedHash = "rendered-hash"
+        var recordB = photoRecord(
+            mappingID: mappingBID, appleAssetID: "asset-b", messageID: "message-1"
+        )
+        recordB.renderedHash = "rendered-hash"
+        stateValue.photos = [recordA, recordB]
+        let state = CoordinatorStateStore(state: stateValue)
+
+        // Mapping A's source is now empty, so its record enters the removal
+        // pass; mapping B still syncs the same shared message.
+        let photoSource = CoordinatorPhotoSource(collections: [
+            "col-a": [],
+            "col-b": [photoAsset(id: "asset-b")]
+        ])
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            photoSource: photoSource,
+            imageConverter: CoordinatorImageConverter(convertedAssetID: "asset-b"),
+            state: state
+        )
+        var configuration = AppConfiguration.empty
+        configuration.account.frameID = "frame-1"
+        configuration.dryRun = false
+        configuration.photoMappings = [mappingA, mappingB]
+
+        _ = try await coordinator.sync(configuration: configuration)
+
+        let calls = await api.snapshot()
+        let persisted = try await state.loadSyncState()
+
+        #expect(await api.deletedMessageIDs.isEmpty)
+        #expect(await api.removedFromAlbumMessageIDs.isEmpty)
+        #expect(persisted.photos.count == 1)
+        #expect(persisted.photos.first?.appleAssetID == "asset-b")
+    }
+
+    @Test("Two byte-identical assets in one run upload once")
+    func identicalAssetsUploadOncePerRun() async throws {
+        let api = CoordinatorAPIStub()
+        await api.configureAlbums([
+            SkylightResource(
+                id: "album-1",
+                attributes: SkylightAlbumAttributes(
+                    title: "Our House", messageCount: 0, createdAt: nil, updatedAt: nil
+                )
+            )
+        ])
+        let photoSource = CoordinatorPhotoSource(collections: [
+            "apple-album": [photoAsset(id: "a-1"), photoAsset(id: "a-2")]
+        ])
+        let stateStore = CoordinatorStateStore()
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            photoSource: photoSource,
+            imageConverter: CoordinatorImageConverter(
+                convertedAssetID: "a-1",
+                sha256: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"
+            ),
+            state: stateStore
+        )
+        var configuration = AppConfiguration.empty
+        configuration.account.frameID = "frame-1"
+        configuration.dryRun = false
+        configuration.photoMappings = [
+            PhotoMapping(
+                name: "Our House",
+                sourceCollectionID: "apple-album",
+                sourceCollectionTitle: "Our House",
+                destinationAlbumID: "album-1",
+                destinationAlbumTitle: "Our House"
+            )
+        ]
+
+        _ = try await coordinator.sync(configuration: configuration)
+
+        let persisted = try await stateStore.loadSyncState()
+
+        #expect(await api.uploadCount == 1)
+        #expect(persisted.photos.count == 2)
+        #expect(Set(persisted.photos.map(\.skylightMessageID)) == ["message-1"])
     }
 
     @Test("Completing a one-off chore omits instance fields Skylight rejects (HTTP 422)")
@@ -1917,6 +2289,30 @@ struct SyncCoordinatorTests {
         )
     }
 
+    private func recurringReminder(
+        id: String,
+        title: String,
+        modifiedAt: Date = Date(timeIntervalSince1970: 200)
+    ) -> AppleReminderSnapshot {
+        AppleReminderSnapshot(
+            id: id,
+            externalID: nil,
+            listID: "apple-list",
+            listTitle: "Groceries",
+            title: title,
+            notes: nil,
+            url: nil,
+            isCompleted: false,
+            completionDate: nil,
+            startDateComponents: nil,
+            dueDateComponents: nil,
+            priority: 0,
+            creationDate: Date(timeIntervalSince1970: 100),
+            modificationDate: modifiedAt,
+            hasRecurrenceRules: true
+        )
+    }
+
     private func photoAsset(id: String) -> ApplePhotoAssetSnapshot {
         ApplePhotoAssetSnapshot(
             id: id,
@@ -1941,18 +2337,26 @@ private enum CoordinatorStubError: Error {
 @MainActor
 private final class CoordinatorPhotoSource: PhotoSyncSource {
     let assets: [ApplePhotoAssetSnapshot]
+    let collections: [String: [ApplePhotoAssetSnapshot]]
     private(set) var renderCount = 0
 
-    init(assets: [ApplePhotoAssetSnapshot] = []) {
+    init(
+        assets: [ApplePhotoAssetSnapshot] = [],
+        collections: [String: [ApplePhotoAssetSnapshot]] = [:]
+    ) {
         self.assets = assets
+        self.collections = collections
     }
 
     func syncPhotoCollections() async throws -> [ApplePhotoCollectionSnapshot] { [] }
-    func syncPhotoAssets(in collectionID: String) async throws -> [ApplePhotoAssetSnapshot] { assets }
+    func syncPhotoAssets(in collectionID: String) async throws -> [ApplePhotoAssetSnapshot] {
+        collections[collectionID] ?? assets
+    }
     func syncPhotoAssets(withIDs assetIDs: [String]) async throws -> [ApplePhotoAssetSnapshot] { [] }
     func syncRenderedPhoto(withID assetID: String, maximumLongEdge: Int) async throws -> AppleRenderedPhoto {
         renderCount += 1
-        guard let asset = assets.first(where: { $0.id == assetID }),
+        let pool = assets + collections.values.flatMap { $0 }
+        guard let asset = pool.first(where: { $0.id == assetID }),
               let context = CGContext(
                   data: nil,
                   width: 1,
@@ -2274,9 +2678,13 @@ private actor CoordinatorNotesSource: NotesSyncSource {
 
 private actor CoordinatorImageConverter: SyncImageConverting {
     let convertedAssetID: String?
+    // Dedup tags carry a 12-character hex prefix of this hash, so tests that
+    // exercise tag matching need hex; the default keeps older tests readable.
+    let sha256: String
 
-    init(convertedAssetID: String? = nil) {
+    init(convertedAssetID: String? = nil, sha256: String = "rendered-hash") {
         self.convertedAssetID = convertedAssetID
+        self.sha256 = sha256
     }
 
     func syncConvert(
@@ -2292,7 +2700,7 @@ private actor CoordinatorImageConverter: SyncImageConverting {
             typeIdentifier: "public.jpeg",
             pixelWidth: 1,
             pixelHeight: 1,
-            sha256: "rendered-hash"
+            sha256: sha256
         )
     }
 }
@@ -2560,14 +2968,41 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
         }
         return SkylightPhotoMessagesResponse(data: messages, meta: nil)
     }
-   func requestUploadURL(ext: String, frameIDs: [String], caption: String?) async throws -> SkylightUploadURLAttributes { throw CoordinatorStubError.unexpectedCall }
-    func upload(data: Data, to presignedURL: URL, contentType: String) async throws { throw CoordinatorStubError.unexpectedCall }
-    func addMessages(frameID: String, albumIDs: [String], messageIDs: [String]) async throws { throw CoordinatorStubError.unexpectedCall }
+   func requestUploadURL(ext: String, frameIDs: [String], caption: String?) async throws -> SkylightUploadURLAttributes {
+        let messageID = "message-\(uploadCount + 1)"
+        uploadedMessages.append((id: messageID, caption: caption))
+        // SkylightUploadURLAttributes has no memberwise initializer (its
+        // CodingKeys map snake_case fields), so build one through JSON.
+        let payload = """
+        {"url":"https://bridge-uploads.s3.amazonaws.com/presigned","message_ids":["\(messageID)"]}
+        """
+        return try JSONDecoder().decode(SkylightUploadURLAttributes.self, from: Data(payload.utf8))
+    }
+    private(set) var uploadCount = 0
+    private(set) var uploadedMessages: [(id: String, caption: String?)] = []
+    private(set) var addedToAlbumCalls: [(albumID: String, messageID: String)] = []
+    func upload(data: Data, to presignedURL: URL, contentType: String) async throws {
+        uploadCount += 1
+    }
+    func addMessages(frameID: String, albumIDs: [String], messageIDs: [String]) async throws {
+        for albumID in albumIDs {
+            for messageID in messageIDs {
+                addedToAlbumCalls.append((albumID, messageID))
+            }
+        }
+    }
     func removeMessages(frameID: String, albumIDs: [String], messageIDs: [String]) async throws {
         removedFromAlbumMessageIDs.append(contentsOf: messageIDs)
     }
     func deleteMessage(frameID: String, messageID: String) async throws {
+        if let failure = deleteMessageFailure {
+            throw failure
+        }
         deletedMessageIDs.append(messageID)
+    }
+    private var deleteMessageFailure: (any Error)?
+    func configureDeleteMessageFailure(_ error: (any Error)?) {
+        deleteMessageFailure = error
     }
     func updateMessageCaption(
         frameID: String,
@@ -2590,7 +3025,26 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
         )
     }
     func getMessage(frameID: String, messageID: String) async throws -> SkylightResource<SkylightPhotoMessageAttributes> { throw CoordinatorStubError.unexpectedCall }
-    func listMessages(frameID: String, page: Int?, syncToken: String?, pageToken: String?) async throws -> SkylightPhotoMessagesResponse { throw CoordinatorStubError.unexpectedCall }
+    func listMessages(frameID: String, page: Int?, syncToken: String?, pageToken: String?) async throws -> SkylightPhotoMessagesResponse {
+        SkylightPhotoMessagesResponse(
+            data: uploadedMessages.map { message in
+                SkylightResource(
+                    id: message.id,
+                    attributes: SkylightPhotoMessageAttributes(
+                        status: "downloaded",
+                        assetType: "image",
+                        createdAt: nil,
+                        updatedAt: nil,
+                        thumbnailURL: nil,
+                        assetURL: nil,
+                        senderID: nil,
+                        caption: message.caption
+                    )
+                )
+            },
+            meta: nil
+        )
+    }
     func createRecipe(frameID: String, request: SkylightRecipeRequest) async throws -> SkylightResource<SkylightRecipeAttributes> {
         calls.createdRecipes += 1
         recipeRequests.append(request)

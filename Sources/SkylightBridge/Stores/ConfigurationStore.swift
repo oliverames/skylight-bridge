@@ -1,7 +1,10 @@
 import Foundation
 
 struct ConfigurationStore {
-    private static let maximumConfigurationBytes = 1_048_576
+    // Matches the sync-state store's headroom. Large selected-photo mappings
+    // legitimately exceed 1 MB of JSON, and a read cap below real usage would
+    // silently reset the configuration on every launch.
+    private static let maximumConfigurationBytes = 4_194_304
     private static let maximumActivityBytes = 2_097_152
 
     private let fileManager: FileManager
@@ -43,11 +46,19 @@ struct ConfigurationStore {
     }
 
     func saveConfiguration(_ configuration: AppConfiguration) throws {
+        let sealed = try configurationAuthenticator.seal(configuration)
+        // Symmetric with the read cap: refuse an oversized write loudly rather
+        // than saving a file the next launch would refuse to load.
+        guard sealed.count <= Self.maximumConfigurationBytes else {
+            // NSFileWriteTooLargeErrorCode (640); Foundation does not
+            // re-export the constant to Swift.
+            throw CocoaError(
+                CocoaError.Code(rawValue: 640),
+                userInfo: [NSFilePathErrorKey: configurationURL.path]
+            )
+        }
         try prepareDirectory(for: configurationURL)
-        try write(
-            configurationAuthenticator.seal(configuration),
-            to: configurationURL
-        )
+        try write(sealed, to: configurationURL)
     }
 
     func loadActivity() throws -> [ActivityEntry] {

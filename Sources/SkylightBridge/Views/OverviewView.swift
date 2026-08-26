@@ -90,9 +90,7 @@ struct OverviewView: View {
             Button(syncButtonTitle) {
                 Task { await store.syncNow() }
             }
-            .disabled(store.isSyncing
-                || !store.configuration.hasEnabledSync
-                || !store.isSkylightConnected)
+            .disabled(!store.canSyncNow)
             .help(syncButtonHelp)
         }
         .padding(.vertical, 4)
@@ -133,7 +131,7 @@ struct OverviewView: View {
         if !store.isSkylightConnected {
             return "Sign in to Skylight to sync"
         }
-        if !store.configuration.hasEnabledSync {
+        if !store.hasEnabledVisibleSync {
             return "Add and enable a source mapping first"
         }
         return "Synchronize enabled sources"

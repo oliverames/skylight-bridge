@@ -353,7 +353,7 @@ extension SkylightSyncAPI {
     }
 }
 
-extension ApplePhotoLibrary: PhotoSyncSource {
+extension ApplePhotoLibrary: PhotoSyncSource, @unchecked Sendable {
     func syncPhotoCollections() async throws -> [ApplePhotoCollectionSnapshot] {
         try collections()
     }
@@ -374,7 +374,7 @@ extension ApplePhotoLibrary: PhotoSyncSource {
     }
 }
 
-extension AppleRemindersStore: ReminderSyncSource {
+extension AppleRemindersStore: ReminderSyncSource, @unchecked Sendable {
     func syncReminderList(withID listID: String) throws -> AppleReminderListSnapshot {
         try reminderList(withID: listID)
     }
@@ -700,8 +700,9 @@ actor SyncCoordinator {
     /// album the bridge created for it once that album is empty, and forgets its
     /// records. Apple Photos is never touched, so this is the only place the
     /// bridge's copies live. A bridge-created album that still holds photos the
-    /// user added on Skylight is left in place. Best-effort per item: an
-    /// already-deleted remote object does not abort the rest of the cleanup.
+    /// user added on Skylight is left in place. A transient remote failure
+    /// aborts the purge with the records intact so a later attempt can retry;
+    /// only an object already gone (404/410) counts as done.
     @discardableResult
     func purgePhotoMapping(mappingID: UUID, frameID: String) async throws -> PhotoMappingPurge {
         var state = try await stateStore.loadSyncState()
@@ -711,14 +712,18 @@ actor SyncCoordinator {
             .filter { $0.mappingID == mappingID && $0.frameID == frameID }
             .sorted { $0.appleAssetID < $1.appleAssetID }
         for record in records {
-            if !record.skylightAlbumIDs.isEmpty {
-                try? await api.removeMessages(
-                    frameID: frameID,
-                    albumIDs: record.skylightAlbumIDs.sorted(),
-                    messageIDs: [record.skylightMessageID]
-                )
+            do {
+                if !record.skylightAlbumIDs.isEmpty {
+                    try await api.removeMessages(
+                        frameID: frameID,
+                        albumIDs: record.skylightAlbumIDs.sorted(),
+                        messageIDs: [record.skylightMessageID]
+                    )
+                }
+                try await api.deleteMessage(frameID: frameID, messageID: record.skylightMessageID)
+            } catch where Self.isAlreadyAbsent(error) {
+                // The copy is already gone; the record can still be forgotten.
             }
-            try? await api.deleteMessage(frameID: frameID, messageID: record.skylightMessageID)
             state.photos.removeAll { $0.id == record.id }
             try await stateStore.saveSyncState(state)
             result.photos += 1
@@ -736,7 +741,9 @@ actor SyncCoordinator {
                 albumID: albumRecord.albumID
             ) else { continue }
             if remaining.isEmpty {
-                try? await api.deleteAlbum(frameID: frameID, albumID: albumRecord.albumID)
+                do {
+                    try await api.deleteAlbum(frameID: frameID, albumID: albumRecord.albumID)
+                } catch where Self.isAlreadyAbsent(error) {}
                 result.albums += 1
             }
             state.photoAlbums.removeAll { $0.id == albumRecord.id }
@@ -744,6 +751,16 @@ actor SyncCoordinator {
         }
 
         return result
+    }
+
+    /// True when a removal failed because the remote object no longer exists,
+    /// which means the cleanup goal is already met. Any other error (transport,
+    /// auth, server) must surface to the caller so the record survives.
+    private static func isAlreadyAbsent(_ error: any Error) -> Bool {
+        if case let .httpStatus(code, _, _) = error as? SkylightAPIError {
+            return code == 404 || code == 410
+        }
+        return false
     }
 
     /// Removes the linked items for a reminder mapping from the chosen side, then
@@ -762,14 +779,16 @@ actor SyncCoordinator {
         for record in records {
             switch side {
             case .skylight:
-                try? await api.deleteListItem(
-                    frameID: frameID,
-                    listID: record.skylightListID,
-                    itemID: record.skylightItemID
-                )
+                do {
+                    try await api.deleteListItem(
+                        frameID: frameID,
+                        listID: record.skylightListID,
+                        itemID: record.skylightItemID
+                    )
+                } catch where Self.isAlreadyAbsent(error) {}
                 affected += 1
             case .appleReminders:
-                try? await reminderSource.syncRemoveReminder(withID: record.appleReminderID)
+                try await reminderSource.syncRemoveReminder(withID: record.appleReminderID)
                 affected += 1
             case .none:
                 break
@@ -791,8 +810,9 @@ actor SyncCoordinator {
     /// linked series from one side. The Reminders lists themselves are kept.
     /// Tears down a chore mapping: removes the chore items from the side(s) the
     /// mode does not preserve, forgets their sync records, and deletes the
-    /// auto-created Apple chore lists once they are empty. Deletions are
-    /// best-effort so one failure cannot strand the rest of the cleanup.
+    /// auto-created Apple chore lists once they are empty. A transient remote
+    /// failure aborts with the remaining records intact so a later attempt can
+    /// retry; only an object already gone (404/410) counts as done.
     func teardownChoreMapping(
         mappingID: UUID,
         frameID: String,
@@ -806,15 +826,17 @@ actor SyncCoordinator {
         var result = ChoreTeardownResult()
         for record in records {
             if mode.removesSkylight {
-                try? await api.deleteChore(
-                    frameID: frameID,
-                    choreID: record.skylightSeriesID,
-                    applyToAll: record.lastSyncedRecurrence != nil
-                )
+                do {
+                    try await api.deleteChore(
+                        frameID: frameID,
+                        choreID: record.skylightSeriesID,
+                        applyToAll: record.lastSyncedRecurrence != nil
+                    )
+                } catch where Self.isAlreadyAbsent(error) {}
                 result.skylightItemsRemoved += 1
             }
             if mode.removesAppleReminders {
-                try? await choreReminderSource?.syncRemoveChoreReminder(
+                try await choreReminderSource?.syncRemoveChoreReminder(
                     withID: record.appleReminderID
                 )
                 result.appleItemsRemoved += 1
@@ -1059,17 +1081,24 @@ actor SyncCoordinator {
                     try await checkpoint(state, dryRun: dryRun)
                     if let previous = existing {
                         if !previous.skylightAlbumIDs.isEmpty {
-                            try await api.removeMessages(
-                                frameID: frameID,
-                                albumIDs: previous.skylightAlbumIDs.sorted(),
-                                messageIDs: [previous.skylightMessageID]
-                            )
-                        }
+                        try await api.removeMessages(
+                            frameID: frameID,
+                            albumIDs: previous.skylightAlbumIDs.sorted(),
+                            messageIDs: [previous.skylightMessageID]
+                        )
+                    }
+                    // Another mapping's record may share this message through
+                    // dedup adoption. Only the last owner deletes it.
+                    if !state.photos.contains(where: {
+                        $0.frameID == frameID &&
+                            $0.skylightMessageID == previous.skylightMessageID
+                    }) {
                         try await api.deleteMessage(
                             frameID: frameID,
                             messageID: previous.skylightMessageID
                         )
                     }
+                }
                     summary.applied += 1
                 }
             }
@@ -1081,17 +1110,27 @@ actor SyncCoordinator {
             summary.planned += removedRecords.count
             guard !dryRun else { continue }
             for record in removedRecords {
-                    if !record.skylightAlbumIDs.isEmpty {
+                    // A record sharing this message via dedup adoption keeps
+                    // it, including its album membership; only the final
+                    // owner removes and deletes it.
+                    let sharedWithOtherRecord = state.photos.contains {
+                        $0.id != record.id &&
+                            $0.frameID == frameID &&
+                            $0.skylightMessageID == record.skylightMessageID
+                    }
+                    if !sharedWithOtherRecord, !record.skylightAlbumIDs.isEmpty {
                         try await api.removeMessages(
                             frameID: frameID,
                             albumIDs: record.skylightAlbumIDs.sorted(),
                             messageIDs: [record.skylightMessageID]
                         )
                     }
-                    try await api.deleteMessage(
-                        frameID: frameID,
-                        messageID: record.skylightMessageID
-                    )
+                    if !sharedWithOtherRecord {
+                        try await api.deleteMessage(
+                            frameID: frameID,
+                            messageID: record.skylightMessageID
+                        )
+                    }
                     state.photos.removeAll { $0.id == record.id }
                     try await checkpoint(state, dryRun: dryRun)
                     summary.applied += 1
@@ -1183,6 +1222,7 @@ actor SyncCoordinator {
         }
         var allMessages: [SkylightResource<SkylightPhotoMessageAttributes>] = []
         var page: Int? = nil
+        var seenTokens = Set<Int>()
         repeat {
             let response = try await api.listAlbumMessages(
                 frameID: frameID,
@@ -1190,7 +1230,14 @@ actor SyncCoordinator {
                 page: page
             )
             allMessages.append(contentsOf: response.data)
-            page = response.meta?.nextPageToken.flatMap(Int.init)
+            let nextToken = response.meta?.nextPageToken.flatMap(Int.init)
+            // A malformed token ends the scan silently (duplicates beyond it
+            // stay invisible), and a repeated token or an excessive page
+            // count stops instead of spinning forever under the process lock.
+            guard let nextToken, seenTokens.insert(nextToken).inserted, seenTokens.count <= 50 else {
+                break
+            }
+            page = nextToken
         } while page != nil
         albumMessageCache[cacheKey] = allMessages
         return PhotoDeduplication.findDuplicate(
@@ -1233,27 +1280,58 @@ actor SyncCoordinator {
             albumIDs: [destinationAlbumID],
             messageIDs: [messageID]
         )
+        // Keep the dedup cache honest: a byte-identical asset later in this
+        // same run must find this upload instead of re-uploading it.
+        albumMessageCache["\(frameID):\(destinationAlbumID)", default: []].append(
+            SkylightResource(
+                id: messageID,
+                attributes: SkylightPhotoMessageAttributes(
+                    status: "downloaded",
+                    assetType: "image",
+                    createdAt: nil,
+                    updatedAt: nil,
+                    thumbnailURL: nil,
+                    assetURL: nil,
+                    senderID: nil,
+                    caption: caption
+                )
+            )
+        )
         return messageID
     }
 
     private func waitForUploadedMessage(frameID: String, messageID: String) async throws {
+        var consecutiveFailures = 0
         for _ in 0..<40 {
-            if let response = try? await api.listMessages(
-                frameID: frameID,
-                page: nil,
-                syncToken: nil,
-                pageToken: "__START__"
-            ), let message = response.data.first(where: { $0.id == messageID }) {
-                switch message.attributes.status {
-                case "awaiting_download", "downloaded":
-                    return
-                case "invalid_asset_type":
-                    throw SyncCoordinatorError.photoProcessingFailed(
-                        messageID: messageID,
-                        status: "invalid asset type"
-                    )
-                default:
-                    break
+            do {
+                let response = try await api.listMessages(
+                    frameID: frameID,
+                    page: nil,
+                    syncToken: nil,
+                    pageToken: "__START__"
+                )
+                consecutiveFailures = 0
+                if let message = response.data.first(where: { $0.id == messageID }) {
+                    switch message.attributes.status {
+                    case "awaiting_download", "downloaded":
+                        return
+                    case "invalid_asset_type":
+                        throw SyncCoordinatorError.photoProcessingFailed(
+                            messageID: messageID,
+                            status: "invalid asset type"
+                        )
+                    default:
+                        break
+                    }
+                }
+            } catch {
+                // An API failure is not "still processing". A brief burst is
+                // tolerated, but a persistent one surfaces its real error;
+                // converting it into a timeout would strand uploaded bytes
+                // outside any record and re-upload them next run.
+                consecutiveFailures += 1
+                if consecutiveFailures >= 3 {
+                    throw error
                 }
             }
             try await ContinuousClock().sleep(for: .milliseconds(500))
@@ -1298,10 +1376,34 @@ actor SyncCoordinator {
                 summary.planned += listSummary.planned
                 summary.applied += listSummary.applied
             }
-            let records = state.reminders.filter {
+            // A remote-suppressed recurring reminder returns to sync when its
+            // Apple copy is edited after the suppression was recorded: the
+            // stale link is dropped so the planner sees an unlinked reminder
+            // and pushes it to Skylight as a create.
+            let suppressedIndexes = state.reminders.indices.filter { index in
+                guard let suppressedAt = state.reminders[index].remoteSuppressedAt else {
+                    return false
+                }
+                return state.reminders[index].mappingID == mapping.id &&
+                    state.reminders[index].frameID == frameID &&
+                    selectedApple.contains { apple in
+                        apple.id == state.reminders[index].appleReminderID &&
+                            (apple.modificationDate ?? apple.creationDate ?? .distantPast) > suppressedAt
+                    }
+            }
+            for index in suppressedIndexes.reversed() {
+                state.reminders.remove(at: index)
+            }
+            var records = state.reminders.filter {
                 $0.mappingID == mapping.id &&
                     $0.frameID == frameID &&
                     (destination.id == nil || $0.skylightListID == destination.id)
+            }
+            if dryRun, destination.needsCreation {
+                // A list that does not exist yet will be created and then
+                // filled; planning against the carried-over links would
+                // fabricate deletions that live mode never performs.
+                records = []
             }
             let remoteResources: [SkylightResource<SkylightListItemAttributes>] = if let destinationID = destination.id {
                 try await api.listListItems(frameID: frameID, listID: destinationID)
@@ -1566,11 +1668,25 @@ actor SyncCoordinator {
 
                 case let .deleteApple(appleID):
                     if appleByID[appleID]?.hasRecurrenceRules == true {
-                        state.reminders.removeAll {
+                        // Policy: a recurring Apple reminder is never deleted
+                        // on Apple. Acknowledge the Skylight deletion by
+                        // marking the record remote-suppressed instead of
+                        // unlinking it, which would resurrect the item as a
+                        // new create on the next sync.
+                        if let index = state.reminders.firstIndex(where: {
                             $0.mappingID == mapping.id &&
                                 $0.frameID == frameID &&
                                 $0.skylightListID == destinationID &&
                                 $0.appleReminderID == appleID
+                        }) {
+                            state.reminders[index].remoteSuppressedAt = now()
+                        } else {
+                            state.reminders.removeAll {
+                                $0.mappingID == mapping.id &&
+                                    $0.frameID == frameID &&
+                                    $0.skylightListID == destinationID &&
+                                    $0.appleReminderID == appleID
+                            }
                         }
                         try await checkpoint(state, dryRun: dryRun)
                         continue
@@ -1956,7 +2072,18 @@ actor SyncCoordinator {
                 guard let replacement = candidates.sorted(by: Self.preferredChoreOccurrence).first else {
                     continue
                 }
-                let duplicateIDs = Set(candidates.lazy.map(\.id).filter { $0 != replacement.id })
+                // Only occurrences that start when the chosen replacement does
+                // are true duplicate occurrences of the same series. A second,
+                // unrelated recurring reminder with the same title but another
+                // due date is real user data: leave it for adoption below.
+                let replacementDueDate = replacement.dueDate
+                let duplicateIDs = Set(candidates.lazy.map(\.id).filter { candidateID in
+                    guard candidateID != replacement.id, let replacementDueDate else {
+                        return false
+                    }
+                    return candidates.first(where: { $0.id == candidateID })?
+                        .dueDate == replacementDueDate
+                })
                 staleCompletedIDs.insert(record.appleReminderID)
                 activeRecords[index].appleReminderID = replacement.id
                 activeRecords[index].lastAppleModifiedAt = replacement.modifiedAt
@@ -2025,7 +2152,13 @@ actor SyncCoordinator {
                 let remoteCompleted = remote.todayStatus == .complete || remote.todayStatus == .skipped
                 let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: todayDate)
                     ?? .distantFuture
-                let appleRolledForward = if let baseline = record.baselineDueDate,
+                // Rolling forward signals completion only for a genuinely
+                // recurring chore (including a degraded rule EventKit still
+                // advances). A one-off chore the user merely rescheduled must
+                // not read as completed.
+                let rollsOccurrenceForward = apple.recurrence != nil || apple.recurrenceUnsupported
+                let appleRolledForward = if rollsOccurrenceForward,
+                                             let baseline = record.baselineDueDate,
                                              let due = apple.dueDate {
                     due > baseline && baseline < tomorrow
                 } else {
@@ -3499,7 +3632,8 @@ actor SyncCoordinator {
             lastAppleModifiedAt: record.lastAppleModifiedAt,
             lastSkylightModifiedAt: record.lastSkylightModifiedAt,
             baselineTitle: record.lastSyncedTitle,
-            baselineCompleted: record.lastSyncedCompleted
+            baselineCompleted: record.lastSyncedCompleted,
+            remoteSuppressedAt: record.remoteSuppressedAt
         )
     }
 

@@ -21,9 +21,7 @@ struct ContentView: View {
                                 systemImage: "arrow.triangle.2.circlepath"
                             )
                         }
-                        .disabled(store.isSyncing
-                            || !store.configuration.hasEnabledSync
-                            || !store.isSkylightConnected)
+                        .disabled(!store.canSyncNow)
                         .help(syncButtonHelp)
                     }
                 }
@@ -64,7 +62,7 @@ struct ContentView: View {
         if !store.isSkylightConnected {
             return "Sign in to Skylight to sync"
         }
-        if !store.configuration.hasEnabledSync {
+        if !store.hasEnabledVisibleSync {
             return "Add and enable a source mapping first"
         }
         return "Synchronize enabled sources"

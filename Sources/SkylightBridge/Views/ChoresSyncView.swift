@@ -39,10 +39,13 @@ struct ChoresSyncView: View {
             presenting: mappingToTeardown
         ) { mapping in
             Button("Keep Chores on Skylight") { teardown(mapping, mode: .keepSkylight) }
+                .disabled(store.isSyncing)
             Button("Keep Chores in Reminders") { teardown(mapping, mode: .keepReminders) }
+                .disabled(store.isSyncing)
             Button("Remove Chores Everywhere", role: .destructive) {
                 teardown(mapping, mode: .removeEverything)
             }
+            .disabled(store.isSyncing)
             Button("Cancel", role: .cancel) { mappingToTeardown = nil }
         } message: { _ in
             Text("Turns off Chore Chart sync and forgets its links. Choose which copies of the synced chores to keep. Whenever the Apple Reminders copies are removed, the chore lists this app created are deleted too (only if they are empty).")

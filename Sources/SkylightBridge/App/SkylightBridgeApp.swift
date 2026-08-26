@@ -38,12 +38,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct SkylightBridgeApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var store = AppStore()
+    // Startup must outlive the main window: closing it cancels a view-scoped
+    // .task, and this menu-bar-first app supports exactly that. Run start()
+    // once, unstructured, from the first App construction.
+    private static var hasLaunchedStartup = false
+
+    init() {
+        guard !Self.hasLaunchedStartup else { return }
+        Self.hasLaunchedStartup = true
+        let store = _store.wrappedValue
+        Task { await store.start() }
+    }
 
     var body: some Scene {
         WindowGroup("Skylight Bridge", id: "main") {
             ContentView(store: store)
                 .frame(minWidth: 720, minHeight: 520)
-                .task { await store.start() }
         }
         // Let the window shrink to the content minimum instead of pinning a
         // large fixed size; pages are scrollable columns, so they adapt.
@@ -106,9 +116,7 @@ private struct AppCommands: Commands {
                 Task { await store.syncNow() }
             }
             .keyboardShortcut("r", modifiers: [.command, .shift])
-            .disabled(store.isSyncing
-                || !store.configuration.hasEnabledSync
-                || !store.isSkylightConnected)
+            .disabled(!store.canSyncNow)
         }
     }
 }

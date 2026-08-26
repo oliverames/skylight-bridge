@@ -25,6 +25,28 @@ struct ReminderSyncLink: Equatable, Sendable {
     // Nil for records written before field-level merge existed.
     let baselineTitle: String?
     let baselineCompleted: Bool?
+    // Non-nil when Skylight deleted the item and the Apple side was spared.
+    // Such links plan no actions; the Apple reminder stays linked so it is
+    // not re-created on Skylight.
+    let remoteSuppressedAt: Date?
+
+    init(
+        appleID: String,
+        skylightID: String,
+        lastAppleModifiedAt: Date,
+        lastSkylightModifiedAt: Date,
+        baselineTitle: String? = nil,
+        baselineCompleted: Bool? = nil,
+        remoteSuppressedAt: Date? = nil
+    ) {
+        self.appleID = appleID
+        self.skylightID = skylightID
+        self.lastAppleModifiedAt = lastAppleModifiedAt
+        self.lastSkylightModifiedAt = lastSkylightModifiedAt
+        self.baselineTitle = baselineTitle
+        self.baselineCompleted = baselineCompleted
+        self.remoteSuppressedAt = remoteSuppressedAt
+    }
 }
 
 enum ReminderSyncDirection: String, Codable, CaseIterable, Equatable, Sendable {

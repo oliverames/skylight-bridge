@@ -33,7 +33,7 @@ struct MenuBarView: View {
         if store.isSyncing { return .syncing }
         if store.lastSyncFailed { return .failed }
         if !store.isSkylightConnected { return .signInRequired }
-        if !store.configuration.hasEnabledSync { return .mappingRequired }
+        if !store.hasEnabledVisibleSync { return .mappingRequired }
         return .ready(
             isPreview: store.configuration.dryRun,
             lastSyncAt: store.lastSyncAt

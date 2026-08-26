@@ -55,6 +55,9 @@ final class AppStore {
     }
     var statusMessage = "Choose sources to begin."
     private var hasStarted = false
+    /// Newest-first, trimmed to `maximumActivityEntries` in memory as well as
+    /// on disk; the Activity page renders every row it is handed.
+    private static let maximumActivityEntries = 500
     var hasLoadedSharediCloudState = false
 
     private let persistence: ConfigurationStore
@@ -77,6 +80,20 @@ final class AppStore {
         !configuration.account.frameID.isEmpty && !skylightFrames.isEmpty
     }
 
+    /// Whether Sync Now can actually run. Mirrors the engine's gating copy so a
+    /// hidden feature (Meals) never leaves an enabled button that only logs
+    /// "nothing to sync".
+    var canSyncNow: Bool {
+        !isSyncing && isSkylightConnected && syncConfiguration.hasEnabledSync
+    }
+
+    /// Whether any engine-runnable source is enabled (hidden features forced
+    /// off). Surfaces use this instead of the raw configuration flag so copy
+    /// and controls agree with what a sync would actually do.
+    var hasEnabledVisibleSync: Bool {
+        syncConfiguration.hasEnabledSync
+    }
+
     func start() async {
         guard !hasStarted else { return }
         hasStarted = true
@@ -91,6 +108,15 @@ final class AppStore {
     }
 
     func saveConfiguration(triggerSync: Bool = false) {
+        // Photo display names for deselected assets are dead weight; the
+        // sealed file has a hard size ceiling, so prune orphans before saving.
+        for index in configuration.photoMappings.indices {
+            let mapping = configuration.photoMappings[index]
+            let pruned = mapping.selectedPhotoNames.filter { mapping.selectedAssetIDs.contains($0.key) }
+            if pruned.count != mapping.selectedPhotoNames.count {
+                configuration.photoMappings[index].selectedPhotoNames = pruned
+            }
+        }
         do {
             try persistence.saveConfiguration(configuration)
             configureScheduler()
@@ -552,7 +578,9 @@ final class AppStore {
 
     /// Accumulates the lifetime applied-change counter and raises the donation
     /// sheet when a new milestone is crossed and the policy's cooldowns allow.
-    private func recordAppliedChanges(_ count: Int) {
+    /// Called only after `isSyncing` has reset, so the policy's idle guard sees
+    /// a truthful state.
+    private func presentSupportPromptIfEarned(applying count: Int) {
         let defaults = UserDefaults.standard
         if count > 0 {
             defaults.set(lifetimeAppliedChanges + count, forKey: SupportDefaultsKey.lifetimeAppliedChanges)
@@ -560,7 +588,7 @@ final class AppStore {
         guard donationPromptMilestone == nil, !isOnboardingPresented else { return }
         let context = SupportPromptPolicy.Context(
             isConnected: isSkylightConnected,
-            isSyncing: false,
+            isSyncing: isSyncing,
             lifetimeAppliedChanges: lifetimeAppliedChanges,
             promptedMilestone: defaults.integer(forKey: SupportDefaultsKey.donationPromptedMilestone),
             dismissedPermanently: defaults.bool(forKey: SupportDefaultsKey.donationDismissedPermanently),
@@ -614,6 +642,9 @@ final class AppStore {
         skylightChoreCategories = []
         connectionError = nil
         multiClientWarning = nil
+        // A stale failure banner must not outlive the account: signed out,
+        // the menu bar should point at sign-in, not at a failed sync.
+        lastSyncFailed = false
         statusMessage = "Signed out of Skylight."
         appendActivity(.init(
             level: .info,
@@ -647,6 +678,8 @@ final class AppStore {
             try persistence.saveConfiguration(configuration)
             statusMessage = "Connected to Skylight."
             connectionError = nil
+            // A successful reconnect retires any earlier failure banner.
+            lastSyncFailed = false
         } catch SkylightSessionManagerError.missingCredentials {
             // First launch is expected to have no saved account.
         } catch {
@@ -717,6 +750,7 @@ final class AppStore {
             ))
         }
 
+        var appliedThisRun = 0
         do {
            try persistence.saveConfiguration(configuration)
            let client = try await sessionManager.client(configuration: configuration.account)
@@ -739,7 +773,7 @@ final class AppStore {
             lastSyncAt = .now
             lastSyncFailed = false
             if !summary.dryRun {
-                recordAppliedChanges(summary.totalApplied)
+                appliedThisRun = summary.totalApplied
             }
             if !summary.dryRun {
                 await publishSharedSyncState()
@@ -772,10 +806,21 @@ final class AppStore {
                 isDryRun: configuration.dryRun
             ))
         }
+
+        // Bookkeeping is done; reset the busy state before follow-up work so
+        // the support prompt policy's idle guard sees a truthful store.
+        if appliedThisRun > 0 {
+            isSyncing = false
+            presentSupportPromptIfEarned(applying: appliedThisRun)
+        }
     }
 
     func appendActivity(_ entry: ActivityEntry) {
         activity.insert(entry, at: 0)
+        // Keep memory bounded to what is kept on disk (the newest 500).
+        if activity.count > Self.maximumActivityEntries {
+            activity.removeLast(activity.count - Self.maximumActivityEntries)
+        }
         try? persistence.saveActivity(activity)
     }
 
@@ -789,14 +834,55 @@ final class AppStore {
         }
     }
 
+    /// Runs a mapping teardown under the same guards as a sync: one at a time
+    /// and holding the cross-process lock, so a scheduled sync cannot interleave
+    /// its own load-modify-save of the sync state file. Returns false when the
+    /// teardown did not complete and the mapping should be kept for a retry.
+    private func runTeardown(
+        _ area: IntegrationArea,
+        _ body: (SkylightAPIClient) async throws -> Void
+    ) async -> Bool {
+        guard !isSyncing else {
+            statusMessage = "A sync is running. Try again when it finishes."
+            appendActivity(.init(
+                level: .warning,
+                area: area,
+                message: "Remove link skipped while a sync is running; the mapping was kept."
+            ))
+            return false
+        }
+        isSyncing = true
+        defer { isSyncing = false }
+
+        let processLock: ProcessSyncLock
+        do {
+            processLock = try ProcessSyncLock.acquire()
+        } catch {
+            recordSourceError(error, area: .system)
+            return false
+        }
+        defer { withExtendedLifetime(processLock) {} }
+
+        do {
+            let client = try await sessionManager.client(configuration: configuration.account)
+            try await body(client)
+            return true
+        } catch {
+            recordSourceError(error, area: area)
+            return false
+        }
+    }
+
     /// Deletes a photo mapping and, when possible, removes the Skylight copies it
     /// created. Apple Photos is never touched, so the Skylight album is the only
-    /// place the bridge put these photos.
+    /// place the bridge put these photos. When Skylight cannot be reached, the
+    /// mapping is kept so the cleanup can be retried instead of stranding the
+    /// bridge-created copies untracked.
     func removePhotoMapping(_ mapping: PhotoMapping) async {
         let frameID = configuration.account.frameID.trimmed
+        var completed = true
         if !frameID.isEmpty, isSkylightConnected {
-            do {
-                let client = try await sessionManager.client(configuration: configuration.account)
+            completed = await runTeardown(.photos) { client in
                 let coordinator = SyncCoordinator.live(apiClient: client)
                 let purge = try await coordinator.purgePhotoMapping(
                     mappingID: mapping.id,
@@ -813,10 +899,9 @@ final class AppStore {
                         message: "Removed \(parts.joined(separator: " and ")) from Skylight for “\(mapping.name)”."
                     ))
                 }
-            } catch {
-                recordSourceError(error, area: .photos)
             }
         }
+        guard completed else { return }
         configuration.photoMappings.removeAll { $0.id == mapping.id }
         saveConfiguration()
     }
@@ -846,9 +931,9 @@ final class AppStore {
         cleanup side: ReminderMappingCleanupSide
     ) async {
         let frameID = configuration.account.frameID.trimmed
+        var completed = true
         if !frameID.isEmpty, isSkylightConnected {
-            do {
-                let client = try await sessionManager.client(configuration: configuration.account)
+            completed = await runTeardown(.reminders) { client in
                 let coordinator = SyncCoordinator.live(apiClient: client)
                 let affected = try await coordinator.purgeReminderMapping(
                     mappingID: mapping.id,
@@ -863,10 +948,9 @@ final class AppStore {
                         message: "Removed \(countDescription(affected, singular: "item")) from \(place) for “\(mapping.sourceListTitle)”."
                     ))
                 }
-            } catch {
-                recordSourceError(error, area: .reminders)
             }
         }
+        guard completed else { return }
         configuration.reminderMappings.removeAll { $0.id == mapping.id }
         saveConfiguration()
     }
@@ -878,9 +962,9 @@ final class AppStore {
         let frameID = mapping.frameID.trimmed.isEmpty
             ? configuration.account.frameID.trimmed
             : mapping.frameID.trimmed
+        var completed = true
         if !frameID.isEmpty, isSkylightConnected {
-            do {
-                let client = try await sessionManager.client(configuration: configuration.account)
+            completed = await runTeardown(.chores) { client in
                 let coordinator = SyncCoordinator.live(apiClient: client)
                 let result = try await coordinator.teardownChoreMapping(
                     mappingID: mapping.id,
@@ -889,10 +973,9 @@ final class AppStore {
                     appleListIDs: choreListIDs(for: mapping)
                 )
                 recordChoreTeardown(result)
-            } catch {
-                recordSourceError(error, area: .chores)
             }
         }
+        guard completed else { return }
         configuration.choreMappings.removeAll { $0.id == mapping.id }
         saveConfiguration()
     }
@@ -946,8 +1029,16 @@ final class AppStore {
         }
     }
 
+    @ObservationIgnored private var scheduledIntervalMinutes: Int?
+
     private func configureScheduler() {
-        scheduler.schedule(everyMinutes: max(configuration.syncIntervalMinutes, 10)) { [weak self] in
+        // Every mapping edit autosaves, and each schedule call restarts the
+        // background countdown; reschedule only when the interval changed so
+        // edits cannot postpone the automatic sync indefinitely.
+        let minutes = max(configuration.syncIntervalMinutes, 10)
+        guard scheduledIntervalMinutes != minutes else { return }
+        scheduledIntervalMinutes = minutes
+        scheduler.schedule(everyMinutes: minutes) { [weak self] in
             await self?.syncNow()
         }
     }

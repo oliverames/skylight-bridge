@@ -78,6 +78,11 @@ struct ReminderSyncRecord: Identifiable, Codable, Sendable, Hashable {
     // files written before merge support.
     var lastSyncedTitle: String?
     var lastSyncedCompleted: Bool?
+    // Set when Skylight deleted a recurring item and the policy spared the
+    // Apple reminder. The suppressed link plans no further actions (so the
+    // deletion is not resurrected as a create), and clears when the Apple
+    // reminder is edited afterwards.
+    var remoteSuppressedAt: Date?
 
     init(
         mappingID: UUID,
@@ -90,7 +95,8 @@ struct ReminderSyncRecord: Identifiable, Codable, Sendable, Hashable {
         lastSkylightModifiedAt: Date,
         contentFingerprint: String,
         lastSyncedTitle: String? = nil,
-        lastSyncedCompleted: Bool? = nil
+        lastSyncedCompleted: Bool? = nil,
+        remoteSuppressedAt: Date? = nil
     ) {
         self.mappingID = mappingID
         self.frameID = frameID
@@ -103,6 +109,7 @@ struct ReminderSyncRecord: Identifiable, Codable, Sendable, Hashable {
         self.contentFingerprint = contentFingerprint
         self.lastSyncedTitle = lastSyncedTitle
         self.lastSyncedCompleted = lastSyncedCompleted
+        self.remoteSuppressedAt = remoteSuppressedAt
     }
 
     // Persisted struct: decode per field so future additions never strand old
@@ -120,6 +127,7 @@ struct ReminderSyncRecord: Identifiable, Codable, Sendable, Hashable {
         contentFingerprint = try container.decodeIfPresent(String.self, forKey: .contentFingerprint) ?? ""
         lastSyncedTitle = try container.decodeIfPresent(String.self, forKey: .lastSyncedTitle)
         lastSyncedCompleted = try container.decodeIfPresent(Bool.self, forKey: .lastSyncedCompleted)
+        remoteSuppressedAt = try container.decodeIfPresent(Date.self, forKey: .remoteSuppressedAt)
     }
 }
 
@@ -247,7 +255,10 @@ struct ChoreSyncRecord: Identifiable, Codable, Sendable, Hashable {
 }
 
 struct NoteSyncRecord: Identifiable, Codable, Sendable, Hashable {
-    var id: String { "\(kind.rawValue):\(appleNoteID)" }
+    // Frame-scoped: the same note synced to two frames of one account is two
+    // independent records, so switching frames never orphans or duplicates
+    // pushed recipes and meals.
+    var id: String { "\(kind.rawValue):\(frameID):\(appleNoteID)" }
     let kind: NotesContentKind
     var frameID = ""
     let appleNoteID: String

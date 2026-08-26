@@ -109,6 +109,36 @@ struct ChoreSyncPlannerTests {
         #expect(actions.isEmpty)
     }
 
+    @Test("Postponing a one-off chore is a reschedule, not a completion")
+    func oneOffRollForwardDoesNotComplete() {
+        let nextDay = today.addingTimeInterval(86_400)
+        let oneOff = ChoreReminderSnapshot(
+            id: "a", listID: "list", memberKey: "oliver",
+            title: "Water plants", notes: nil, isCompleted: false,
+            dueDate: nextDay, recurrence: nil, recurrenceUnsupported: false,
+            modifiedAt: today
+        )
+        let remote = SkylightChoreSnapshot(
+            id: "s", title: "Water plants", notes: nil, memberKey: "oliver",
+            recurrenceRaw: [], recurrence: nil, recurrenceUnsupported: false,
+            todayStatus: .pending, startDate: today, modifiedAt: today
+        )
+        let link = ChoreSyncLink(
+            appleID: "a", skylightID: "s", memberKey: "oliver",
+            lastAppleModifiedAt: today, lastSkylightModifiedAt: today,
+            baselineTitle: "Water plants", baselineNotes: nil,
+            baselineRecurrence: nil,
+            baselineDueDate: today, baselineCompletedInstanceDate: nil,
+            recurrenceDegraded: false
+        )
+        let actions = ChoreSyncPlanner.plan(
+            apple: [oneOff], skylight: [remote], links: [link],
+            direction: .twoWay, conflictPolicy: .newestWins,
+            today: "2026-07-15", todayDate: today
+        )
+        #expect(actions.isEmpty)
+    }
+
     @Test("A stale Apple due date rolls forward to match the Skylight occurrence")
     func rollsStaleDueDateForward() {
         let nextDay = today.addingTimeInterval(86_400)
