@@ -34,8 +34,4 @@ jobs:
         run: swift build
 
       - name: Test
-        run: |
-          bin_path="$(swift build --show-bin-path)"
-          mkdir -p "${bin_path}/PackageFrameworks"
-          cp -R "${bin_path}/Sparkle.framework" "${bin_path}/PackageFrameworks/"
-          swift test
+        run: ./script/run_tests.sh

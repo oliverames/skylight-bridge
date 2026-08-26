@@ -44,6 +44,39 @@ if [[ ! -f "$DMG_PATH" ]]; then
   echo "DMG does not exist: $DMG_PATH" >&2
   exit 1
 fi
+
+# Verify the DMG actually carries the version being published, so a hand-run
+# invocation cannot attach the wrong version to a signed enclosure. Detach on
+# every exit path; this runs before the global cleanup trap is the only trap.
+MOUNT_DIR="$(mktemp -d)"
+verify_dmg_version() {
+  if ! hdiutil attach -readonly -nobrowse -mountpoint "$MOUNT_DIR" "$DMG_PATH" >/dev/null; then
+    echo "Could not mount DMG to verify its version." >&2
+    return 1
+  fi
+  local app_plist marketing build
+  app_plist="$(find "$MOUNT_DIR" -maxdepth 3 -path '*.app/Contents/Info.plist' | head -1)"
+  if [[ -z "$app_plist" ]]; then
+    echo "No app bundle found in DMG." >&2
+    return 1
+  fi
+  marketing="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_plist")"
+  build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app_plist")"
+  hdiutil detach "$MOUNT_DIR" >/dev/null 2>&1 || true
+  if [[ "$marketing" != "$VERSION" ]]; then
+    echo "The DMG's app reports version $marketing, but the publish arguments say $VERSION." >&2
+    return 1
+  fi
+  if [[ "$build" != "$BUILD_NUMBER" ]]; then
+    echo "The DMG's app reports build $build, but the publish arguments say $BUILD_NUMBER." >&2
+    return 1
+  fi
+}
+if ! verify_dmg_version; then
+  rm -rf "$MOUNT_DIR"
+  exit 1
+fi
+rm -rf "$MOUNT_DIR"
 if [[ ! -x "$SIGN_TOOL" ]]; then
   echo "Sparkle sign_update is missing. Run 'swift package resolve' and retry." >&2
   exit 1
