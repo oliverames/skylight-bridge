@@ -18,7 +18,15 @@ enum KeychainCredentialStoreError: Error, LocalizedError, Sendable {
     }
 }
 
-actor KeychainCredentialStore {
+/// Storage for account secrets, exposed as a protocol so session behavior
+/// such as sign-out can be tested without touching the Keychain.
+protocol CredentialStoring: Actor {
+    func save(_ value: String, for account: String) throws
+    func string(for account: String) throws -> String?
+    func delete(for account: String) throws
+}
+
+actor KeychainCredentialStore: CredentialStoring {
     private let service: String
 
     init(service: String = "com.oliverames.SkylightBridge.skylight") {

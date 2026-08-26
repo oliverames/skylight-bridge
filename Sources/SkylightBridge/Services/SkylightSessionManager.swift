@@ -40,9 +40,9 @@ actor SkylightSessionManager {
         static let deviceFingerprint = "oauth-device-fingerprint"
     }
 
-    private let credentials: KeychainCredentialStore
+    private let credentials: any CredentialStoring
 
-    init(credentials: KeychainCredentialStore = KeychainCredentialStore()) {
+    init(credentials: any CredentialStoring = KeychainCredentialStore()) {
         self.credentials = credentials
     }
 
@@ -50,23 +50,40 @@ actor SkylightSessionManager {
         try await credentials.string(for: Key.email)
     }
 
-    /// Removes every stored account secret. The access token is revoked with
-    /// Skylight first on a best-effort basis: a revoke that fails (offline,
-    /// token already expired) must not leave the secrets behind, so deletion
-    /// always proceeds. The device fingerprint is kept — it identifies this
-    /// install, not the account, and reusing it keeps Skylight from counting
-    /// every sign-in as a new device.
+    /// Removes every stored account secret. Both tokens are revoked with
+    /// Skylight on a best-effort basis — a revoke that fails (offline, token
+    /// already expired) must not leave the secrets behind, so deletion always
+    /// proceeds. Each stored secret is deleted independently and the first
+    /// failure surfaces at the end, so one locked-Keychain error cannot strand
+    /// the remaining secrets. The device fingerprint is kept — it identifies
+    /// this install, not the account, and reusing it keeps Skylight from
+    /// counting every sign-in as a new device.
     func signOut() async throws {
-        if let accessToken = try? await credentials.string(for: Key.accessToken),
-           !accessToken.isEmpty,
-           let fingerprint = try? await credentials.string(for: Key.deviceFingerprint) {
+        if let fingerprint = try? await credentials.string(for: Key.deviceFingerprint),
+           !fingerprint.isEmpty {
             let authenticator = SkylightOAuthAuthenticator(deviceFingerprint: fingerprint)
-            try? await authenticator.revoke(token: accessToken)
+            let refreshToken = try? await credentials.string(for: Key.refreshToken)
+            if let refreshToken, !refreshToken.isEmpty {
+                // Revoking the long-lived refresh token ends the server-side
+                // session family; the access token dies on its own shortly.
+                try? await authenticator.revoke(token: refreshToken)
+            }
+            let accessToken = try? await credentials.string(for: Key.accessToken)
+            if let accessToken, !accessToken.isEmpty {
+                try? await authenticator.revoke(token: accessToken)
+            }
         }
-        try await credentials.delete(for: Key.accessToken)
-        try await credentials.delete(for: Key.refreshToken)
-        try await credentials.delete(for: Key.password)
-        try await credentials.delete(for: Key.email)
+        var firstError: (any Error)?
+        for key in [Key.email, Key.password, Key.accessToken, Key.refreshToken] {
+            do {
+                try await credentials.delete(for: key)
+            } catch {
+                if firstError == nil { firstError = error }
+            }
+        }
+        if let firstError {
+            throw firstError
+        }
     }
 
     func saveCredentials(email: String, password: String) async throws {
@@ -155,8 +172,11 @@ actor SkylightSessionManager {
                 }
                 return candidate
             } catch {
-                // A stale or revoked refresh token is recovered with the saved
-                // credentials before any sync mutations begin.
+                // Only a rejected session justifies replaying the stored
+                // credentials through a full web login. Network timeouts, server
+                // errors, and decoding failures surface directly instead of
+                // silently minting new device sessions on every scheduled sync.
+                guard Self.isAuthenticationFailure(error) else { throw error }
             }
         }
         let connection = try await connect(configuration: configuration)
@@ -178,8 +198,11 @@ actor SkylightSessionManager {
             refreshToken: token.refreshToken,
             tokenProvider: authenticator,
             persist: { [credentials] refreshed in
-                try await credentials.save(refreshed.accessToken, for: Key.accessToken)
+                // The refresh token is written first: an interruption then
+                // leaves old-access + new-refresh, which still refreshes
+                // cleanly, instead of new-access plus a consumed refresh token.
                 try await credentials.save(refreshed.refreshToken, for: Key.refreshToken)
+                try await credentials.save(refreshed.accessToken, for: Key.accessToken)
             }
         )
         return SkylightAPIClient(
@@ -207,6 +230,15 @@ actor SkylightSessionManager {
         return url
     }
 
+    /// True when a probe failed because the session itself was rejected. Only
+    /// these errors route into the credential-login fallback.
+    nonisolated static func isAuthenticationFailure(_ error: any Error) -> Bool {
+        if case let .httpStatus(code, _, _) = error as? SkylightAPIError {
+            return code == 401 || code == 403
+        }
+        return false
+    }
+
     private nonisolated static func validateConfiguredFrame(
         _ configuredFrameID: String,
         in frames: [SkylightResource<SkylightFrameAttributes>]
@@ -218,8 +250,9 @@ actor SkylightSessionManager {
     }
 
     private func persist(_ token: SkylightOAuthToken) async throws {
-        try await credentials.save(token.accessToken, for: Key.accessToken)
+        // Refresh token first; see the transport persist hook for why.
         try await credentials.save(token.refreshToken, for: Key.refreshToken)
+        try await credentials.save(token.accessToken, for: Key.accessToken)
     }
 
     private func deviceFingerprint() async throws -> String {

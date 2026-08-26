@@ -10,6 +10,10 @@ actor SkylightAuthenticatedTransport: SkylightTransport {
     private let sleep: SkylightRetrySleeper
     private var accessToken: String
     private var refreshToken: String
+    // One in-flight refresh shared by every concurrent 401. Skylight rotates
+    // refresh tokens, so two requests replaying the same pre-rotation token
+    // would race: the loser's grant fails and can invalidate the session.
+    private var refreshTask: Task<Void, Error>?
 
     init(
         base: any SkylightTransport = SkylightURLSessionTransport(),
@@ -35,10 +39,7 @@ actor SkylightAuthenticatedTransport: SkylightTransport {
         var result = try await base.data(for: authorizedRequest)
 
         if result.1.statusCode == 401 {
-            let token = try await tokenProvider.refresh(refreshToken: refreshToken)
-            try await persist(token)
-            accessToken = token.accessToken
-            refreshToken = token.refreshToken
+            try await refreshTokens()
             authorizedRequest.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
             result = try await base.data(for: authorizedRequest)
         }
@@ -51,6 +52,31 @@ actor SkylightAuthenticatedTransport: SkylightTransport {
         }
 
         return result
+    }
+
+    /// Rotates the token pair once per burst. Concurrent 401s join the single
+    /// in-flight refresh; each waiter rethrows a failure and uses the updated
+    /// pair when it succeeds.
+    private func refreshTokens() async throws {
+        if let inFlight = refreshTask {
+            return try await inFlight.value
+        }
+        let tokenToRotate = refreshToken
+        let task = Task<Void, Error> { [tokenProvider, persist] in
+            let token = try await tokenProvider.refresh(refreshToken: tokenToRotate)
+            try await persist(token)
+            await self.applyRefreshed(token)
+        }
+        // Cleared on scope exit, after the rotation finished and the actor
+        // state holds the new pair.
+        defer { refreshTask = nil }
+        refreshTask = task
+        try await task.value
+    }
+
+    private func applyRefreshed(_ token: SkylightOAuthToken) {
+        accessToken = token.accessToken
+        refreshToken = token.refreshToken
     }
 
     private func isIdempotent(method: String?) -> Bool {

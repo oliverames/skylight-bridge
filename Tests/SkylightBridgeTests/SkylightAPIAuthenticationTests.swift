@@ -175,6 +175,63 @@ struct SkylightAPIAuthenticationTests {
         #expect(await postBase.requests.count == 1)
     }
 
+    @Test("Concurrent 401s share one refresh instead of replaying the old token")
+    func concurrent401sShareSingleRefresh() async throws {
+        let framesBody = #"{"data":[{"id":"frame-1","type":"frame","attributes":{"name":"Kitchen"}}]}"#
+        let base = SkylightSequenceTransport(responses: [
+            .init(statusCode: 401),
+            .init(statusCode: 401),
+            .init(statusCode: 200, body: framesBody),
+            .init(statusCode: 200, body: framesBody)
+        ])
+        let provider = SkylightSlowTokenProvider(
+            token: SkylightOAuthToken(
+                accessToken: "new-access",
+                refreshToken: "new-refresh",
+                expiresIn: 3600,
+                tokenType: "Bearer"
+            )
+        )
+        let persistence = SkylightTokenRecorder()
+        let transport = SkylightAuthenticatedTransport(
+            base: base,
+            accessToken: "old-access",
+            refreshToken: "old-refresh",
+            tokenProvider: provider,
+            persist: { token in await persistence.record(token) }
+        )
+        let client = SkylightAPIClient(accessToken: "", transport: transport)
+
+        // Both requests lose their session before either refresh completes;
+        // the slow provider guarantees the two 401s overlap in the window.
+        async let first = client.listFrames()
+        async let second = client.listFrames()
+        _ = try await [first, second]
+
+        #expect(await provider.receivedRefreshTokens == ["old-refresh"])
+        #expect(await persistence.tokens.count == 1)
+        let requests = await base.requests
+        #expect(requests[0].value(forHTTPHeaderField: "Authorization") == "Bearer old-access")
+        #expect(requests[1].value(forHTTPHeaderField: "Authorization") == "Bearer old-access")
+    }
+
+    @Test("Only rejected-session errors trigger the credential-login fallback")
+    func classifiesAuthenticationFailures() {
+        #expect(SkylightSessionManager.isAuthenticationFailure(
+            SkylightAPIError.httpStatus(code: 401, endpoint: "/frames", body: "")
+        ))
+        #expect(SkylightSessionManager.isAuthenticationFailure(
+            SkylightAPIError.httpStatus(code: 403, endpoint: "/frames", body: "")
+        ))
+        #expect(!SkylightSessionManager.isAuthenticationFailure(
+            SkylightAPIError.httpStatus(code: 500, endpoint: "/frames", body: "")
+        ))
+        #expect(!SkylightSessionManager.isAuthenticationFailure(URLError(.timedOut)))
+        #expect(!SkylightSessionManager.isAuthenticationFailure(
+            SkylightSessionManagerError.frameUnavailable
+        ))
+    }
+
     private func formValues(from request: URLRequest) throws -> [String: String?] {
         let data = try #require(request.httpBody)
         let body = try #require(String(data: data, encoding: .utf8))
@@ -226,6 +283,23 @@ private actor SkylightStubTokenProvider: SkylightOAuthTokenProvider {
 
     func refresh(refreshToken: String) async throws -> SkylightOAuthToken {
         receivedRefreshTokens.append(refreshToken)
+        return token
+    }
+}
+
+/// A token provider that stalls briefly, so overlapping requests can be
+/// relied on to reach their 401 handling while a rotation is still in flight.
+private actor SkylightSlowTokenProvider: SkylightOAuthTokenProvider {
+    let token: SkylightOAuthToken
+    private(set) var receivedRefreshTokens: [String] = []
+
+    init(token: SkylightOAuthToken) {
+        self.token = token
+    }
+
+    func refresh(refreshToken: String) async throws -> SkylightOAuthToken {
+        receivedRefreshTokens.append(refreshToken)
+        try? await Task.sleep(nanoseconds: 100_000_000)
         return token
     }
 }
