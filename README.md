@@ -13,8 +13,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/oliverames/skylight-bridge/releases/tag/v1.6.0">
-    <img src="https://img.shields.io/badge/macOS-v1.6.0-f5a542?style=flat-square&logo=apple&logoColor=white" alt="macOS release 1.6.0">
+  <a href="https://github.com/oliverames/skylight-bridge/releases/tag/v1.6.1">
+    <img src="https://img.shields.io/badge/macOS-v1.6.1-f5a542?style=flat-square&logo=apple&logoColor=white" alt="macOS release 1.6.1">
   </a>
   <a href="#license">
     <img src="https://img.shields.io/badge/license-all%20rights%20reserved-f5a542?style=flat-square" alt="All rights reserved">
@@ -48,10 +48,10 @@ This is a practical Mac utility, not a second household database. Every mapping 
 3. Open Skylight Bridge from Applications. The app is Developer ID-signed, notarized, and stapled for Gatekeeper.
 4. The app checks for signed updates, and **Skylight Bridge > Check for Updates…** is always available when you want to check manually.
 
-Version 1.6.0 adds a confirmed Sign Out that removes credentials and tokens from the Keychain, gates the experimental multi-device coordination that published to a CloudKit record type not yet deployed, and turns off the hidden Meals workflow in lockstep with its engine. If you want to verify the download, compare the output below with the checksum file beside the DMG on the release page.
+Version 1.6.1 is a correctness release. It stops deleted recurring reminders from coming back on the next sync, keeps a failed teardown from stranding the Skylight copies it could not delete, makes token refresh single-flight so two overlapping retries cannot invalidate the session, and fixes recipe quantities such as `0.5 cup` that were parsed as `5 cup`. If you want to verify the download, compare the output below with the checksum file beside the DMG on the release page.
 
 ```bash
-shasum -a 256 ~/Downloads/Skylight.Bridge-1.6.0.dmg
+shasum -a 256 ~/Downloads/Skylight.Bridge-1.6.1.dmg
 ```
 
 <p align="center">
