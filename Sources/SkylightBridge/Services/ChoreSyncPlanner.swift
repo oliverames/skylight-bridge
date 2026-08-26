@@ -144,7 +144,14 @@ enum ChoreSyncPlanner {
             result.append(.updateApple(appleID: apple.id, seriesID: remote.id))
         }
 
-        let remoteCompleted = remote.todayStatus == .complete || remote.todayStatus == .skipped
+        // A status the server added after this build decodes as nil, and an
+        // omitted field always could be nil. Either way it carries no
+        // information: reconciling completions against it would push the same
+        // write on every run. Content updates above still flow.
+        guard let todayStatus = remote.todayStatus else {
+            return result
+        }
+        let remoteCompleted = todayStatus == .complete || todayStatus == .skipped
         let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: todayDate) ?? .distantFuture
         // A rolled-forward due date signals completion only for a genuinely
         // recurring chore (EventKit spawns the next occurrence), including a

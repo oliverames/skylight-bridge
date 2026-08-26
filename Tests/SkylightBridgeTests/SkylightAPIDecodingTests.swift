@@ -14,6 +14,37 @@ struct SkylightAPIDecodingTests {
         #expect(response.data.first?.attributes.series == "series-1")
     }
 
+    @Test("An unrecognized chore status decodes as no information, not a failure")
+    func decodesUnknownChoreStatusTolerantly() throws {
+        let json = #"{"data":[{"id":"chore-1","type":"chore","attributes":{"summary":"Water plants","status":"in_progress"}},{"id":"chore-2","type":"chore","attributes":{"summary":"Fold laundry","status":"complete"}}]}"#
+        let response = try JSONDecoder().decode(
+            SkylightCollectionResponse<SkylightChoreAttributes>.self,
+            from: Data(json.utf8)
+        )
+
+        #expect(response.data.count == 2)
+        #expect(response.data.first?.attributes.status == nil)
+        #expect(response.data.first?.attributes.summary == "Water plants")
+        #expect(response.data.last?.attributes.status == .complete)
+    }
+
+    @Test("Unrecognized list kinds and item statuses decode as no information")
+    func decodesUnknownListValuesTolerantly() throws {
+        let listJSON = #"{"label":"Groceries","kind":"grocery","hide_on_device":false}"#
+        let list = try JSONDecoder().decode(
+            SkylightListAttributes.self, from: Data(listJSON.utf8)
+        )
+        #expect(list.kind == nil)
+        #expect(list.label == "Groceries")
+
+        let itemJSON = #"{"label":"Milk","status":"archived"}"#
+        let item = try JSONDecoder().decode(
+            SkylightListItemAttributes.self, from: Data(itemJSON.utf8)
+        )
+        #expect(item.status == nil)
+        #expect(item.label == "Milk")
+    }
+
     @Test("Album message identifiers decode the live object shape")
     func decodesAlbumMessageIdentifiers() throws {
         let data = Data(#"{"data":[{"id":101},{"id":"102"}]}"#.utf8)

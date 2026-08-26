@@ -4,6 +4,23 @@ enum SkylightChoreStatus: String, Codable, Equatable, Sendable {
     case skipped
 }
 
+/// Decodes string-keyed enums leniently: a server-added value decodes as nil
+/// ("no information") instead of failing the whole collection response, per
+/// the compatibility policy in docs/API_EVIDENCE.md. Request-side structs keep
+/// the strict enums so the bridge never sends an unknown value.
+enum TolerantDecoding {
+    static func enumValue<E: RawRepresentable, K: CodingKey>(
+        _ type: E.Type,
+        from container: KeyedDecodingContainer<K>,
+        forKey key: K
+    ) throws -> E? where E.RawValue == String {
+        guard let raw = try container.decodeIfPresent(String.self, forKey: key) else {
+            return nil
+        }
+        return E(rawValue: raw)
+    }
+}
+
 struct SkylightChoreAttributes: Codable, Equatable, Sendable {
     let summary: String?
     let description: String?
@@ -21,6 +38,25 @@ struct SkylightChoreAttributes: Codable, Equatable, Sendable {
     let routine: Bool?
     let position: Int?
     let series: String?
+
+    enum CodingKeys: String, CodingKey {
+        case summary
+        case description
+        case group
+        case status
+        case start
+        case startTime = "start_time"
+        case completedOn = "completed_on"
+        case rewardPoints = "reward_points"
+        case recurring
+        case recurringUntil = "recurring_until"
+        case recurrenceSet = "recurrence_set"
+        case upForGrabs = "up_for_grabs"
+        case emojiIcon = "emoji_icon"
+        case routine
+        case position
+        case series
+    }
 
     init(
         summary: String? = nil,
@@ -58,23 +94,26 @@ struct SkylightChoreAttributes: Codable, Equatable, Sendable {
         self.series = series
     }
 
-    enum CodingKeys: String, CodingKey {
-        case summary
-        case description
-        case group
-        case status
-        case start
-        case startTime = "start_time"
-        case completedOn = "completed_on"
-        case rewardPoints = "reward_points"
-        case recurring
-        case recurringUntil = "recurring_until"
-        case recurrenceSet = "recurrence_set"
-        case upForGrabs = "up_for_grabs"
-        case emojiIcon = "emoji_icon"
-        case routine
-        case position
-        case series
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        summary = try container.decodeIfPresent(String.self, forKey: .summary)
+        description = try container.decodeIfPresent(String.self, forKey: .description)
+        group = try container.decodeIfPresent(String.self, forKey: .group)
+        status = try TolerantDecoding.enumValue(
+            SkylightChoreStatus.self, from: container, forKey: .status
+        )
+        start = try container.decodeIfPresent(String.self, forKey: .start)
+        startTime = try container.decodeIfPresent(String.self, forKey: .startTime)
+        completedOn = try container.decodeIfPresent(String.self, forKey: .completedOn)
+        rewardPoints = try container.decodeIfPresent(Int.self, forKey: .rewardPoints)
+        recurring = try container.decodeIfPresent(Bool.self, forKey: .recurring)
+        recurringUntil = try container.decodeIfPresent(String.self, forKey: .recurringUntil)
+        recurrenceSet = try container.decodeIfPresent([String].self, forKey: .recurrenceSet)
+        upForGrabs = try container.decodeIfPresent(Bool.self, forKey: .upForGrabs)
+        emojiIcon = try container.decodeIfPresent(String.self, forKey: .emojiIcon)
+        routine = try container.decodeIfPresent(Bool.self, forKey: .routine)
+        position = try container.decodeIfPresent(Int.self, forKey: .position)
+        series = try container.decodeIfPresent(String.self, forKey: .series)
     }
 }
 
@@ -255,7 +294,6 @@ struct SkylightRewardAttributes: Codable, Equatable, Sendable {
     let description: String?
     let emojiIcon: String?
     let respawnOnRedemption: Bool?
-    let redeemedAt: String?
 
     enum CodingKeys: String, CodingKey {
         case name
@@ -263,7 +301,6 @@ struct SkylightRewardAttributes: Codable, Equatable, Sendable {
         case description
         case emojiIcon = "emoji_icon"
         case respawnOnRedemption = "respawn_on_redemption"
-        case redeemedAt = "redeemed_at"
     }
 }
 
@@ -303,11 +340,9 @@ struct SkylightRewardRequest: Codable, Equatable, Sendable {
 
 struct SkylightRewardPoint: Codable, Equatable, Sendable {
     let categoryID: Int
-    let currentPointBalance: Int
 
     enum CodingKeys: String, CodingKey {
         case categoryID = "category_id"
-        case currentPointBalance = "current_point_balance"
     }
 }
 

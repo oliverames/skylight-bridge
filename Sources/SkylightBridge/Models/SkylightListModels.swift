@@ -15,11 +15,33 @@ struct SkylightListAttributes: Codable, Equatable, Sendable {
     let kind: SkylightListKind?
     let hideOnDevice: Bool?
 
+    init(
+        label: String? = nil,
+        color: String? = nil,
+        kind: SkylightListKind? = nil,
+        hideOnDevice: Bool? = nil
+    ) {
+        self.label = label
+        self.color = color
+        self.kind = kind
+        self.hideOnDevice = hideOnDevice
+    }
+
     enum CodingKeys: String, CodingKey {
         case label
         case color
         case kind
         case hideOnDevice = "hide_on_device"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        label = try container.decodeIfPresent(String.self, forKey: .label)
+        color = try container.decodeIfPresent(String.self, forKey: .color)
+        kind = try TolerantDecoding.enumValue(
+            SkylightListKind.self, from: container, forKey: .kind
+        )
+        hideOnDevice = try container.decodeIfPresent(Bool.self, forKey: .hideOnDevice)
     }
 }
 
@@ -54,6 +76,35 @@ struct SkylightListItemAttributes: Codable, Equatable, Sendable {
     let status: SkylightListItemStatus?
     let section: String?
     let position: Int?
+
+    init(
+        label: String? = nil,
+        status: SkylightListItemStatus? = nil,
+        section: String? = nil,
+        position: Int? = nil
+    ) {
+        self.label = label
+        self.status = status
+        self.section = section
+        self.position = position
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case label
+        case status
+        case section
+        case position
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        label = try container.decodeIfPresent(String.self, forKey: .label)
+        status = try TolerantDecoding.enumValue(
+            SkylightListItemStatus.self, from: container, forKey: .status
+        )
+        section = try container.decodeIfPresent(String.self, forKey: .section)
+        position = try container.decodeIfPresent(Int.self, forKey: .position)
+    }
 }
 
 struct SkylightListItemRequest: Codable, Equatable, Sendable {
@@ -112,9 +163,6 @@ struct SkylightGroceryOrderRequest: Codable, Equatable, Sendable {
 }
 
 struct SkylightGroceryOrderResponse: Codable, Equatable, Sendable {
-    let redirectURL: String
-
-    enum CodingKeys: String, CodingKey {
-        case redirectURL = "redirect_url"
-    }
+    // The redirect_url payload is surfaced by the endpoint wrapper in
+    // Diagnostics but the bridge itself never follows it.
 }

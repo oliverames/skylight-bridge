@@ -139,6 +139,35 @@ struct ChoreSyncPlannerTests {
         #expect(actions.isEmpty)
     }
 
+    @Test("A chore with no readable status plans no completion either direction")
+    func nilTodayStatusSuppressesCompletionReconciliation() {
+        let completed = ChoreReminderSnapshot(
+            id: "a", listID: "list", memberKey: "oliver",
+            title: "Water plants", notes: nil, isCompleted: true,
+            dueDate: today,
+            recurrence: ParsedRecurrenceRule(frequency: .daily),
+            recurrenceUnsupported: false, modifiedAt: today
+        )
+        let unreadable = SkylightChoreSnapshot(
+            id: "s", title: "Water plants", notes: nil, memberKey: "oliver",
+            recurrenceRaw: ["FREQ=DAILY"],
+            recurrence: ParsedRecurrenceRule(frequency: .daily),
+            recurrenceUnsupported: false, todayStatus: nil,
+            startDate: today, modifiedAt: today
+        )
+        let link = link(baselineDue: today)
+
+        let actions = ChoreSyncPlanner.plan(
+            apple: [completed], skylight: [unreadable], links: [link],
+            direction: .twoWay, conflictPolicy: .newestWins,
+            today: "2026-07-15", todayDate: today
+        )
+
+        // Without a readable status the bridge cannot know the occurrence's
+        // state; pushing a completion would repeat on every sync.
+        #expect(actions.isEmpty)
+    }
+
     @Test("A stale Apple due date rolls forward to match the Skylight occurrence")
     func rollsStaleDueDateForward() {
         let nextDay = today.addingTimeInterval(86_400)
