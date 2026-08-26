@@ -82,28 +82,6 @@ actor AppleNotesStore {
         }
     }
 
-    func accounts() throws -> [AppleNotesAccountSnapshot] {
-        let descriptor = try execute(
-            """
-            tell application "Notes"
-                set resultRows to {}
-                repeat with accountItem in accounts
-                    set accountItem to contents of accountItem
-                    set end of resultRows to {id of accountItem as text, name of accountItem as text}
-                end repeat
-                return resultRows
-            end tell
-            """
-        )
-
-        return try rows(in: descriptor).map { row in
-            AppleNotesAccountSnapshot(
-                id: try requiredString(in: row, at: 1, field: "account id"),
-                name: try requiredString(in: row, at: 2, field: "account name")
-            )
-        }
-    }
-
     func folders() throws -> [AppleNotesFolderSnapshot] {
         let descriptor = try execute(Self.folderEnumerationScript)
         return try rows(in: descriptor)

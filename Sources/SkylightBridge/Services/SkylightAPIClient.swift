@@ -99,37 +99,6 @@ extension SkylightAPIClient {
         try await send(method: method, path: path, query: query)
     }
 
-    /// Performs an authenticated JSON request against a private API route that does
-    /// not yet have a first-class client method.
-    func authenticatedJSONRequest<Response, Body>(
-        method: String,
-        path: [String],
-        query: [URLQueryItem] = [],
-        body: Body
-    ) async throws -> Response
-    where Response: Decodable & Sendable, Body: Encodable & Sendable {
-        try await sendJSON(method: method, path: path, query: query, body: body)
-    }
-
-    /// Performs an authenticated request whose successful response body is empty.
-    func authenticatedRequestWithoutResponse(
-        method: String,
-        path: [String],
-        query: [URLQueryItem] = []
-    ) async throws {
-        try await sendWithoutResponse(method: method, path: path, query: query)
-    }
-
-    /// Performs an authenticated JSON request whose successful response body is empty.
-    func authenticatedJSONRequestWithoutResponse<Body>(
-        method: String,
-        path: [String],
-        query: [URLQueryItem] = [],
-        body: Body
-    ) async throws where Body: Encodable & Sendable {
-        try await sendJSONWithoutResponse(method: method, path: path, query: query, body: body)
-    }
-
     func send<Response>(
         method: String,
         path: [String],

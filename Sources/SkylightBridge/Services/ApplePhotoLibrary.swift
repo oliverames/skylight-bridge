@@ -26,11 +26,9 @@ enum ApplePhotoLibraryError: Error, LocalizedError, Sendable {
 }
 
 @MainActor
-final class ApplePhotoLibrary: NSObject, PHPhotoLibraryChangeObserver {
+final class ApplePhotoLibrary: NSObject {
     private let photoLibrary: PHPhotoLibrary
     private let imageManager: PHImageManager
-    private var changeContinuation: AsyncStream<AppleSourceChange>.Continuation?
-    private var isObserving = false
 
     init(
         photoLibrary: PHPhotoLibrary = .shared(),
@@ -270,38 +268,6 @@ final class ApplePhotoLibrary: NSObject, PHPhotoLibraryChangeObserver {
         }
 
         return AppleRenderedPhoto(asset: assetSnapshot, image: renderedImage)
-    }
-
-    func changes() -> AsyncStream<AppleSourceChange> {
-        if !isObserving {
-            photoLibrary.register(self)
-            isObserving = true
-        }
-
-        return AsyncStream { continuation in
-            self.changeContinuation?.finish()
-            self.changeContinuation = continuation
-            continuation.onTermination = { [weak self] _ in
-                Task { @MainActor in
-                    self?.stopObservingChanges()
-                }
-            }
-        }
-    }
-
-    func stopObservingChanges() {
-        changeContinuation?.finish()
-        changeContinuation = nil
-        if isObserving {
-            photoLibrary.unregisterChangeObserver(self)
-            isObserving = false
-        }
-    }
-
-    nonisolated func photoLibraryDidChange(_ changeInstance: PHChange) {
-        Task { @MainActor [weak self] in
-            self?.changeContinuation?.yield(AppleSourceChange(occurredAt: Date()))
-        }
     }
 
     private func requireAccess() throws {

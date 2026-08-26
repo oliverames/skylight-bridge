@@ -226,11 +226,6 @@ struct AppleReminderPatch: Sendable {
     }
 }
 
-struct AppleNotesAccountSnapshot: Identifiable, Sendable, Hashable {
-    let id: String
-    let name: String
-}
-
 struct AppleNotesFolderSnapshot: Identifiable, Sendable, Hashable {
     let id: String
     let name: String
@@ -273,6 +268,3 @@ struct AppleNoteSnapshot: Identifiable, Sendable, Hashable {
     let attachments: [AppleNoteAttachmentSnapshot]
 }
 
-struct AppleSourceChange: Sendable, Hashable {
-    let occurredAt: Date
-}

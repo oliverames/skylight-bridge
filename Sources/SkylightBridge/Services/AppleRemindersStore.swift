@@ -42,8 +42,6 @@ enum AppleRemindersStoreError: Error, LocalizedError, Sendable {
 @MainActor
 final class AppleRemindersStore {
     private let eventStore: EKEventStore
-    private var changeContinuation: AsyncStream<AppleSourceChange>.Continuation?
-    private var notificationToken: (any NSObjectProtocol)?
 
     init(eventStore: EKEventStore = EKEventStore()) {
         self.eventStore = eventStore
@@ -463,39 +461,6 @@ final class AppleRemindersStore {
             try eventStore.remove(reminder, commit: true)
         } catch {
             throw AppleRemindersStoreError.eventKit(error.localizedDescription)
-        }
-    }
-
-    func changes() -> AsyncStream<AppleSourceChange> {
-        if notificationToken == nil {
-            notificationToken = NotificationCenter.default.addObserver(
-                forName: .EKEventStoreChanged,
-                object: eventStore,
-                queue: .main
-            ) { [weak self] _ in
-                Task { @MainActor in
-                    self?.changeContinuation?.yield(AppleSourceChange(occurredAt: Date()))
-                }
-            }
-        }
-
-        return AsyncStream { continuation in
-            self.changeContinuation?.finish()
-            self.changeContinuation = continuation
-            continuation.onTermination = { [weak self] _ in
-                Task { @MainActor in
-                    self?.stopObservingChanges()
-                }
-            }
-        }
-    }
-
-    func stopObservingChanges() {
-        changeContinuation?.finish()
-        changeContinuation = nil
-        if let notificationToken {
-            NotificationCenter.default.removeObserver(notificationToken)
-            self.notificationToken = nil
         }
     }
 
