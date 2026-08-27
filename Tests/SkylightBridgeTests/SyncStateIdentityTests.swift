@@ -5,6 +5,67 @@ import Testing
 
 @Suite(.serialized)
 struct SyncStateIdentityTests {
+    @Test("Deferred selected-photo changes preserve the latest user intent")
+    func deferredSelectedPhotoChangesUseLatestIntent() {
+        let mappingID = UUID()
+        var pending = PendingSharedPhotoChanges()
+        pending.record(
+            mappingID: mappingID,
+            additions: ["asset-added", "asset-toggled"],
+            removals: ["asset-removed"]
+        )
+        pending.record(
+            mappingID: mappingID,
+            additions: ["asset-removed"],
+            removals: ["asset-toggled"]
+        )
+
+        #expect(pending.additions[mappingID] == ["asset-added", "asset-removed"])
+        #expect(pending.removals[mappingID] == ["asset-toggled"])
+        #expect(
+            pending.applying(
+                to: ["asset-toggled"],
+                mappingID: mappingID
+            ) == ["asset-added", "asset-removed"]
+        )
+
+        let published = pending
+        pending.record(
+            mappingID: mappingID,
+            additions: ["asset-later"],
+            removals: []
+        )
+        pending.acknowledge(published)
+
+        #expect(pending.additions[mappingID] == ["asset-later"])
+        #expect(pending.removals[mappingID] == nil)
+    }
+
+    @Test("Shared-state publishes wait for the full Cloud operation gate")
+    @MainActor
+    func sharedStatePublishWaitsForCloudOperationGate() async throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = testConfigurationStore(rootURL: directory)
+        try persistence.saveConfiguration(.empty)
+        let preferences = CountingPreferencesStore()
+        let store = AppStore(
+            persistence: persistence,
+            sharedPreferencesStore: preferences
+        )
+        store.sharedCloudOperationInProgress = true
+
+        let publish = Task { await store.publishSharediCloudState() }
+        try await ContinuousClock().sleep(for: .milliseconds(150))
+
+        #expect(await preferences.saveCount == 0)
+
+        store.sharedCloudOperationInProgress = false
+        #expect(await publish.value)
+        #expect(await preferences.saveCount == 1)
+    }
+
     @Test("Frame-scoped sync records have distinct identities")
     func frameScopedRecordsHaveDistinctIdentities() {
         let mappingID = UUID()
@@ -463,6 +524,74 @@ struct SyncStateIdentityTests {
         await store.restoreAccountConnection()
 
         #expect(await sessions.clientAttempts == 1)
+    }
+
+    @Test("Reconnect records an automatically selected replacement frame")
+    @MainActor
+    func reconnectRecordsReplacementFramePreference() async throws {
+        let signedOutKey = "isSkylightSignedOut"
+        UserDefaults.standard.removeObject(forKey: signedOutKey)
+        defer { UserDefaults.standard.removeObject(forKey: signedOutKey) }
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let stateDirectory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+            try? FileManager.default.removeItem(at: stateDirectory)
+        }
+        var configuration = AppConfiguration.empty
+        configuration.account.frameID = "frame-missing"
+        let persistence = testConfigurationStore(rootURL: directory)
+        try persistence.saveConfiguration(configuration)
+        let client = SkylightAPIClient(
+            accessToken: "token",
+            transport: FrameHydrationTransport()
+        )
+        let stateStore = SyncStateStore(
+            rootURL: stateDirectory,
+            authenticator: LocalFileAuthenticator(testKey: Data(repeating: 0x75, count: 32))
+        )
+        let store = AppStore(
+            persistence: persistence,
+            sessionManager: StaticClientSessionManager(client: client),
+            syncStateStore: stateStore
+        )
+
+        await store.restoreAccountConnection()
+
+        #expect(store.configuration.account.frameID == "frame-2")
+        #expect(store.configuration.account.deviceID == "device-2")
+        #expect(store.sharedPreferenceMutations.selectedFrame?.value == "frame-2")
+        #expect(store.sharedPreferenceMutationVersion == 1)
+        #expect(try persistence.loadConfiguration() == store.configuration)
+    }
+
+    @Test("Sign-in records a replacement frame before destination refresh fails")
+    @MainActor
+    func signInRecordsReplacementFrameBeforeRefreshFailure() async throws {
+        let signedOutKey = "isSkylightSignedOut"
+        UserDefaults.standard.removeObject(forKey: signedOutKey)
+        defer { UserDefaults.standard.removeObject(forKey: signedOutKey) }
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var configuration = AppConfiguration.empty
+        configuration.account.frameID = "frame-missing"
+        let persistence = testConfigurationStore(rootURL: directory)
+        try persistence.saveConfiguration(configuration)
+        let store = AppStore(
+            persistence: persistence,
+            sessionManager: ReplacementFrameSessionManager()
+        )
+
+        await store.saveAccountCredentials(email: "person@example.com", password: "secret")
+
+        #expect(store.configuration.account.frameID == "frame-2")
+        #expect(store.sharedPreferenceMutations.selectedFrame?.value == "frame-2")
+        #expect(store.sharedPreferenceMutationVersion == 1)
+        #expect(try persistence.loadConfiguration().account.frameID == "frame-2")
+        #expect(store.connectionError != nil)
     }
 
     @Test("Sign-out blocks reconnect and sync until Keychain cleanup finishes")
@@ -1146,6 +1275,8 @@ private struct FrameHydrationTransport: SkylightTransport {
         let path = request.url?.path ?? ""
         let json: String
         switch path {
+        case "/api/frames":
+            json = #"{"data":[{"id":"frame-2","type":"frame","attributes":{"name":"Kitchen","timezone":"America/New_York","plus":false}}]}"#
         case "/api/frames/frame-2/devices":
             json = #"{"data":[{"id":"device-2","type":"device","attributes":{"name":"Kitchen"}}]}"#
         case "/api/frames/frame-2/albums":
@@ -1167,6 +1298,12 @@ private struct FrameHydrationTransport: SkylightTransport {
             headerFields: ["Content-Type": "application/json"]
         )!
         return (Data(json.utf8), response)
+    }
+}
+
+private struct FailingDestinationTransport: SkylightTransport {
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        throw AppSessionTestError.offline
     }
 }
 
@@ -1192,6 +1329,42 @@ private actor StaticClientSessionManager: SkylightSessionManaging {
         validateFrame: Bool
     ) async throws -> SkylightAPIClient {
         storedClient
+    }
+}
+
+private actor ReplacementFrameSessionManager: SkylightSessionManaging {
+    func storedEmail() async throws -> String? { "person@example.com" }
+    func signOut() async throws {}
+    func saveCredentials(email: String, password: String) async throws {}
+
+    func connect(
+        configuration: SkylightAccountConfiguration
+    ) async throws -> SkylightAccountConnection {
+        let frame = SkylightResource(
+            id: "frame-2",
+            attributes: SkylightFrameAttributes(
+                name: "Kitchen",
+                timezone: "America/New_York",
+                plus: false
+            )
+        )
+        return SkylightAccountConnection(
+            client: SkylightAPIClient(
+                accessToken: "token",
+                transport: FailingDestinationTransport()
+            ),
+            frames: [frame],
+            selectedFrameID: frame.id,
+            devices: [],
+            selectedDeviceID: ""
+        )
+    }
+
+    func client(
+        configuration: SkylightAccountConfiguration,
+        validateFrame: Bool
+    ) async throws -> SkylightAPIClient {
+        throw AppSessionTestError.offline
     }
 }
 
@@ -1231,6 +1404,17 @@ private actor SuspendedPreferencesStore: SharedPreferencesCloudStoring {
 
     func savedPreferences() -> SharedPreferences? {
         remote
+    }
+}
+
+private actor CountingPreferencesStore: SharedPreferencesCloudStoring {
+    private(set) var saveCount = 0
+
+    func load() async throws -> SharedPreferences? { nil }
+
+    func save(_ proposed: SharedPreferences) async throws -> SharedPreferences {
+        saveCount += 1
+        return proposed
     }
 }
 

@@ -52,6 +52,49 @@ struct SharedPreferenceMutationRecord: Sendable {
     }
 }
 
+struct PendingSharedPhotoChanges: Sendable {
+    var additions: [UUID: Set<String>] = [:]
+    var removals: [UUID: Set<String>] = [:]
+
+    var isEmpty: Bool {
+        additions.values.allSatisfy(\.isEmpty)
+            && removals.values.allSatisfy(\.isEmpty)
+    }
+
+    mutating func record(
+        mappingID: UUID,
+        additions addedAssetIDs: Set<String>,
+        removals removedAssetIDs: Set<String>
+    ) {
+        additions[mappingID, default: []].formUnion(addedAssetIDs)
+        additions[mappingID]?.subtract(removedAssetIDs)
+        removals[mappingID, default: []].formUnion(removedAssetIDs)
+        removals[mappingID]?.subtract(addedAssetIDs)
+        removeEmptyEntries()
+    }
+
+    func applying(to assetIDs: Set<String>, mappingID: UUID) -> Set<String> {
+        assetIDs
+            .union(additions[mappingID] ?? [])
+            .subtracting(removals[mappingID] ?? [])
+    }
+
+    mutating func acknowledge(_ published: PendingSharedPhotoChanges) {
+        for (mappingID, assetIDs) in published.additions {
+            additions[mappingID]?.subtract(assetIDs)
+        }
+        for (mappingID, assetIDs) in published.removals {
+            removals[mappingID]?.subtract(assetIDs)
+        }
+        removeEmptyEntries()
+    }
+
+    private mutating func removeEmptyEntries() {
+        additions = additions.filter { !$0.value.isEmpty }
+        removals = removals.filter { !$0.value.isEmpty }
+    }
+}
+
 @MainActor
 @Observable
 final class AppStore {
@@ -135,9 +178,11 @@ final class AppStore {
     @ObservationIgnored private let sessionManager: any SkylightSessionManaging
     @ObservationIgnored private let syncStateStore: SyncStateStore
     @ObservationIgnored let sharedPreferencesStore: any SharedPreferencesCloudStoring
+    @ObservationIgnored var sharedCloudOperationInProgress = false
     @ObservationIgnored var sharedPreferencesOperationInProgress = false
     @ObservationIgnored var sharedPreferenceMutationVersion: UInt64 = 0
     @ObservationIgnored var sharedPreferenceMutations = SharedPreferenceMutationRecord()
+    @ObservationIgnored var pendingSharedPhotoChanges = PendingSharedPhotoChanges()
 
     init(
         persistence: ConfigurationStore = ConfigurationStore(),
@@ -304,6 +349,14 @@ final class AppStore {
                 configuration.syncIntervalMinutes,
                 modifiedAt
             )
+        }
+    }
+
+    private func recordPersistedFrameChangeIfNeeded(from previousFrameID: String) {
+        guard previousFrameID.trimmed != configuration.account.frameID.trimmed else { return }
+        recordSharedPreferenceMutation([.selectedFrame])
+        if hasLoadedSharediCloudState {
+            Task { await publishSharediCloudState() }
         }
     }
 
@@ -799,6 +852,7 @@ final class AppStore {
         defer { isConnecting = false }
 
         do {
+            let previousFrameID = configuration.account.frameID
             try await sessionManager.saveCredentials(email: email, password: password)
             // An explicit sign-in replaces the signed-out intent as soon as
             // credentials are stored. If the first connection is transiently
@@ -813,6 +867,7 @@ final class AppStore {
             skylightDevices = connection.devices
             configuration.account.deviceID = connection.selectedDeviceID
             try persistConfiguration()
+            recordPersistedFrameChangeIfNeeded(from: previousFrameID)
             configureScheduler()
             if try await refreshSkylightDestinations(using: connection.client) {
                 try persistConfiguration()
@@ -940,6 +995,7 @@ final class AppStore {
         defer { isConnecting = false }
 
         do {
+            let previousFrameID = configuration.account.frameID
             let client = try await sessionManager.client(
                 configuration: configuration.account,
                 validateFrame: false
@@ -960,6 +1016,7 @@ final class AppStore {
             }
             _ = try await refreshSkylightDestinations(using: client)
             try persistConfiguration()
+            recordPersistedFrameChangeIfNeeded(from: previousFrameID)
             statusMessage = "Connected to Skylight."
             connectionError = nil
             // A successful reconnect retires any earlier failure banner.
