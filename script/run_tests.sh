@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SPARKLE_FRAMEWORK="$ROOT_DIR/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
 
 cd "$ROOT_DIR"
+bash script/test_appcast_helpers.sh
 swift build --build-tests
 
 if [[ ! -d "$SPARKLE_FRAMEWORK" ]]; then

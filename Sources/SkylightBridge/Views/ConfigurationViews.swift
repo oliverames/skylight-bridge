@@ -65,7 +65,10 @@ struct AccountView: View {
                         }
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(store.isConnecting || email.trimmed.isEmpty || password.isEmpty)
+                    .disabled(
+                        store.isConnecting || store.isSyncing ||
+                            email.trimmed.isEmpty || password.isEmpty
+                    )
                     .accessibilityIdentifier("account.connect")
                 }
 

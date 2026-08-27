@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=appcast_helpers.sh
+source "$SCRIPT_DIR/appcast_helpers.sh"
+
 if [[ $# -ne 4 ]]; then
   echo "usage: $0 VERSION BUILD_NUMBER DMG_PATH RELEASE_ASSET_NAME" >&2
   exit 2
@@ -14,7 +18,7 @@ REPOSITORY="oliverames/skylight-bridge"
 APPCAST_URL="https://raw.githubusercontent.com/$REPOSITORY/gh-pages/appcast.xml"
 KEYCHAIN_ACCOUNT="${SPARKLE_KEYCHAIN_ACCOUNT:-Skylight Bridge Sparkle EdDSA}"
 APPCAST_DESCRIPTION="${APPCAST_DESCRIPTION:-This release includes improvements and fixes.}"
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 APPCAST_PATH="$ROOT_DIR/appcast.xml"
 SIGN_TOOL="$ROOT_DIR/.build/artifacts/sparkle/Sparkle/bin/sign_update"
 PAGES_DIR=""
@@ -52,6 +56,19 @@ if [[ ! "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
 fi
 if [[ ! -f "$DMG_PATH" ]]; then
   echo "DMG does not exist: $DMG_PATH" >&2
+  exit 1
+fi
+if [[ ! -f "$APPCAST_PATH" ]]; then
+  echo "Current appcast is missing: $APPCAST_PATH" >&2
+  exit 1
+fi
+CURRENT_BUILD="$(current_appcast_build "$APPCAST_PATH")"
+if [[ ! "$CURRENT_BUILD" =~ ^[0-9]+$ ]]; then
+  echo "Current appcast has an invalid or missing Sparkle build number." >&2
+  exit 1
+fi
+if ! is_newer_appcast_build "$BUILD_NUMBER" "$CURRENT_BUILD"; then
+  echo "BUILD_NUMBER must be newer than the published build $CURRENT_BUILD." >&2
   exit 1
 fi
 
@@ -114,6 +131,7 @@ fi
 DMG_SIZE="$(stat -f%z "$DMG_PATH")"
 PUBLISHED_AT="$(LC_ALL=C date -u '+%a, %d %b %Y %H:%M:%S +0000')"
 DOWNLOAD_URL="https://github.com/$REPOSITORY/releases/download/v$VERSION/$RELEASE_ASSET_NAME"
+ESCAPED_APPCAST_DESCRIPTION="$(escape_cdata "$APPCAST_DESCRIPTION")"
 TMP_APPCAST="$(mktemp -t skylight-bridge-appcast)"
 mv "$TMP_APPCAST" "$TMP_APPCAST.xml"
 TMP_APPCAST="$TMP_APPCAST.xml"
@@ -130,7 +148,7 @@ cat > "$TMP_APPCAST" <<EOF
       <title>Version $VERSION</title>
       <sparkle:version>$BUILD_NUMBER</sparkle:version>
       <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
-      <description><![CDATA[<p>$APPCAST_DESCRIPTION</p>]]></description>
+      <description><![CDATA[<p>$ESCAPED_APPCAST_DESCRIPTION</p>]]></description>
       <pubDate>$PUBLISHED_AT</pubDate>
       <enclosure url="$DOWNLOAD_URL" sparkle:edSignature="$SIGNATURE" length="$DMG_SIZE" type="application/octet-stream" />
     </item>
@@ -138,7 +156,10 @@ cat > "$TMP_APPCAST" <<EOF
 </rss>
 EOF
 
+/usr/bin/xmllint --noout "$TMP_APPCAST"
+
 "$SIGN_TOOL" "$TMP_APPCAST" --account "$KEYCHAIN_ACCOUNT" --disable-signing-warning
+/usr/bin/xmllint --noout "$TMP_APPCAST"
 "$SIGN_TOOL" --verify --account "$KEYCHAIN_ACCOUNT" "$TMP_APPCAST" >/dev/null
 mv "$TMP_APPCAST" "$APPCAST_PATH"
 

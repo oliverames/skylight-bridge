@@ -95,6 +95,17 @@ struct RecipeParserTests {
         #expect(recipe.instructions == ["Boil them."])
     }
 
+    @Test("An attachment before the title is ignored")
+    func ignoresLeadingAttachmentPlaceholder() throws {
+        let note = "\u{FFFC}\nTacos\n\nIngredients\nTortillas\n\nInstructions\nFill them."
+
+        let recipe = try RecipeParser.parse(note)
+
+        #expect(recipe.title == "Tacos")
+        #expect(recipe.ingredients == ["Tortillas"])
+        #expect(recipe.instructions == ["Fill them."])
+    }
+
     @Test("A real source URL is captured into the url field")
     func capturesRealSourceURL() throws {
         let note = "Soup\nSource: https://example.com/soup\n\nIngredients\nWater\n\nInstructions\nHeat."

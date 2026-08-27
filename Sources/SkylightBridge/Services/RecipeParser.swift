@@ -18,6 +18,10 @@ enum RecipeParser {
         guard lines.allSatisfy({ $0.count <= maximumFieldCharacters }) else {
             throw RecipeParserError.fieldTooLong
         }
+        // Apple Notes leaves object-replacement characters (U+FFFC) where
+        // inline attachments sit. Remove them before title detection as well
+        // as section parsing, so a leading image cannot become the title.
+        lines = lines.map { $0.replacingOccurrences(of: "\u{FFFC}", with: "") }
         guard let titleIndex = lines.firstIndex(where: { !$0.trimmed.isEmpty }) else {
             throw RecipeParserError.emptyNote
         }
@@ -31,10 +35,7 @@ enum RecipeParser {
         var section = RecipeSection.summary
 
         for rawLine in lines {
-            // Strip object-replacement characters (U+FFFC) that Apple Notes
-            // leaves where inline images and other attachments sit, so they
-            // never become bogus ingredient or instruction lines.
-            let line = rawLine.replacingOccurrences(of: "\u{FFFC}", with: "").trimmed
+            let line = rawLine.trimmed
             guard !line.isEmpty else { continue }
 
             if let heading = RecipeSection(heading: line) {

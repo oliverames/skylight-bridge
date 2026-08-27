@@ -2,6 +2,33 @@ import AppKit
 import Foundation
 import Observation
 
+private enum AppStorePersistenceError: LocalizedError {
+    case configurationRecoveryRequired(String)
+    case activityRecoveryRequired(String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .configurationRecoveryRequired(reason):
+            "The existing configuration could not be read (\(reason)). It was not replaced. Restart after restoring access to the original file or Keychain key."
+        case let .activityRecoveryRequired(reason):
+            "The existing activity history could not be read (\(reason)). It was not replaced. Restart after restoring access to the original file or Keychain key."
+        }
+    }
+}
+
+@MainActor
+protocol AppRemindersStoring {
+    func authorizationStatus() -> AppleRemindersAuthorizationStatus
+    func requestAccess() async throws -> Bool
+    func lists() throws -> [AppleReminderListSnapshot]
+    func reminders(in listID: String) async throws -> [AppleReminderSnapshot]
+    func createList(named title: String) throws -> AppleReminderListSnapshot
+    func deleteNewlyCreatedList(withID listID: String) throws
+    func syncRemoveReminder(withID reminderID: String) async throws
+}
+
+extension AppleRemindersStore: AppRemindersStoring {}
+
 @MainActor
 @Observable
 final class AppStore {
@@ -55,6 +82,13 @@ final class AppStore {
         static let isSkylightSignedOut = "isSkylightSignedOut"
     }
     var statusMessage = "Choose sources to begin."
+    /// Non-nil when an existing configuration file failed authentication,
+    /// decoding, or reading. The in-memory fallback stays read-only so startup
+    /// recovery and background CloudKit work cannot overwrite the original.
+    private(set) var configurationLoadError: String?
+    /// Non-nil when the activity file failed authentication, decoding, or
+    /// reading. Logging stays read-only so the unreadable file is preserved.
+    private(set) var activityLoadError: String?
     private var hasStarted = false
     /// Newest-first, trimmed to `maximumActivityEntries` in memory as well as
     /// on disk; the Activity page renders every row it is handed.
@@ -64,7 +98,7 @@ final class AppStore {
     private let persistence: ConfigurationStore
     @ObservationIgnored private let scheduler = BackgroundSyncScheduler()
     @ObservationIgnored let photoLibrary = ApplePhotoLibrary()
-    @ObservationIgnored private let remindersStore = AppleRemindersStore()
+    @ObservationIgnored private let remindersStore: any AppRemindersStoring
     @ObservationIgnored private let notesStore = AppleNotesStore()
     @ObservationIgnored private let sessionManager: any SkylightSessionManaging
     @ObservationIgnored private let syncStateStore: SyncStateStore
@@ -72,16 +106,35 @@ final class AppStore {
     init(
         persistence: ConfigurationStore = ConfigurationStore(),
         sessionManager: any SkylightSessionManaging = SkylightSessionManager(),
-        syncStateStore: SyncStateStore = SyncStateStore()
+        syncStateStore: SyncStateStore = SyncStateStore(),
+        remindersStore: any AppRemindersStoring = AppleRemindersStore()
     ) {
         self.persistence = persistence
         self.sessionManager = sessionManager
         self.syncStateStore = syncStateStore
-        configuration = (try? persistence.loadConfiguration()) ?? .empty
-        activity = (try? persistence.loadActivity()) ?? []
+        self.remindersStore = remindersStore
+        do {
+            configuration = try persistence.loadConfiguration()
+        } catch {
+            configuration = .empty
+            configurationLoadError = error.localizedDescription
+        }
+        do {
+            activity = try persistence.loadActivity()
+        } catch {
+            activity = []
+            activityLoadError = error.localizedDescription
+        }
         photosAuthorizationStatus = photoLibrary.authorizationStatus()
         remindersAuthorizationStatus = remindersStore.authorizationStatus()
-        configureScheduler()
+        if configurationLoadError == nil {
+            configureScheduler()
+        }
+        if let configurationLoadError {
+            statusMessage = "Configuration recovery is required: \(configurationLoadError)"
+        } else if let activityLoadError {
+            statusMessage = "Activity recovery is required: \(activityLoadError)"
+        }
     }
 
     var isSkylightConnected: Bool {
@@ -89,11 +142,22 @@ final class AppStore {
         return !frameID.isEmpty && skylightFrames.contains { $0.id == frameID }
     }
 
+    private func timeZone(forFrameID frameID: String) -> TimeZone? {
+        let frameID = frameID.trimmed
+        guard let identifier = skylightFrames.first(where: { $0.id == frameID })?
+            .attributes.timezone?.trimmed,
+              !identifier.isEmpty else { return nil }
+        return TimeZone(identifier: identifier)
+    }
+
     /// Whether Sync Now can actually run. Mirrors the engine's gating copy so a
     /// hidden feature (Meals) never leaves an enabled button that only logs
     /// "nothing to sync".
     var canSyncNow: Bool {
-        !isSyncing && isSkylightConnected && syncConfiguration.hasEnabledSync
+        configurationLoadError == nil &&
+            !isSyncing &&
+            isSkylightConnected &&
+            syncConfiguration.hasEnabledSync
     }
 
     /// Whether any engine-runnable source is enabled (hidden features forced
@@ -109,6 +173,12 @@ final class AppStore {
         applyDockIconPreference()
         if !UserDefaults.standard.bool(forKey: SupportDefaultsKey.hasCompletedOnboarding) {
             isOnboardingPresented = true
+        }
+        guard configurationLoadError == nil else {
+            // Local source authorization is safe to refresh, but account and
+            // CloudKit work could publish the empty recovery fallback.
+            await refreshSources()
+            return
         }
         async let sources: Void = refreshSources()
         async let account: Void = restoreAccountConnection()
@@ -128,7 +198,7 @@ final class AppStore {
             }
         }
         do {
-            try persistence.saveConfiguration(configuration)
+            try persistConfiguration()
         } catch {
             statusMessage = "Could not save configuration: \(error.localizedDescription)"
             appendActivity(.init(
@@ -138,7 +208,9 @@ final class AppStore {
             ))
             return false
         }
-        configureScheduler()
+        if configurationLoadError == nil {
+            configureScheduler()
+        }
         do {
             try applyLaunchAtLoginPreference()
             statusMessage = "Configuration saved."
@@ -158,6 +230,15 @@ final class AppStore {
             autoSync()
         }
         return true
+    }
+
+    private func persistConfiguration() throws {
+        if let configurationLoadError {
+            throw AppStorePersistenceError.configurationRecoveryRequired(
+                configurationLoadError
+            )
+        }
+        try persistence.saveConfiguration(configuration)
     }
 
     /// The configuration a sync actually runs with. Hidden features are forced
@@ -330,6 +411,10 @@ final class AppStore {
     /// be configured before this action is available.
     func setupChoreListsFromSkylight() async {
         guard !isSettingUpChoreLists, !isConnecting, !isSyncing else { return }
+        guard configurationLoadError == nil else {
+            statusMessage = "Restore the existing configuration before setting up chore lists."
+            return
+        }
         guard isSkylightConnected else {
             statusMessage = "Configure Skylight first, then set up chore lists."
             appendActivity(.init(
@@ -350,6 +435,9 @@ final class AppStore {
             isSettingUpChoreLists = false
         }
 
+        let priorConfiguration = configuration
+        let priorChoreCategories = skylightChoreCategories
+        var createdListIDs: [String] = []
         do {
             let frameID = configuration.account.frameID.trimmed
             let client = try await sessionManager.client(configuration: configuration.account)
@@ -395,7 +483,6 @@ final class AppStore {
                 isEnabled: oldLinks[ChoreMemberLink.upForGrabsKey]?.isEnabled ?? true
             ))
 
-            var createdCount = 0
             for index in links.indices {
                 let oldID = oldLinks[links[index].memberKey]?.appleListID
                 let foundByID = oldID.flatMap { id in availableLists.first { $0.id == id } }
@@ -408,7 +495,7 @@ final class AppStore {
                 } else {
                     list = try remindersStore.createList(named: links[index].appleListTitle)
                     availableLists.append(list)
-                    createdCount += 1
+                    createdListIDs.append(list.id)
                 }
                 links[index].appleListID = list.id
             }
@@ -426,7 +513,22 @@ final class AppStore {
             }
             reminderLists = try remindersStore.lists()
             skylightChoreCategories = categories
-            saveConfiguration(triggerSync: true)
+            guard saveConfiguration(triggerSync: true) else {
+                configuration = priorConfiguration
+                skylightChoreCategories = priorChoreCategories
+                let cleanupFailures = rollbackNewlyCreatedReminderLists(createdListIDs)
+                let message = cleanupFailures.isEmpty
+                    ? "Chore setup could not be saved. The newly created Reminders lists were removed."
+                    : "Chore setup could not be saved, and \(cleanupFailures.count) new Reminders list\(cleanupFailures.count == 1 ? "" : "s") could not be removed."
+                appendActivity(.init(
+                    level: cleanupFailures.isEmpty ? .warning : .error,
+                    area: .chores,
+                    message: message
+                ))
+                statusMessage = message
+                return
+            }
+            let createdCount = createdListIDs.count
             let reused = links.count - createdCount
             statusMessage = "Chore lists are ready."
             appendActivity(.init(
@@ -435,8 +537,39 @@ final class AppStore {
                 message: "Chore setup created \(createdCount) Apple Reminders list\(createdCount == 1 ? "" : "s") and reused \(reused)."
             ))
         } catch {
+            configuration = priorConfiguration
+            skylightChoreCategories = priorChoreCategories
+            let cleanupFailures = rollbackNewlyCreatedReminderLists(createdListIDs)
             recordSourceError(error, area: .chores)
+            if !createdListIDs.isEmpty {
+                let message = cleanupFailures.isEmpty
+                    ? "Chore setup failed. The newly created Reminders lists were removed."
+                    : "Chore setup failed, and \(cleanupFailures.count) new Reminders list\(cleanupFailures.count == 1 ? "" : "s") could not be removed."
+                appendActivity(.init(
+                    level: cleanupFailures.isEmpty ? .warning : .error,
+                    area: .chores,
+                    message: message
+                ))
+                statusMessage = message
+            }
         }
+    }
+
+    /// Compensates only lists created by the current setup attempt. Existing
+    /// lists remain untouched even when configuration persistence fails.
+    private func rollbackNewlyCreatedReminderLists(_ listIDs: [String]) -> [String] {
+        var failures: [String] = []
+        for listID in listIDs.reversed() {
+            do {
+                try remindersStore.deleteNewlyCreatedList(withID: listID)
+            } catch {
+                failures.append(listID)
+            }
+        }
+        if let currentLists = try? remindersStore.lists() {
+            reminderLists = currentLists
+        }
+        return failures
     }
 
     /// Reads the Automation permission for Notes from TCC so the status rows
@@ -571,6 +704,7 @@ final class AppStore {
     }
 
     func saveAccountCredentials(email: String, password: String) async {
+        guard configurationLoadError == nil else { return }
         guard !email.trimmed.isEmpty, !password.isEmpty else {
             appendActivity(.init(
                 level: .warning,
@@ -580,7 +714,7 @@ final class AppStore {
             return
         }
 
-        guard !isConnecting else { return }
+        guard !isConnecting, !isSyncing else { return }
         isConnecting = true
         connectionError = nil
         defer { isConnecting = false }
@@ -599,7 +733,7 @@ final class AppStore {
             )
             skylightDevices = connection.devices
             configuration.account.deviceID = connection.selectedDeviceID
-            try persistence.saveConfiguration(configuration)
+            try persistConfiguration()
             configureScheduler()
             try await refreshSkylightDestinations(using: connection.client)
             statusMessage = "Connected to Skylight."
@@ -716,6 +850,7 @@ final class AppStore {
     }
 
     func restoreAccountConnection() async {
+        guard configurationLoadError == nil else { return }
         guard !isConnecting else { return }
         guard !UserDefaults.standard.bool(
             forKey: SupportDefaultsKey.isSkylightSignedOut
@@ -743,7 +878,7 @@ final class AppStore {
                 configuration.account.deviceID = skylightDevices.first?.id ?? ""
             }
             try await refreshSkylightDestinations(using: client)
-            try persistence.saveConfiguration(configuration)
+            try persistConfiguration()
             statusMessage = "Connected to Skylight."
             connectionError = nil
             // A successful reconnect retires any earlier failure banner.
@@ -755,10 +890,32 @@ final class AppStore {
         }
     }
 
-    func selectFrame(_ frameID: String, replacing previousFrameID: String? = nil) async {
-        guard !isConnecting, !isSyncing else { return }
+    @discardableResult
+    func selectFrame(
+        _ frameID: String,
+        replacing previousFrameID: String? = nil
+    ) async -> Bool {
+        guard configurationLoadError == nil else { return false }
+        guard !isConnecting, !isSyncing else { return false }
         isConnecting = true
         defer { isConnecting = false }
+        let priorConfiguration = configuration
+        let priorDevices = skylightDevices
+        let priorAlbums = skylightAlbums
+        let priorLists = skylightLists
+        let priorMealCategories = skylightMealCategories
+        let priorChoreCategories = skylightChoreCategories
+        var committed = false
+        defer {
+            if !committed {
+                configuration = priorConfiguration
+                skylightDevices = priorDevices
+                skylightAlbums = priorAlbums
+                skylightLists = priorLists
+                skylightMealCategories = priorMealCategories
+                skylightChoreCategories = priorChoreCategories
+            }
+        }
         prepareForFrameChange(
             from: previousFrameID ?? configuration.account.frameID,
             to: frameID
@@ -768,9 +925,12 @@ final class AppStore {
             skylightDevices = try await client.listDevices(frameID: frameID)
             configuration.account.deviceID = skylightDevices.first?.id ?? ""
             try await refreshSkylightDestinations(using: client)
-            saveConfiguration()
+            guard saveConfiguration() else { return false }
+            committed = true
+            return true
         } catch {
             recordSourceError(error, area: .account)
+            return false
         }
     }
 
@@ -853,6 +1013,7 @@ final class AppStore {
     }
 
     func syncNow() async {
+        guard configurationLoadError == nil else { return }
         guard !isSyncing, !isConnecting else { return }
         isSyncing = true
         defer { isSyncing = false }
@@ -879,6 +1040,8 @@ final class AppStore {
         }
 
         let syncConfiguration = self.syncConfiguration
+        let syncFrameID = syncConfiguration.account.frameID.trimmed
+        let syncTimeZone = timeZone(forFrameID: syncFrameID)
         guard syncConfiguration.hasEnabledSync else {
             statusMessage = "No sources are enabled."
             appendActivity(.init(
@@ -903,7 +1066,7 @@ final class AppStore {
 
         var appliedThisRun = 0
         do {
-           try persistence.saveConfiguration(configuration)
+           try persistConfiguration()
            let client = try await sessionManager.client(configuration: configuration.account)
             // Notes automation reaches Apple Notes over Apple Events, which need
             // a live target process. A scheduled sync usually runs while Notes
@@ -913,9 +1076,13 @@ final class AppStore {
                 try? await launchNotesIfNeeded()
             }
             await importSharedSyncState()
-            let coordinator = SyncCoordinator.live(apiClient: client, stateStore: syncStateStore)
+            let coordinator = SyncCoordinator.live(
+                apiClient: client,
+                stateStore: syncStateStore,
+                timeZone: syncTimeZone
+            )
             let summary = try await coordinator.sync(configuration: syncConfiguration)
-            try await refreshSkylightDestinations(using: client)
+            try await refreshSkylightDestinations(using: client, frameID: syncFrameID)
             record(summary.photos, area: .photos, dryRun: summary.dryRun)
             record(summary.reminders, area: .reminders, dryRun: summary.dryRun)
             record(summary.chores, area: .chores, dryRun: summary.dryRun)
@@ -967,21 +1134,32 @@ final class AppStore {
     }
 
     func appendActivity(_ entry: ActivityEntry) {
+        guard activityLoadError == nil else { return }
         activity.insert(entry, at: 0)
         // Keep memory bounded to what is kept on disk (the newest 500).
         if activity.count > Self.maximumActivityEntries {
             activity.removeLast(activity.count - Self.maximumActivityEntries)
         }
-        try? persistence.saveActivity(activity)
+        do {
+            try persistence.saveActivity(activity)
+        } catch {
+            statusMessage = "Could not save activity: \(error.localizedDescription)"
+        }
     }
 
     func clearActivity() {
-        activity.removeAll()
+        if let activityLoadError {
+            statusMessage = AppStorePersistenceError.activityRecoveryRequired(
+                activityLoadError
+            ).localizedDescription
+            return
+        }
         do {
-            try persistence.saveActivity(activity)
+            try persistence.saveActivity([])
+            activity.removeAll()
             statusMessage = "Activity cleared."
         } catch {
-            recordSourceError(error, area: .system)
+            statusMessage = "Could not clear activity: \(error.localizedDescription)"
         }
     }
 
@@ -1045,6 +1223,25 @@ final class AppStore {
     /// mapping is kept so the cleanup can be retried instead of stranding the
     /// bridge-created copies untracked.
     func removePhotoMapping(_ mapping: PhotoMapping) async {
+        guard !isConnecting, !isSyncing else {
+            statusMessage = isSyncing
+                ? "A sync is running. Try again when it finishes."
+                : "An account operation is running. Try again when it finishes."
+            return
+        }
+        let originalConfiguration = configuration
+        guard let mappingIndex = configuration.photoMappings.firstIndex(where: {
+            $0.id == mapping.id
+        }) else { return }
+        // Disable and persist before any destructive remote call. If cleanup
+        // or the final save fails, the mapping remains visible and retryable,
+        // but it cannot recreate content that teardown already removed.
+        configuration.photoMappings[mappingIndex].enabled = false
+        guard saveConfiguration() else {
+            configuration = originalConfiguration
+            return
+        }
+        let disabledConfiguration = configuration
         let frameID = configuration.account.frameID.trimmed
         var completed = true
         if !frameID.isEmpty {
@@ -1082,7 +1279,10 @@ final class AppStore {
             configuration.photoDestinationIntentIDsByFrame.filter {
                 !FrameDestinationIdentity.belongsToMapping($0.key, mappingID: mapping.id)
             }
-        saveConfiguration()
+        guard saveConfiguration() else {
+            configuration = disabledConfiguration
+            return
+        }
         await retireSharedPhotoMapping(mapping)
     }
 
@@ -1142,6 +1342,22 @@ final class AppStore {
         _ mapping: ReminderListMapping,
         cleanup side: ReminderMappingCleanupSide
     ) async {
+        guard !isConnecting, !isSyncing else {
+            statusMessage = isSyncing
+                ? "A sync is running. Try again when it finishes."
+                : "An account operation is running. Try again when it finishes."
+            return
+        }
+        let originalConfiguration = configuration
+        guard let mappingIndex = configuration.reminderMappings.firstIndex(where: {
+            $0.id == mapping.id
+        }) else { return }
+        configuration.reminderMappings[mappingIndex].enabled = false
+        guard saveConfiguration() else {
+            configuration = originalConfiguration
+            return
+        }
+        let disabledConfiguration = configuration
         let frameID = configuration.account.frameID.trimmed
         var completed = true
         if side == .none {
@@ -1206,13 +1422,32 @@ final class AppStore {
             configuration.reminderDestinationIntentIDsByFrame.filter {
                 !FrameDestinationIdentity.belongsToMapping($0.key, mappingID: mapping.id)
             }
-        saveConfiguration()
+        guard saveConfiguration() else {
+            configuration = disabledConfiguration
+            return
+        }
     }
 
     /// Disables Chore Chart sync for a mapping and cleans up what it created.
     /// The mode chooses which side's chores to keep; the auto-created Apple
     /// chore lists are removed whenever the Apple side is cleared.
     func removeChoreMapping(_ mapping: ChoreMapping, mode: ChoreTeardownMode) async {
+        guard !isConnecting, !isSyncing else {
+            statusMessage = isSyncing
+                ? "A sync is running. Try again when it finishes."
+                : "An account operation is running. Try again when it finishes."
+            return
+        }
+        let originalConfiguration = configuration
+        guard let mappingIndex = configuration.choreMappings.firstIndex(where: {
+            $0.id == mapping.id
+        }) else { return }
+        configuration.choreMappings[mappingIndex].isEnabled = false
+        guard saveConfiguration() else {
+            configuration = originalConfiguration
+            return
+        }
+        let disabledConfiguration = configuration
         let frameID = mapping.frameID.trimmed.isEmpty
             ? configuration.account.frameID.trimmed
             : mapping.frameID.trimmed
@@ -1231,7 +1466,10 @@ final class AppStore {
         }
         guard completed else { return }
         configuration.choreMappings.removeAll { $0.id == mapping.id }
-        saveConfiguration()
+        guard saveConfiguration() else {
+            configuration = disabledConfiguration
+            return
+        }
     }
 
     /// Resolves the Apple Reminders list identifiers a chore mapping owns, using
@@ -1273,6 +1511,7 @@ final class AppStore {
     }
 
     func refreshSkylightDestinations() async {
+        guard configurationLoadError == nil else { return }
         guard !isConnecting, !isSyncing else { return }
         isConnecting = true
         defer { isConnecting = false }
@@ -1300,8 +1539,11 @@ final class AppStore {
         }
     }
 
-    private func refreshSkylightDestinations(using client: SkylightAPIClient) async throws {
-        let frameID = configuration.account.frameID.trimmed
+    private func refreshSkylightDestinations(
+        using client: SkylightAPIClient,
+        frameID requestedFrameID: String? = nil
+    ) async throws {
+        let frameID = (requestedFrameID ?? configuration.account.frameID).trimmed
         guard !frameID.isEmpty else {
             skylightAlbums = []
             skylightLists = []
@@ -1428,7 +1670,7 @@ final class AppStore {
             }
         }
         if changed {
-            try? persistence.saveConfiguration(configuration)
+            try? persistConfiguration()
         }
     }
 
@@ -1438,7 +1680,7 @@ final class AppStore {
         let previous = configuration.pendingPhotoMappingRetirements
         configuration.pendingPhotoMappingRetirements.removeAll { $0.id == mappingID }
         do {
-            try persistence.saveConfiguration(configuration)
+            try persistConfiguration()
         } catch {
             configuration.pendingPhotoMappingRetirements = previous
             appendActivity(.init(
@@ -1488,6 +1730,14 @@ final class AppStore {
     }
 
     private func record(_ summary: SyncDomainSummary, area: IntegrationArea, dryRun: Bool) {
+        for warning in summary.warnings {
+            appendActivity(.init(
+                level: .warning,
+                area: area,
+                message: warning,
+                isDryRun: dryRun
+            ))
+        }
         guard summary.planned > 0 else { return }
         let verb = dryRun ? "planned" : "applied"
         let count = dryRun ? summary.planned : summary.applied

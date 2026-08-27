@@ -4,6 +4,7 @@ import Foundation
 struct SyncDomainSummary: Equatable, Sendable {
     var planned = 0
     var applied = 0
+    var warnings: [String] = []
 }
 
 struct SyncRunSummary: Equatable, Sendable {
@@ -592,6 +593,7 @@ actor SyncCoordinator {
     private let stateStore: any SyncStatePersisting
     private let mealDateResolver: any MealDateResolving
     private let recipeClassifier: (any RecipeClassifying)?
+    private let calendar: Calendar
     private let now: @Sendable () -> Date
 
     init(
@@ -602,10 +604,13 @@ actor SyncCoordinator {
         imageConverter: any SyncImageConverting,
         api: any SkylightSyncAPI,
         stateStore: any SyncStatePersisting,
-        mealDateResolver: any MealDateResolving = DefaultMealDateResolver(),
+        mealDateResolver: (any MealDateResolving)? = nil,
         recipeClassifier: (any RecipeClassifying)? = nil,
+        calendar: Calendar = .current,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
+        var calendar = calendar
+        calendar.locale = Locale(identifier: "en_US_POSIX")
         self.photoSource = photoSource
         self.reminderSource = reminderSource
         self.choreReminderSource = choreReminderSource ?? reminderSource as? any ChoreReminderSource
@@ -613,17 +618,22 @@ actor SyncCoordinator {
         self.imageConverter = imageConverter
         self.api = api
         self.stateStore = stateStore
-        self.mealDateResolver = mealDateResolver
+        self.mealDateResolver = mealDateResolver ?? DefaultMealDateResolver(calendar: calendar)
         self.recipeClassifier = recipeClassifier
+        self.calendar = calendar
         self.now = now
     }
 
     @MainActor
     static func live(
         apiClient: SkylightAPIClient,
-        stateStore: SyncStateStore = SyncStateStore()
+        stateStore: SyncStateStore = SyncStateStore(),
+        timeZone: TimeZone? = nil
     ) -> SyncCoordinator {
-        let remindersStore = AppleRemindersStore()
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "en_US_POSIX")
+        calendar.timeZone = timeZone ?? .current
+        let remindersStore = AppleRemindersStore(choreCalendar: calendar)
         return SyncCoordinator(
             photoSource: ApplePhotoLibrary(),
             reminderSource: remindersStore,
@@ -632,7 +642,8 @@ actor SyncCoordinator {
             imageConverter: ImageConversionService(),
             api: apiClient,
             stateStore: stateStore,
-            recipeClassifier: RecipeIntelligence()
+            recipeClassifier: RecipeIntelligence(),
+            calendar: calendar
         )
     }
 
@@ -709,6 +720,15 @@ actor SyncCoordinator {
     func purgePhotoMapping(mappingID: UUID, frameID: String) async throws -> PhotoMappingPurge {
         var state = try await stateStore.loadSyncState()
         var result = PhotoMappingPurge()
+
+        // A prior replacement can have retired an older message before this
+        // mapping itself was removed. Finish that durable work first so the
+        // old message does not outlive the mapping that owned it.
+        try await drainPendingPhotoCleanups(
+            frameID: nil,
+            mappingID: mappingID,
+            state: &state
+        )
 
         let records = state.photos
             .filter { $0.mappingID == mappingID }
@@ -927,6 +947,14 @@ actor SyncCoordinator {
         let maximumAssetsPerMapping = 5_000
         var summary = SyncDomainSummary()
 
+        if !dryRun {
+            summary.applied += try await drainPendingPhotoCleanups(
+                frameID: frameID,
+                mappingID: nil,
+                state: &state
+            )
+        }
+
         for mapping in mappings {
             let sourceAssets = try await photoAssets(for: mapping)
                 .filter { $0.mediaKind == .image || $0.mediaKind == .livePhoto }
@@ -1041,8 +1069,15 @@ actor SyncCoordinator {
 
                 if let existing, existing.renderedHash == renderedHash {
                     let oldAlbumIDs = existing.skylightAlbumIDs.subtracting([destinationID])
+                    let otherOwnerAlbumIDs = photoAlbumIDsOwnedByOtherRecords(
+                        messageID: existing.skylightMessageID,
+                        frameID: frameID,
+                        excludingRecordID: existing.id,
+                        state: state
+                    )
+                    let removableOldAlbumIDs = oldAlbumIDs.subtracting(otherOwnerAlbumIDs)
                     let needsAdd = !existing.skylightAlbumIDs.contains(destinationID)
-                    let needsCaptionUpdate = caption.map { $0 != existing.lastSyncedCaption } ?? false
+                    let needsCaptionUpdate = caption != existing.lastSyncedCaption
                     summary.planned += (needsAdd ? 1 : 0)
                         + (oldAlbumIDs.isEmpty ? 0 : 1)
                         + (needsCaptionUpdate ? 1 : 0)
@@ -1065,25 +1100,41 @@ actor SyncCoordinator {
                             albumIDs: [destinationID],
                             messageIDs: [existing.skylightMessageID]
                         )
+                        // The cached album inventory predates this membership
+                        // change. A later asset in the same run must refetch so
+                        // it can deduplicate against the message just added.
+                        albumMessageCache.removeValue(forKey: "\(frameID):\(destinationID)")
                         summary.applied += 1
                     }
-                    if !oldAlbumIDs.isEmpty {
+                    if !removableOldAlbumIDs.isEmpty {
                         try await api.removeMessages(
                             frameID: frameID,
-                            albumIDs: oldAlbumIDs.sorted(),
+                            albumIDs: removableOldAlbumIDs.sorted(),
                             messageIDs: [existing.skylightMessageID]
+                        )
+                        removePhotoMessageFromAlbumCache(
+                            frameID: frameID,
+                            albumIDs: removableOldAlbumIDs,
+                            messageID: existing.skylightMessageID
                         )
                        summary.applied += 1
                    }
-                   if needsCaptionUpdate, let caption {
+                   if needsCaptionUpdate {
+                       let sharedCaption = caption ?? photoCaptionOwnedByOtherRecord(
+                           messageID: existing.skylightMessageID,
+                           frameID: frameID,
+                           excludingRecordID: existing.id,
+                           state: state
+                       )
                        let dedupCaption = PhotoDeduplication.caption(
-                           withUserCaption: caption,
+                           withUserCaption: sharedCaption,
                            renderedHash: existing.renderedHash
                        )
                        _ = try await api.updateMessageCaption(
                            frameID: frameID,
                            messageID: existing.skylightMessageID,
-                           caption: dedupCaption ?? caption
+                           caption: dedupCaption
+                                ?? PhotoDeduplication.tag(forRenderedHash: existing.renderedHash)
                        )
                        summary.applied += 1
                    }
@@ -1096,7 +1147,7 @@ actor SyncCoordinator {
                         skylightMessageID: existing.skylightMessageID,
                         skylightAlbumIDs: [destinationID],
                         lastSyncedAt: now(),
-                        lastSyncedCaption: caption ?? existing.lastSyncedCaption,
+                        lastSyncedCaption: caption,
                         sourceFingerprint: fingerprint
                     ), in: &state)
                     markStateDirty()
@@ -1132,23 +1183,37 @@ actor SyncCoordinator {
                                 caption: dedupCaption
                             )
                         }
-                        upsertPhotoRecord(
-                            PhotoSyncRecord(
-                                mappingID: mapping.id,
-                                frameID: frameID,
-                                destinationAlbumID: destinationID,
-                                appleAssetID: asset.id,
-                                renderedHash: converted.sha256,
-                                skylightMessageID: duplicateMessageID,
-                                skylightAlbumIDs: [destinationID],
-                                lastSyncedAt: now(),
-                                lastSyncedCaption: caption,
-                                sourceFingerprint: fingerprint
-                            ),
-                            in: &state
+                        let replacement = PhotoSyncRecord(
+                            mappingID: mapping.id,
+                            frameID: frameID,
+                            destinationAlbumID: destinationID,
+                            appleAssetID: asset.id,
+                            renderedHash: converted.sha256,
+                            skylightMessageID: duplicateMessageID,
+                            skylightAlbumIDs: [destinationID],
+                            lastSyncedAt: now(),
+                            lastSyncedCaption: caption,
+                            sourceFingerprint: fingerprint
                         )
-                        markStateDirty()
-                        try await checkpointIfDue(state, dryRun: dryRun)
+                        upsertPhotoRecord(replacement, in: &state)
+                        if let existing,
+                           let cleanup = queuePhotoCleanup(
+                               previous: existing,
+                               replacement: replacement,
+                               state: &state
+                           ) {
+                            // Adoption replaces the only live pointer to the
+                            // old message just like an upload does. Persist the
+                            // cleanup intent before the first remote removal.
+                            try await checkpoint(state, dryRun: dryRun)
+                            try await drainPendingPhotoCleanup(
+                                cleanup.id,
+                                state: &state
+                            )
+                        } else {
+                            markStateDirty()
+                            try await checkpointIfDue(state, dryRun: dryRun)
+                        }
                         summary.applied += 1
                         continue
                     }
@@ -1158,45 +1223,30 @@ actor SyncCoordinator {
                         destinationAlbumID: destinationID,
                         caption: dedupCaption
                     )
-                    upsertPhotoRecord(
-                        PhotoSyncRecord(
-                            mappingID: mapping.id,
-                            frameID: frameID,
-                            destinationAlbumID: destinationID,
-                            appleAssetID: asset.id,
-                            renderedHash: converted.sha256,
-                            skylightMessageID: newMessageID,
-                            skylightAlbumIDs: [destinationID],
-                            lastSyncedAt: now(),
-                            lastSyncedCaption: caption,
-                            sourceFingerprint: fingerprint
-                        ),
-                        in: &state
+                    let replacement = PhotoSyncRecord(
+                        mappingID: mapping.id,
+                        frameID: frameID,
+                        destinationAlbumID: destinationID,
+                        appleAssetID: asset.id,
+                        renderedHash: converted.sha256,
+                        skylightMessageID: newMessageID,
+                        skylightAlbumIDs: [destinationID],
+                        lastSyncedAt: now(),
+                        lastSyncedCaption: caption,
+                        sourceFingerprint: fingerprint
                     )
+                    upsertPhotoRecord(replacement, in: &state)
+                    let cleanup = existing.flatMap {
+                        queuePhotoCleanup(previous: $0, replacement: replacement, state: &state)
+                    }
                     markStateDirty()
                     // An upload is the one photo step worth a durable write on
-                    // its own: losing it would re-upload the same bytes.
+                    // its own: losing it would re-upload the same bytes. Any
+                    // cleanup intent must land in this same checkpoint.
                     try await checkpoint(state, dryRun: dryRun)
-                    if let previous = existing {
-                        if !previous.skylightAlbumIDs.isEmpty {
-                        try await api.removeMessages(
-                            frameID: frameID,
-                            albumIDs: previous.skylightAlbumIDs.sorted(),
-                            messageIDs: [previous.skylightMessageID]
-                        )
+                    if let cleanup {
+                        try await drainPendingPhotoCleanup(cleanup.id, state: &state)
                     }
-                    // Another mapping's record may share this message through
-                    // dedup adoption. Only the last owner deletes it.
-                    if !state.photos.contains(where: {
-                        $0.frameID == frameID &&
-                            $0.skylightMessageID == previous.skylightMessageID
-                    }) {
-                        try await api.deleteMessage(
-                            frameID: frameID,
-                            messageID: previous.skylightMessageID
-                        )
-                    }
-                }
                     summary.applied += 1
                 }
             }
@@ -1208,30 +1258,60 @@ actor SyncCoordinator {
             summary.planned += removedRecords.count
             guard !dryRun else { continue }
             for record in removedRecords {
-                    // A record sharing this message via dedup adoption keeps
-                    // it, including its album membership; only the final
-                    // owner removes and deletes it.
-                    let sharedWithOtherRecord = state.photos.contains {
-                        $0.id != record.id &&
-                            $0.frameID == frameID &&
-                            $0.skylightMessageID == record.skylightMessageID
-                    }
-                    if !sharedWithOtherRecord, !record.skylightAlbumIDs.isEmpty {
-                        try await api.removeMessages(
-                            frameID: frameID,
-                            albumIDs: record.skylightAlbumIDs.sorted(),
-                            messageIDs: [record.skylightMessageID]
-                        )
-                    }
-                    if !sharedWithOtherRecord {
-                        try await api.deleteMessage(
-                            frameID: frameID,
-                            messageID: record.skylightMessageID
-                        )
-                    }
-                    state.photos.removeAll { $0.id == record.id }
-                    try await checkpoint(state, dryRun: dryRun)
-                    summary.applied += 1
+                let otherOwnerAlbumIDs = photoAlbumIDsOwnedByOtherRecords(
+                    messageID: record.skylightMessageID,
+                    frameID: frameID,
+                    excludingRecordID: record.id,
+                    state: state
+                )
+                let removableAlbumIDs = record.skylightAlbumIDs.subtracting(otherOwnerAlbumIDs)
+                if !removableAlbumIDs.isEmpty {
+                    try await api.removeMessages(
+                        frameID: frameID,
+                        albumIDs: removableAlbumIDs.sorted(),
+                        messageIDs: [record.skylightMessageID]
+                    )
+                    removePhotoMessageFromAlbumCache(
+                        frameID: frameID,
+                        albumIDs: removableAlbumIDs,
+                        messageID: record.skylightMessageID
+                    )
+                }
+                let hasOtherOwner = state.photos.contains {
+                    $0.id != record.id &&
+                        $0.frameID == frameID &&
+                        $0.skylightMessageID == record.skylightMessageID
+                }
+                state.photos.removeAll { $0.id == record.id }
+                if hasOtherOwner {
+                    let sharedCaption = photoCaptionOwnedByOtherRecord(
+                        messageID: record.skylightMessageID,
+                        frameID: frameID,
+                        excludingRecordID: record.id,
+                        state: state
+                    )
+                    let dedupCaption = PhotoDeduplication.caption(
+                        withUserCaption: sharedCaption,
+                        renderedHash: record.renderedHash
+                    )
+                    _ = try await api.updateMessageCaption(
+                        frameID: frameID,
+                        messageID: record.skylightMessageID,
+                        caption: dedupCaption
+                            ?? PhotoDeduplication.tag(forRenderedHash: record.renderedHash)
+                    )
+                } else {
+                    try await api.deleteMessage(
+                        frameID: frameID,
+                        messageID: record.skylightMessageID
+                    )
+                    removePhotoMessageFromAllAlbumCaches(
+                        frameID: frameID,
+                        messageID: record.skylightMessageID
+                    )
+                }
+                try await checkpoint(state, dryRun: dryRun)
+                summary.applied += 1
             }
         }
         return summary
@@ -1240,6 +1320,149 @@ actor SyncCoordinator {
     private func normalizedPhotoCaption(_ value: String?) -> String? {
         let caption = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return caption.isEmpty ? nil : caption
+    }
+
+    private func queuePhotoCleanup(
+        previous: PhotoSyncRecord,
+        replacement: PhotoSyncRecord,
+        state: inout SyncState
+    ) -> PendingPhotoCleanup? {
+        guard previous.skylightMessageID != replacement.skylightMessageID ||
+                previous.skylightAlbumIDs != replacement.skylightAlbumIDs else {
+            return nil
+        }
+        let cleanup = PendingPhotoCleanup(
+            mappingID: previous.mappingID,
+            frameID: previous.frameID,
+            appleAssetID: previous.appleAssetID,
+            skylightMessageID: previous.skylightMessageID,
+            skylightAlbumIDs: previous.skylightAlbumIDs
+        )
+        state.pendingPhotoCleanups.removeAll { $0.id == cleanup.id }
+        state.pendingPhotoCleanups.append(cleanup)
+        return cleanup
+    }
+
+    @discardableResult
+    private func drainPendingPhotoCleanups(
+        frameID: String?,
+        mappingID: UUID?,
+        state: inout SyncState
+    ) async throws -> Int {
+        let cleanupIDs = state.pendingPhotoCleanups
+            .filter { cleanup in
+                (frameID == nil || cleanup.frameID == frameID) &&
+                    (mappingID == nil || cleanup.mappingID == mappingID)
+            }
+            .sorted { $0.id < $1.id }
+            .map(\.id)
+        for cleanupID in cleanupIDs {
+            try await drainPendingPhotoCleanup(cleanupID, state: &state)
+        }
+        return cleanupIDs.count
+    }
+
+    private func drainPendingPhotoCleanup(
+        _ cleanupID: String,
+        state: inout SyncState
+    ) async throws {
+        guard let cleanup = state.pendingPhotoCleanups.first(where: { $0.id == cleanupID }) else {
+            return
+        }
+        let cleanupFrameID = cleanup.frameID.trimmed
+        let otherOwnerAlbumIDs = photoAlbumIDsOwnedByOtherRecords(
+            messageID: cleanup.skylightMessageID,
+            frameID: cleanupFrameID,
+            excludingRecordID: nil,
+            state: state
+        )
+        let removableAlbumIDs = cleanup.skylightAlbumIDs.subtracting(otherOwnerAlbumIDs)
+        if !removableAlbumIDs.isEmpty {
+            do {
+                try await api.removeMessages(
+                    frameID: cleanupFrameID,
+                    albumIDs: removableAlbumIDs.sorted(),
+                    messageIDs: [cleanup.skylightMessageID]
+                )
+            } catch where Self.isAlreadyAbsent(error) {}
+            removePhotoMessageFromAlbumCache(
+                frameID: cleanupFrameID,
+                albumIDs: removableAlbumIDs,
+                messageID: cleanup.skylightMessageID
+            )
+        }
+        let hasCurrentOwner = state.photos.contains {
+            $0.frameID == cleanupFrameID &&
+                $0.skylightMessageID == cleanup.skylightMessageID
+        }
+        if !hasCurrentOwner {
+            do {
+                try await api.deleteMessage(
+                    frameID: cleanupFrameID,
+                    messageID: cleanup.skylightMessageID
+                )
+            } catch where Self.isAlreadyAbsent(error) {}
+            removePhotoMessageFromAllAlbumCaches(
+                frameID: cleanupFrameID,
+                messageID: cleanup.skylightMessageID
+            )
+        }
+        state.pendingPhotoCleanups.removeAll { $0.id == cleanupID }
+        try await checkpoint(state, dryRun: false)
+    }
+
+    private func photoAlbumIDsOwnedByOtherRecords(
+        messageID: String,
+        frameID: String,
+        excludingRecordID: String?,
+        state: SyncState
+    ) -> Set<String> {
+        state.photos.reduce(into: Set<String>()) { albumIDs, record in
+            guard record.frameID == frameID,
+                  record.skylightMessageID == messageID,
+                  record.id != excludingRecordID else { return }
+            albumIDs.formUnion(record.skylightAlbumIDs)
+        }
+    }
+
+    private func photoCaptionOwnedByOtherRecord(
+        messageID: String,
+        frameID: String,
+        excludingRecordID: String,
+        state: SyncState
+    ) -> String? {
+        state.photos
+            .filter {
+                $0.frameID == frameID &&
+                    $0.skylightMessageID == messageID &&
+                    $0.id != excludingRecordID &&
+                    normalizedPhotoCaption($0.lastSyncedCaption) != nil
+            }
+            .sorted {
+                if $0.lastSyncedAt == $1.lastSyncedAt {
+                    return $0.id < $1.id
+                }
+                return $0.lastSyncedAt > $1.lastSyncedAt
+            }
+            .compactMap { normalizedPhotoCaption($0.lastSyncedCaption) }
+            .first
+    }
+
+    private func removePhotoMessageFromAlbumCache(
+        frameID: String,
+        albumIDs: Set<String>,
+        messageID: String
+    ) {
+        for albumID in albumIDs {
+            albumMessageCache["\(frameID):\(albumID)"]?.removeAll { $0.id == messageID }
+        }
+    }
+
+    private func removePhotoMessageFromAllAlbumCaches(frameID: String, messageID: String) {
+        let prefix = "\(frameID):"
+        for key in albumMessageCache.keys where key.hasPrefix(prefix) {
+            albumMessageCache[key]?.removeAll { $0.id == messageID }
+        }
     }
 
     private func photoAssets(for mapping: PhotoMapping) async throws -> [ApplePhotoAssetSnapshot] {
@@ -1463,9 +1686,31 @@ actor SyncCoordinator {
         for mapping in mappings {
             let appleList = try await reminderSource.syncReminderList(withID: mapping.sourceListID)
             let allApple = try await reminderSource.syncReminders(in: mapping.sourceListID)
+            if mapping.selectionMode == .selectedItems {
+                for index in state.reminders.indices where
+                    state.reminders[index].mappingID == mapping.id &&
+                    state.reminders[index].frameID == frameID &&
+                    mapping.selectedReminderIDs.contains(state.reminders[index].appleReminderID) {
+                    // If the user explicitly selects a replacement reminder,
+                    // make that current ID the anchor for any later recreation.
+                    state.reminders[index].selectionSourceReminderID =
+                        state.reminders[index].appleReminderID
+                }
+            }
+            let selectedLinkedAppleIDs = state.reminders.compactMap { record -> String? in
+                guard record.mappingID == mapping.id,
+                      record.frameID == frameID,
+                      mapping.selectedReminderIDs.contains(
+                          record.selectionSourceReminderID ?? record.appleReminderID
+                      ) else { return nil }
+                return record.appleReminderID
+            }
             let selectedApple = mapping.selectionMode == .everything
                 ? allApple
-                : allApple.filter { mapping.selectedReminderIDs.contains($0.id) }
+                : allApple.filter {
+                    mapping.selectedReminderIDs.contains($0.id) ||
+                        selectedLinkedAppleIDs.contains($0.id)
+                }
             let destinationKey = FrameDestinationIdentity.key(
                 mappingID: mapping.id,
                 frameID: frameID
@@ -1531,7 +1776,11 @@ actor SyncCoordinator {
             var records = state.reminders.filter {
                 $0.mappingID == mapping.id &&
                     $0.frameID == frameID &&
-                    (destination.id == nil || $0.skylightListID == destination.id)
+                    (destination.id == nil || $0.skylightListID == destination.id) &&
+                    (mapping.selectionMode == .everything ||
+                        mapping.selectedReminderIDs.contains(
+                            $0.selectionSourceReminderID ?? $0.appleReminderID
+                        ))
             }
             if dryRun, destination.needsCreation {
                 // A list that does not exist yet will be created and then
@@ -2097,10 +2346,16 @@ actor SyncCoordinator {
             throw SyncCoordinatorError.missingChoreReminderSource
         }
         var summary = SyncDomainSummary()
-        let todayDate = Calendar.current.startOfDay(for: now())
-        let today = Self.isoDay(todayDate)
-        let yesterday = Self.isoDay(Calendar.current.date(byAdding: .day, value: -1, to: todayDate)!)
-        let tomorrow = Self.isoDay(Calendar.current.date(byAdding: .day, value: 1, to: todayDate)!)
+        let todayDate = calendar.startOfDay(for: now())
+        let today = Self.isoDay(todayDate, calendar: calendar)
+        let yesterday = Self.isoDay(
+            calendar.date(byAdding: .day, value: -1, to: todayDate)!,
+            calendar: calendar
+        )
+        let tomorrow = Self.isoDay(
+            calendar.date(byAdding: .day, value: 1, to: todayDate)!,
+            calendar: calendar
+        )
 
         for mapping in mappings {
             let enabledLinks = mapping.memberLinks.filter(\.isEnabled)
@@ -2187,7 +2442,8 @@ actor SyncCoordinator {
                     startDate: Self.parseChoreDueDate(
                         day: resource.attributes.start,
                         time: resource.attributes.startTime,
-                        recurrence: recurrence.rule
+                        recurrence: recurrence.rule,
+                        calendar: calendar
                     ),
                     modifiedAt: modifiedAt
                 )
@@ -2306,6 +2562,17 @@ actor SyncCoordinator {
                 try await checkpoint(state, dryRun: dryRun)
             }
 
+            let linkedAppleIDs = Set(activeRecords.map(\.appleReminderID))
+            let unsupportedCreates = appleSnapshots.filter {
+                $0.recurrenceUnsupported && !linkedAppleIDs.contains($0.id)
+            }
+            if !unsupportedCreates.isEmpty {
+                let titles = unsupportedCreates.map(\.title).sorted().joined(separator: ", ")
+                summary.warnings.append(
+                    "Skipped \(unsupportedCreates.count) Apple chore\(unsupportedCreates.count == 1 ? "" : "s") with recurrence rules Skylight cannot preserve: \(titles)."
+                )
+            }
+
             // Chore Chart represents a shared household schedule. Unlike a
             // general Reminders list mapping, it always mirrors changes in
             // both directions, including configurations saved by older builds.
@@ -2316,7 +2583,8 @@ actor SyncCoordinator {
                 direction: .twoWay,
                 conflictPolicy: mapping.conflictPolicy,
                 today: today,
-                todayDate: todayDate
+                todayDate: todayDate,
+                calendar: calendar
             )
 
             // When both sides independently reached the same occurrence state,
@@ -2327,7 +2595,7 @@ actor SyncCoordinator {
                 guard let apple = appleForAdoption[record.appleReminderID],
                       let remote = remoteForAdoption[record.skylightSeriesID] else { continue }
                 let remoteCompleted = remote.todayStatus == .complete || remote.todayStatus == .skipped
-                let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: todayDate)
+                let tomorrow = calendar.date(byAdding: .day, value: 1, to: todayDate)
                     ?? .distantFuture
                 // Rolling forward signals completion only for a genuinely
                 // recurring chore (including a degraded rule EventKit still
@@ -2362,13 +2630,18 @@ actor SyncCoordinator {
                     guard let apple = appleByID[appleID] else { continue }
                     let created = try await api.createChore(
                         frameID: frameID,
-                        request: Self.choreRequest(apple: apple, today: today)
+                        request: Self.choreRequest(
+                            apple: apple,
+                            today: today,
+                            calendar: calendar
+                        )
                     )
                     let remote = Self.remoteSnapshot(
                         created,
                         memberKey: apple.memberKey,
                         status: apple.isCompleted ? .complete : .pending,
-                        modifiedAt: now()
+                        modifiedAt: now(),
+                        calendar: calendar
                     )
                     Self.upsertChoreRecord(Self.choreRecord(
                         mappingID: mapping.id,
@@ -2407,6 +2680,7 @@ actor SyncCoordinator {
                         request: Self.choreRequest(
                             apple: apple,
                             today: today,
+                            calendar: calendar,
                             preserveRecurrence: apple.recurrenceUnsupported ||
                                 (state.chores.first {
                                     $0.mappingID == mapping.id && $0.skylightSeriesID == seriesID
@@ -2468,7 +2742,9 @@ actor SyncCoordinator {
                             status: status,
                             instanceDate: remoteIsRecurring ? today : nil,
                             instanceTime: remoteIsRecurring
-                                ? (remoteByID[seriesID]?.startDate.map(Self.choreTime) ?? "06:00")
+                                ? (remoteByID[seriesID]?.startDate.map {
+                                    Self.choreTime($0, calendar: calendar)
+                                } ?? "06:00")
                                 : nil
                         )
                     )
@@ -3582,21 +3858,26 @@ actor SyncCoordinator {
     private static func choreRequest(
         apple: ChoreReminderSnapshot,
         today: String,
+        calendar: Calendar,
         preserveRecurrence: Bool = false
     ) -> SkylightChoreRequest {
         let upForGrabs = apple.memberKey == ChoreMemberLink.upForGrabsKey
         return SkylightChoreRequest(
             summary: apple.title,
             description: apple.notes,
-            start: apple.dueDate.map(isoDay) ?? today,
-            startTime: apple.recurrence == nil ? apple.dueDate.map(choreTime) : nil,
+            start: apple.dueDate.map { isoDay($0, calendar: calendar) } ?? today,
+            startTime: apple.recurrence == nil
+                ? apple.dueDate.map { choreTime($0, calendar: calendar) }
+                : nil,
             status: apple.isCompleted ? .complete : .pending,
             categoryID: upForGrabs ? nil : apple.memberKey,
             categoryIDs: upForGrabs ? [] : [apple.memberKey],
             recurring: preserveRecurrence ? nil : apple.recurrence != nil,
             recurrenceSet: preserveRecurrence
                 ? nil
-                : apple.recurrence.map { [skylightRecurrence($0, dueDate: apple.dueDate)] },
+                : apple.recurrence.map {
+                    [skylightRecurrence($0, dueDate: apple.dueDate, calendar: calendar)]
+                },
             upForGrabs: upForGrabs,
             routine: apple.recurrence != nil
         )
@@ -3679,7 +3960,8 @@ actor SyncCoordinator {
         _ resource: SkylightResource<SkylightChoreAttributes>,
         memberKey: String,
         status: SkylightChoreStatus?,
-        modifiedAt: Date
+        modifiedAt: Date,
+        calendar: Calendar
     ) -> SkylightChoreSnapshot {
         let recurrence = choreRecurrence(resource.attributes.recurrenceSet)
         return SkylightChoreSnapshot(
@@ -3694,7 +3976,8 @@ actor SyncCoordinator {
             startDate: parseChoreDueDate(
                 day: resource.attributes.start,
                 time: resource.attributes.startTime,
-                recurrence: recurrence.rule
+                recurrence: recurrence.rule,
+                calendar: calendar
             ),
             modifiedAt: modifiedAt
         )
@@ -3738,21 +4021,21 @@ actor SyncCoordinator {
         SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
-    private static func isoDay(_ date: Date) -> String {
+    private static func isoDay(_ date: Date, calendar: Calendar) -> String {
         let formatter = DateFormatter()
-        formatter.calendar = Calendar.current
+        formatter.calendar = calendar
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = Calendar.current.timeZone
+        formatter.timeZone = calendar.timeZone
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.string(from: date)
     }
 
-    private static func parseISODate(_ value: String?) -> Date? {
+    private static func parseISODate(_ value: String?, calendar: Calendar) -> Date? {
         guard let value else { return nil }
         let formatter = DateFormatter()
-        formatter.calendar = Calendar.current
+        formatter.calendar = calendar
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = Calendar.current.timeZone
+        formatter.timeZone = calendar.timeZone
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.date(from: value)
     }
@@ -3760,14 +4043,15 @@ actor SyncCoordinator {
     private static func parseChoreDueDate(
         day: String?,
         time: String?,
-        recurrence: ParsedRecurrenceRule? = nil
+        recurrence: ParsedRecurrenceRule? = nil,
+        calendar: Calendar
     ) -> Date? {
-        guard let date = parseISODate(day) else { return nil }
+        guard let date = parseISODate(day, calendar: calendar) else { return nil }
         let parts = time?.split(separator: ":").compactMap { Int($0) } ?? []
         let hour = parts.first ?? recurrence?.byHours.first
         guard let hour else { return date }
         let minute = parts.count >= 2 ? parts[1] : 0
-        return Calendar.current.date(
+        return calendar.date(
             bySettingHour: hour,
             minute: minute,
             second: 0,
@@ -3775,22 +4059,23 @@ actor SyncCoordinator {
         )
     }
 
-    private static func choreTime(_ date: Date) -> String {
+    private static func choreTime(_ date: Date, calendar: Calendar) -> String {
         let formatter = DateFormatter()
-        formatter.calendar = Calendar.current
+        formatter.calendar = calendar
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = Calendar.current.timeZone
+        formatter.timeZone = calendar.timeZone
         formatter.dateFormat = "HH:mm"
         return formatter.string(from: date)
     }
 
     private static func skylightRecurrence(
         _ rule: ParsedRecurrenceRule,
-        dueDate: Date?
+        dueDate: Date?,
+        calendar: Calendar
     ) -> String {
         var rule = rule
         if rule.byHours.isEmpty {
-            let hour = dueDate.map { Calendar.current.component(.hour, from: $0) } ?? 6
+            let hour = dueDate.map { calendar.component(.hour, from: $0) } ?? 6
             rule.byHours = [nearestSkylightChoreHour(hour)]
         } else if rule.byHours.count > 1 || ![6, 14, 20].contains(rule.byHours[0]) {
             rule.byHours = [nearestSkylightChoreHour(rule.byHours[0])]
@@ -3875,7 +4160,21 @@ actor SyncCoordinator {
         state.photoAlbums.append(record)
     }
 
-    private func upsertReminderRecord(_ record: ReminderSyncRecord, in state: inout SyncState) {
+    private func upsertReminderRecord(_ newRecord: ReminderSyncRecord, in state: inout SyncState) {
+        var record = newRecord
+        let priorRecord = state.reminders.first {
+            $0.mappingID == record.mappingID &&
+                $0.frameID == record.frameID &&
+                ($0.appleReminderID == record.appleReminderID ||
+                    $0.skylightItemID == record.skylightItemID)
+        }
+        if record.selectionSourceReminderID == nil, let priorRecord {
+            if let selectionSourceReminderID = priorRecord.selectionSourceReminderID {
+                record.selectionSourceReminderID = selectionSourceReminderID
+            } else if priorRecord.appleReminderID != record.appleReminderID {
+                record.selectionSourceReminderID = priorRecord.appleReminderID
+            }
+        }
         state.reminders.removeAll {
             $0.mappingID == record.mappingID &&
                 $0.frameID == record.frameID &&

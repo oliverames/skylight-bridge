@@ -75,6 +75,9 @@ struct RemindersSyncView: View {
                 loadReminders: { listID in await store.loadReminders(in: listID) },
                 remindersForList: { listID in store.remindersByListID[listID] ?? [] },
                 createAppleList: { name in try store.createReminderList(named: name) },
+                discardNewAppleList: { listID in
+                    store.discardNewlyCreatedReminderList(withID: listID)
+                },
                 onCancel: { editedMapping = nil },
                 onSave: save
             )
@@ -173,6 +176,7 @@ private struct ReminderMappingEditor: View {
     let loadReminders: (String) async -> Void
     let remindersForList: (String) -> [AppleReminderSnapshot]
     let createAppleList: (String) throws -> AppleReminderListSnapshot
+    let discardNewAppleList: (String) -> Bool
     let onCancel: () -> Void
     let onSave: (ReminderListMapping, Bool) -> Bool
 
@@ -185,6 +189,7 @@ private struct ReminderMappingEditor: View {
         loadReminders: @escaping (String) async -> Void,
         remindersForList: @escaping (String) -> [AppleReminderSnapshot],
         createAppleList: @escaping (String) throws -> AppleReminderListSnapshot,
+        discardNewAppleList: @escaping (String) -> Bool,
         onCancel: @escaping () -> Void,
         onSave: @escaping (ReminderListMapping, Bool) -> Bool
     ) {
@@ -199,6 +204,7 @@ private struct ReminderMappingEditor: View {
         self.loadReminders = loadReminders
         self.remindersForList = remindersForList
         self.createAppleList = createAppleList
+        self.discardNewAppleList = discardNewAppleList
         self.onCancel = onCancel
         self.onSave = onSave
     }
@@ -415,9 +421,11 @@ private struct ReminderMappingEditor: View {
     private func save() {
         saveError = nil
         var mapping = draft
+        var createdListID: String?
         if appleChoice == .new {
             do {
                 let list = try createAppleList(newAppleListName.trimmed)
+                createdListID = list.id
                 mapping.sourceListID = list.id
                 mapping.sourceListTitle = list.title
                 mapping.selectionMode = .everything
@@ -428,7 +436,16 @@ private struct ReminderMappingEditor: View {
             }
         }
         if !onSave(mapping, destinationSelectionChanged) {
-            saveError = "The mapping could not be saved. See Activity for details."
+            if let createdListID, !discardNewAppleList(createdListID) {
+                // The compensation failed, so keep the surviving list selected.
+                // A retry must not create another list with the same name.
+                draft = mapping
+                appleChoice = .existing(createdListID)
+                loadedReminders = []
+                saveError = "The mapping and its new Apple Reminders list could not be saved. See Activity for details."
+            } else {
+                saveError = "The mapping could not be saved. See Activity for details."
+            }
         }
     }
 

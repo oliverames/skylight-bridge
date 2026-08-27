@@ -63,12 +63,31 @@ struct PhotoSyncRecord: Identifiable, Codable, Sendable, Hashable {
     }
 }
 
+/// Durable cleanup work left behind when one Apple asset starts pointing at a
+/// different Skylight message. The replacement record and this intent are
+/// checkpointed together, so a transient remote failure cannot orphan the old
+/// message after its only live identity has been replaced.
+struct PendingPhotoCleanup: Identifiable, Codable, Sendable, Hashable {
+    var id: String {
+        "\(mappingID.uuidString):\(frameID):\(appleAssetID):\(skylightMessageID)"
+    }
+
+    let mappingID: UUID
+    var frameID: String
+    let appleAssetID: String
+    let skylightMessageID: String
+    var skylightAlbumIDs: Set<String>
+}
+
 struct ReminderSyncRecord: Identifiable, Codable, Sendable, Hashable {
     var id: String { "\(mappingID.uuidString):\(frameID):\(appleReminderID)" }
     let mappingID: UUID
     var frameID = ""
     var skylightListID = ""
     var appleReminderID: String
+    // The Apple reminder ID that the user selected. This remains stable when
+    // Skylight-to-Apple sync must recreate a deleted reminder with a new ID.
+    var selectionSourceReminderID: String?
     var appleExternalID: String?
     var skylightItemID: String
     var lastAppleModifiedAt: Date
@@ -89,6 +108,7 @@ struct ReminderSyncRecord: Identifiable, Codable, Sendable, Hashable {
         frameID: String = "",
         skylightListID: String = "",
         appleReminderID: String,
+        selectionSourceReminderID: String? = nil,
         appleExternalID: String? = nil,
         skylightItemID: String,
         lastAppleModifiedAt: Date,
@@ -102,6 +122,7 @@ struct ReminderSyncRecord: Identifiable, Codable, Sendable, Hashable {
         self.frameID = frameID
         self.skylightListID = skylightListID
         self.appleReminderID = appleReminderID
+        self.selectionSourceReminderID = selectionSourceReminderID
         self.appleExternalID = appleExternalID
         self.skylightItemID = skylightItemID
         self.lastAppleModifiedAt = lastAppleModifiedAt
@@ -120,6 +141,10 @@ struct ReminderSyncRecord: Identifiable, Codable, Sendable, Hashable {
         frameID = try container.decodeIfPresent(String.self, forKey: .frameID) ?? ""
         skylightListID = try container.decodeIfPresent(String.self, forKey: .skylightListID) ?? ""
         appleReminderID = try container.decode(String.self, forKey: .appleReminderID)
+        selectionSourceReminderID = try container.decodeIfPresent(
+            String.self,
+            forKey: .selectionSourceReminderID
+        )
         appleExternalID = try container.decodeIfPresent(String.self, forKey: .appleExternalID)
         skylightItemID = try container.decodeIfPresent(String.self, forKey: .skylightItemID) ?? ""
         lastAppleModifiedAt = try container.decodeIfPresent(Date.self, forKey: .lastAppleModifiedAt) ?? .distantPast
@@ -371,6 +396,7 @@ struct PhotoDestinationSyncRecord: Identifiable, Codable, Sendable, Hashable {
 
 struct SyncState: Codable, Sendable {
     var photos: [PhotoSyncRecord] = []
+    var pendingPhotoCleanups: [PendingPhotoCleanup] = []
     var reminders: [ReminderSyncRecord] = []
     var reminderLists: [ReminderListSyncRecord] = []
     var chores: [ChoreSyncRecord] = []
@@ -390,6 +416,10 @@ struct SyncState: Codable, Sendable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         photos = try container.decodeIfPresent([PhotoSyncRecord].self, forKey: .photos) ?? []
+        pendingPhotoCleanups = try container.decodeIfPresent(
+            [PendingPhotoCleanup].self,
+            forKey: .pendingPhotoCleanups
+        ) ?? []
         reminders = try container.decodeIfPresent([ReminderSyncRecord].self, forKey: .reminders) ?? []
         reminderLists = try container.decodeIfPresent([ReminderListSyncRecord].self, forKey: .reminderLists) ?? []
         chores = try container.decodeIfPresent([ChoreSyncRecord].self, forKey: .chores) ?? []

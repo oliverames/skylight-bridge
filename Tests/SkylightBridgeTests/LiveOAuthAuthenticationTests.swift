@@ -3,34 +3,46 @@ import Foundation
 import Testing
 @testable import SkylightBridge
 
+private let liveOAuthCredentials: (email: String, password: String)? = {
+    guard ProcessInfo.processInfo.environment["SKYLIGHT_LIVE_TESTS"] == "1",
+          let email = ProcessInfo.processInfo.environment["SKYLIGHT_EMAIL"],
+          let password = ProcessInfo.processInfo.environment["SKYLIGHT_PASSWORD"],
+          !email.isEmpty,
+          !password.isEmpty else { return nil }
+    return (email, password)
+}()
+
 struct LiveOAuthAuthenticationTests {
-    @Test("Live default OAuth authentication completes without mutating Skylight data")
+    @Test(
+        "Live default OAuth authentication completes without mutating Skylight data",
+        .enabled(
+            if: liveOAuthCredentials != nil,
+            "Set SKYLIGHT_LIVE_TESTS=1 with SKYLIGHT_EMAIL and SKYLIGHT_PASSWORD."
+        )
+    )
     func liveDefaultOAuthAuthentication() async throws {
-        guard ProcessInfo.processInfo.environment["SKYLIGHT_LIVE_TESTS"] == "1",
-              let email = ProcessInfo.processInfo.environment["SKYLIGHT_EMAIL"],
-              let password = ProcessInfo.processInfo.environment["SKYLIGHT_PASSWORD"],
-              !email.isEmpty,
-              !password.isEmpty else {
-            return
-        }
+        let credentials = try #require(liveOAuthCredentials)
 
         let authenticator = SkylightOAuthAuthenticator(
             deviceFingerprint: "skylight-bridge-default-auth-test-\(UUID().uuidString.lowercased())"
         )
-        let token = try await authenticator.login(email: email, password: password)
+        let token = try await authenticator.login(
+            email: credentials.email,
+            password: credentials.password
+        )
         #expect(!token.accessToken.isEmpty)
         #expect(!token.refreshToken.isEmpty)
     }
 
-    @Test("Live OAuth authentication completes without mutating Skylight data")
+    @Test(
+        "Live OAuth authentication completes without mutating Skylight data",
+        .enabled(
+            if: liveOAuthCredentials != nil,
+            "Set SKYLIGHT_LIVE_TESTS=1 with SKYLIGHT_EMAIL and SKYLIGHT_PASSWORD."
+        )
+    )
     func liveOAuthAuthentication() async throws {
-        guard ProcessInfo.processInfo.environment["SKYLIGHT_LIVE_TESTS"] == "1",
-              let email = ProcessInfo.processInfo.environment["SKYLIGHT_EMAIL"],
-              let password = ProcessInfo.processInfo.environment["SKYLIGHT_PASSWORD"],
-              !email.isEmpty,
-              !password.isEmpty else {
-            return
-        }
+        let credentials = try #require(liveOAuthCredentials)
 
         let transport = OAuthTraceTransport()
         let authenticator = SkylightOAuthAuthenticator(
@@ -39,7 +51,10 @@ struct LiveOAuthAuthenticationTests {
         )
 
         do {
-            let token = try await authenticator.login(email: email, password: password)
+            let token = try await authenticator.login(
+                email: credentials.email,
+                password: credentials.password
+            )
             #expect(!token.accessToken.isEmpty)
             #expect(!token.refreshToken.isEmpty)
         } catch {

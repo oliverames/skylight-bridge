@@ -42,9 +42,16 @@ enum AppleRemindersStoreError: Error, LocalizedError, Sendable {
 @MainActor
 final class AppleRemindersStore {
     private let eventStore: EKEventStore
+    private let choreCalendar: Calendar
 
-    init(eventStore: EKEventStore = EKEventStore()) {
+    init(
+        eventStore: EKEventStore = EKEventStore(),
+        choreCalendar: Calendar = .current
+    ) {
         self.eventStore = eventStore
+        var choreCalendar = choreCalendar
+        choreCalendar.locale = Locale(identifier: "en_US_POSIX")
+        self.choreCalendar = choreCalendar
     }
 
     func authorizationStatus() -> AppleRemindersAuthorizationStatus {
@@ -263,7 +270,11 @@ final class AppleRemindersStore {
             eventStore.fetchReminders(matching: predicate) { reminders in
                 Task { @MainActor in
                     continuation.resume(returning: (reminders ?? []).map {
-                        Self.choreSnapshot(for: $0, memberKey: memberKey)
+                        Self.choreSnapshot(
+                            for: $0,
+                            memberKey: memberKey,
+                            calendar: self.choreCalendar
+                        )
                     })
                 }
             }
@@ -287,7 +298,9 @@ final class AppleRemindersStore {
         reminder.calendar = calendar
         reminder.title = draft.title
         reminder.notes = draft.notes
-        reminder.dueDateComponents = draft.dueDate.map(Self.dateComponents)
+        reminder.dueDateComponents = draft.dueDate.map {
+            Self.choreDateComponents($0, calendar: choreCalendar)
+        }
         if let recurrence = draft.recurrence {
             reminder.addRecurrenceRule(RecurrenceRuleConverter.ekRecurrenceRule(from: recurrence))
         }
@@ -296,7 +309,11 @@ final class AppleRemindersStore {
         } catch {
             throw AppleRemindersStoreError.eventKit(error.localizedDescription)
         }
-        return Self.choreSnapshot(for: reminder, memberKey: memberKey)
+        return Self.choreSnapshot(
+            for: reminder,
+            memberKey: memberKey,
+            calendar: choreCalendar
+        )
     }
 
     func updateChoreReminder(
@@ -310,7 +327,9 @@ final class AppleRemindersStore {
         }
         reminder.title = patch.title
         reminder.notes = patch.notes
-        reminder.dueDateComponents = patch.dueDate.map(Self.dateComponents)
+        reminder.dueDateComponents = patch.dueDate.map {
+            Self.choreDateComponents($0, calendar: choreCalendar)
+        }
         if patch.replaceRecurrence {
             for rule in reminder.recurrenceRules ?? [] { reminder.removeRecurrenceRule(rule) }
             if let recurrence = patch.recurrence {
@@ -322,7 +341,11 @@ final class AppleRemindersStore {
         } catch {
             throw AppleRemindersStoreError.eventKit(error.localizedDescription)
         }
-        return Self.choreSnapshot(for: reminder, memberKey: memberKey)
+        return Self.choreSnapshot(
+            for: reminder,
+            memberKey: memberKey,
+            calendar: choreCalendar
+        )
     }
 
     func setChoreReminderCompletion(
@@ -336,7 +359,10 @@ final class AppleRemindersStore {
             throw AppleRemindersStoreError.reminderNotFound(reminderID)
         }
         if !completed, let dueDate {
-            reminder.dueDateComponents = Self.dateComponents(dueDate)
+            reminder.dueDateComponents = Self.choreDateComponents(
+                dueDate,
+                calendar: choreCalendar
+            )
         }
         reminder.isCompleted = completed
         do {
@@ -344,7 +370,11 @@ final class AppleRemindersStore {
         } catch {
             throw AppleRemindersStoreError.eventKit(error.localizedDescription)
         }
-        return Self.choreSnapshot(for: reminder, memberKey: memberKey)
+        return Self.choreSnapshot(
+            for: reminder,
+            memberKey: memberKey,
+            calendar: choreCalendar
+        )
     }
 
     func moveChoreReminder(
@@ -366,7 +396,11 @@ final class AppleRemindersStore {
         } catch {
             throw AppleRemindersStoreError.eventKit(error.localizedDescription)
         }
-        return Self.choreSnapshot(for: reminder, memberKey: memberKey)
+        return Self.choreSnapshot(
+            for: reminder,
+            memberKey: memberKey,
+            calendar: choreCalendar
+        )
     }
 
     func reminder(withID reminderID: String) throws -> AppleReminderSnapshot {
@@ -550,11 +584,18 @@ final class AppleRemindersStore {
 
     nonisolated private static func choreSnapshot(
         for reminder: EKReminder,
-        memberKey: String
+        memberKey: String,
+        calendar: Calendar
     ) -> ChoreReminderSnapshot {
         let parsedRecurrence: ParsedRecurrenceRule?
         let recurrenceUnsupported: Bool
-        if let first = reminder.recurrenceRules?.first {
+        let recurrenceRules = reminder.recurrenceRules ?? []
+        if recurrenceRules.count > 1 {
+            // Skylight accepts one recurrence rule. Combining EventKit rules
+            // would silently narrow the user's schedule to the first rule.
+            parsedRecurrence = nil
+            recurrenceUnsupported = true
+        } else if let first = recurrenceRules.first {
             do {
                 parsedRecurrence = try RecurrenceRuleConverter.parsedRule(from: first)
                 recurrenceUnsupported = false
@@ -573,22 +614,37 @@ final class AppleRemindersStore {
             title: reminder.title,
             notes: reminder.notes,
             isCompleted: reminder.isCompleted,
-            dueDate: reminder.dueDateComponents.flatMap { Calendar.current.date(from: $0) },
+            dueDate: reminder.dueDateComponents.flatMap {
+                choreDate(from: $0, calendar: calendar)
+            },
             recurrence: parsedRecurrence,
             recurrenceUnsupported: recurrenceUnsupported,
             modifiedAt: reminder.lastModifiedDate ?? reminder.creationDate ?? .distantPast
         )
     }
 
-    nonisolated private static func dateComponents(_ date: Date) -> DateComponents {
-        let calendar = Calendar.current
+    nonisolated static func choreDate(
+        from sourceComponents: DateComponents,
+        calendar: Calendar
+    ) -> Date? {
+        var components = sourceComponents
+        components.calendar = calendar
+        components.timeZone = calendar.timeZone
+        return calendar.date(from: components)
+    }
+
+    nonisolated static func choreDateComponents(
+        _ date: Date,
+        calendar: Calendar
+    ) -> DateComponents {
         let includeTime = calendar.component(.hour, from: date) != 0
             || calendar.component(.minute, from: date) != 0
         var components = calendar.dateComponents(
             includeTime ? [.year, .month, .day, .hour, .minute] : [.year, .month, .day],
             from: date
         )
-        components.calendar = Calendar.current
+        components.calendar = calendar
+        components.timeZone = calendar.timeZone
         return components
     }
 }

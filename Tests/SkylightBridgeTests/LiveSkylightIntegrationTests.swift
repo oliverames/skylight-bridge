@@ -5,12 +5,28 @@ import Testing
 import UniformTypeIdentifiers
 @testable import SkylightBridge
 
+private let liveChoreMutationsEnabled =
+    ProcessInfo.processInfo.environment["SKYLIGHT_LIVE_CHORE_MUTATIONS"] == "1"
+private let liveReadsEnabled =
+    ProcessInfo.processInfo.environment["SKYLIGHT_LIVE_READS"] == "1"
+private let liveSkylightCredentials: (email: String, password: String)? = {
+    guard ProcessInfo.processInfo.environment["SKYLIGHT_LIVE_TESTS"] == "1",
+          let email = ProcessInfo.processInfo.environment["SKYLIGHT_EMAIL"],
+          let password = ProcessInfo.processInfo.environment["SKYLIGHT_PASSWORD"],
+          !email.isEmpty,
+          !password.isEmpty else { return nil }
+    return (email, password)
+}()
+
 struct LiveSkylightIntegrationTests {
-    @Test("Live recurring chore create, complete, reopen, and delete lifecycle")
+    @Test(
+        "Live recurring chore create, complete, reopen, and delete lifecycle",
+        .enabled(
+            if: liveChoreMutationsEnabled,
+            "Set SKYLIGHT_LIVE_CHORE_MUTATIONS=1 to run this mutating live test."
+        )
+    )
     func liveRecurringChoreLifecycle() async throws {
-        guard ProcessInfo.processInfo.environment["SKYLIGHT_LIVE_CHORE_MUTATIONS"] == "1" else {
-            return
-        }
         let manager = SkylightSessionManager()
         let client = try await manager.client(
             configuration: SkylightAccountConfiguration(),
@@ -99,11 +115,14 @@ struct LiveSkylightIntegrationTests {
         }
     }
 
-    @Test("Live chore inventory matches the sync decoder contract")
+    @Test(
+        "Live chore inventory matches the sync decoder contract",
+        .enabled(
+            if: liveReadsEnabled,
+            "Set SKYLIGHT_LIVE_READS=1 to run this live account read."
+        )
+    )
     func liveChoreInventoryContract() async throws {
-        guard ProcessInfo.processInfo.environment["SKYLIGHT_LIVE_READS"] == "1" else {
-            return
-        }
         let manager = SkylightSessionManager()
         let client = try await manager.client(
             configuration: SkylightAccountConfiguration(),
@@ -162,19 +181,22 @@ struct LiveSkylightIntegrationTests {
         }
     }
 
-    @Test("Live account supports authentication, read, list, and photo lifecycle")
+    @Test(
+        "Live account supports authentication, read, list, and photo lifecycle",
+        .enabled(
+            if: liveSkylightCredentials != nil,
+            "Set SKYLIGHT_LIVE_TESTS=1 with SKYLIGHT_EMAIL and SKYLIGHT_PASSWORD."
+        )
+    )
     func liveAccountLifecycle() async throws {
-        guard ProcessInfo.processInfo.environment["SKYLIGHT_LIVE_TESTS"] == "1",
-              let email = ProcessInfo.processInfo.environment["SKYLIGHT_EMAIL"],
-              let password = ProcessInfo.processInfo.environment["SKYLIGHT_PASSWORD"],
-              !email.isEmpty,
-              !password.isEmpty else {
-            return
-        }
+        let credentials = try #require(liveSkylightCredentials)
 
         let fingerprint = "skylight-bridge-integration-\(UUID().uuidString.lowercased())"
         let authenticator = SkylightOAuthAuthenticator(deviceFingerprint: fingerprint)
-        let token = try await authenticator.login(email: email, password: password)
+        let token = try await authenticator.login(
+            email: credentials.email,
+            password: credentials.password
+        )
         let client = SkylightAPIClient(accessToken: token.accessToken)
         let frames = try await client.listFrames()
         let frame = try #require(frames.first)

@@ -60,6 +60,7 @@ struct SyncStateIdentityTests {
         let state = try JSONDecoder().decode(SyncState.self, from: Data("{}".utf8))
 
         #expect(state.photoDestinations.isEmpty)
+        #expect(state.pendingPhotoCleanups.isEmpty)
     }
 
     @Test("Changing frames clears only frame-scoped destination identifiers")
@@ -540,6 +541,340 @@ struct SyncStateIdentityTests {
         #expect(!store.isConnecting)
     }
 
+    @Test("A configuration load failure protects the original file and skips startup connection")
+    @MainActor
+    func configurationLoadFailureIsReadOnly() async throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let originalStore = ConfigurationStore(
+            rootURL: directory,
+            configurationAuthenticator: LocalFileAuthenticator(
+                testKey: Data(repeating: 0x51, count: 32)
+            ),
+            activityAuthenticator: LocalFileAuthenticator(
+                testKey: Data(repeating: 0x52, count: 32)
+            )
+        )
+        var original = AppConfiguration.empty
+        original.account.frameID = "frame-1"
+        original.photoMappings = [PhotoMapping(name: "Family")]
+        try originalStore.saveConfiguration(original)
+        let configurationURL = directory.appendingPathComponent("configuration.json")
+        let originalBytes = try Data(contentsOf: configurationURL)
+        let unreadableStore = ConfigurationStore(
+            rootURL: directory,
+            configurationAuthenticator: LocalFileAuthenticator(
+                testKey: Data(repeating: 0x53, count: 32)
+            ),
+            activityAuthenticator: LocalFileAuthenticator(
+                testKey: Data(repeating: 0x52, count: 32)
+            )
+        )
+        let sessions = FailingAppSessionManager()
+        let store = AppStore(persistence: unreadableStore, sessionManager: sessions)
+
+        #expect(store.configurationLoadError != nil)
+        store.configuration.dryRun = false
+        #expect(!store.saveConfiguration())
+        await store.restoreAccountConnection()
+        await store.refreshSharediCloudState()
+
+        #expect(try Data(contentsOf: configurationURL) == originalBytes)
+        #expect(try originalStore.loadConfiguration() == original)
+        #expect(await sessions.connectAttempts == 0)
+        #expect(await sessions.clientAttempts == 0)
+        #expect(!store.hasLoadedSharediCloudState)
+    }
+
+    @Test("An activity load failure protects the original history")
+    @MainActor
+    func activityLoadFailureIsReadOnly() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let configurationKey = Data(repeating: 0x61, count: 32)
+        let activityKey = Data(repeating: 0x62, count: 32)
+        let originalStore = ConfigurationStore(
+            rootURL: directory,
+            configurationAuthenticator: LocalFileAuthenticator(testKey: configurationKey),
+            activityAuthenticator: LocalFileAuthenticator(testKey: activityKey)
+        )
+        let baseline = [ActivityEntry(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+            date: Date(timeIntervalSince1970: 100),
+            level: .info,
+            area: .system,
+            message: "Existing activity"
+        )]
+        try originalStore.saveActivity(baseline)
+        let activityURL = directory.appendingPathComponent("activity.json")
+        let originalBytes = try Data(contentsOf: activityURL)
+        let unreadableStore = ConfigurationStore(
+            rootURL: directory,
+            configurationAuthenticator: LocalFileAuthenticator(testKey: configurationKey),
+            activityAuthenticator: LocalFileAuthenticator(
+                testKey: Data(repeating: 0x63, count: 32)
+            )
+        )
+        let store = AppStore(persistence: unreadableStore)
+
+        #expect(store.activityLoadError != nil)
+        store.appendActivity(.init(level: .error, area: .system, message: "New entry"))
+        store.clearActivity()
+
+        #expect(store.activity.isEmpty)
+        #expect(try Data(contentsOf: activityURL) == originalBytes)
+        #expect(try originalStore.loadActivity() == baseline)
+    }
+
+    @Test("Failed chore setup removes only the lists it just created")
+    @MainActor
+    func failedChoreSetupRollsBackCreatedLists() async throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let configurationKey = Data(repeating: 0x64, count: 32)
+        let activityKey = Data(repeating: 0x65, count: 32)
+        var configuration = AppConfiguration.empty
+        configuration.account.frameID = "frame-1"
+        let normalPersistence = ConfigurationStore(
+            rootURL: directory,
+            configurationAuthenticator: LocalFileAuthenticator(testKey: configurationKey),
+            activityAuthenticator: LocalFileAuthenticator(testKey: activityKey)
+        )
+        try normalPersistence.saveConfiguration(configuration)
+        let failingPersistence = ConfigurationStore(
+            fileManager: FailAfterCreateDirectoryFileManager(successfulCalls: 0),
+            rootURL: directory,
+            configurationAuthenticator: LocalFileAuthenticator(testKey: configurationKey),
+            activityAuthenticator: LocalFileAuthenticator(testKey: activityKey)
+        )
+        let transport = ChoreSetupTransport()
+        let client = SkylightAPIClient(accessToken: "token", transport: transport)
+        let sessions = StaticClientSessionManager(client: client)
+        let reminders = ChoreSetupRemindersStore()
+        let store = AppStore(
+            persistence: failingPersistence,
+            sessionManager: sessions,
+            remindersStore: reminders
+        )
+        store.skylightFrames = [SkylightResource(
+            id: "frame-1",
+            attributes: SkylightFrameAttributes(
+                name: "Kitchen",
+                timezone: "America/New_York",
+                plus: false
+            )
+        )]
+
+        await store.setupChoreListsFromSkylight()
+
+        #expect(store.configuration.choreMappings.isEmpty)
+        #expect(reminders.createdTitles == ["Oliver Chores", "Up for Grabs"])
+        #expect(Set(reminders.deletedListIDs) == ["created-list-1", "created-list-2"])
+        #expect(try reminders.lists().isEmpty)
+        #expect(try normalPersistence.loadConfiguration().choreMappings.isEmpty)
+        #expect(store.statusMessage.contains("could not be saved"))
+    }
+
+    @Test("A shared frame change waits for sync and hydrates the selected frame")
+    @MainActor
+    func sharedFrameChangeIsSerializedAndHydrated() async throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var configuration = AppConfiguration.empty
+        configuration.account.frameID = "frame-1"
+        let persistence = testConfigurationStore(rootURL: directory)
+        try persistence.saveConfiguration(configuration)
+        let client = SkylightAPIClient(
+            accessToken: "token",
+            transport: FrameHydrationTransport()
+        )
+        let store = AppStore(
+            persistence: persistence,
+            sessionManager: StaticClientSessionManager(client: client),
+            remindersStore: ChoreSetupRemindersStore()
+        )
+        store.skylightFrames = [
+            SkylightResource(
+                id: "frame-1",
+                attributes: SkylightFrameAttributes(name: "Office", timezone: "UTC", plus: false)
+            ),
+            SkylightResource(
+                id: "frame-2",
+                attributes: SkylightFrameAttributes(
+                    name: "Kitchen",
+                    timezone: "America/New_York",
+                    plus: false
+                )
+            )
+        ]
+        store.isSyncing = true
+        let preferences = SharedPreferences(
+            selectedFrameID: "frame-2",
+            dryRun: false,
+            preferredSyncIntervalMinutes: 30,
+            modifiedAt: Date(timeIntervalSince1970: 500),
+            modifiedByInstallationID: "phone"
+        )
+        let apply = Task { try await store.applySharedPreferences(preferences) }
+        await Task.yield()
+
+        #expect(store.configuration.account.frameID == "frame-1")
+        store.isSyncing = false
+        try await apply.value
+
+        #expect(store.configuration.account.frameID == "frame-2")
+        #expect(store.configuration.account.deviceID == "device-2")
+        #expect(store.configuration.dryRun == false)
+        #expect(store.configuration.syncIntervalMinutes == 30)
+        #expect(store.skylightAlbums.map(\.id) == ["album-2"])
+        #expect(store.skylightLists.map(\.id) == ["list-2"])
+        #expect(try persistence.loadConfiguration() == store.configuration)
+    }
+
+    @Test("Explicit sign-in is blocked while sync owns the account snapshot")
+    @MainActor
+    func explicitSignInDoesNotOverlapSync() async throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = testConfigurationStore(rootURL: directory)
+        try persistence.saveConfiguration(.empty)
+        let sessions = FailingAppSessionManager()
+        let store = AppStore(persistence: persistence, sessionManager: sessions)
+        store.isSyncing = true
+
+        await store.saveAccountCredentials(email: "person@example.com", password: "secret")
+
+        #expect(await sessions.savedCredentialCount == 0)
+        #expect(!store.isConnecting)
+    }
+
+    @Test("A failed frame switch restores configuration and destination resources")
+    @MainActor
+    func failedFrameSwitchRollsBack() async throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var configuration = AppConfiguration.empty
+        configuration.account.frameID = "frame-1"
+        configuration.account.deviceID = "device-1"
+        let photo = PhotoMapping(name: "Family", destinationAlbumID: "album-1")
+        configuration.photoMappings = [photo]
+        configuration.photoDestinationAlbumIDsByFrame[
+            FrameDestinationIdentity.key(mappingID: photo.id, frameID: "frame-1")
+        ] = "album-1"
+        let persistence = testConfigurationStore(rootURL: directory)
+        try persistence.saveConfiguration(configuration)
+        let sessions = FailingAppSessionManager()
+        let store = AppStore(persistence: persistence, sessionManager: sessions)
+        let device = try JSONDecoder().decode(
+            SkylightResource<SkylightDeviceAttributes>.self,
+            from: Data(#"{"id":"device-1","attributes":{"name":"Kitchen"}}"#.utf8)
+        )
+        store.skylightDevices = [device]
+        store.skylightAlbums = [album(id: "album-1", title: "Family")]
+        store.skylightLists = [list(id: "list-1", title: "Groceries")]
+        store.skylightMealCategories = [SkylightResource(
+            id: "meal-category-1",
+            attributes: SkylightMealCategoryAttributes(label: "Dinner", color: nil)
+        )]
+        store.skylightChoreCategories = [SkylightResource(
+            id: "chore-category-1",
+            attributes: SkylightCategoryAttributes(
+                label: "Oliver",
+                color: nil,
+                linkedToProfile: nil,
+                selectedForChoreChart: true
+            )
+        )]
+        let priorConfiguration = store.configuration
+        let priorDevices = store.skylightDevices
+        let priorAlbums = store.skylightAlbums
+        let priorLists = store.skylightLists
+        let priorMealCategories = store.skylightMealCategories
+        let priorChoreCategories = store.skylightChoreCategories
+
+        await store.selectFrame("frame-2", replacing: "frame-1")
+
+        #expect(store.configuration == priorConfiguration)
+        #expect(store.skylightDevices == priorDevices)
+        #expect(store.skylightAlbums == priorAlbums)
+        #expect(store.skylightLists == priorLists)
+        #expect(store.skylightMealCategories == priorMealCategories)
+        #expect(store.skylightChoreCategories == priorChoreCategories)
+        #expect(await sessions.clientAttempts == 1)
+        #expect(try persistence.loadConfiguration() == priorConfiguration)
+    }
+
+    @Test("A failed final mapping removal save leaves a disabled retry")
+    @MainActor
+    func mappingRemovalPersistsDisabledRetry() async throws {
+        let configurationDirectory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let stateDirectory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: configurationDirectory)
+            try? FileManager.default.removeItem(at: stateDirectory)
+        }
+        let mapping = ReminderListMapping(
+            sourceListID: "apple-list",
+            sourceListTitle: "Groceries",
+            destinationListID: "skylight-list",
+            destinationListTitle: "Groceries",
+            destinationKind: .toDo,
+            direction: .twoWay,
+            enabled: true
+        )
+        var configuration = AppConfiguration.empty
+        configuration.reminderMappings = [mapping]
+        let configurationKey = Data(repeating: 0x54, count: 32)
+        let activityKey = Data(repeating: 0x55, count: 32)
+        let normalPersistence = ConfigurationStore(
+            rootURL: configurationDirectory,
+            configurationAuthenticator: LocalFileAuthenticator(testKey: configurationKey),
+            activityAuthenticator: LocalFileAuthenticator(testKey: activityKey)
+        )
+        try normalPersistence.saveConfiguration(configuration)
+        let stateStore = SyncStateStore(
+            rootURL: stateDirectory,
+            authenticator: LocalFileAuthenticator(testKey: Data(repeating: 0x56, count: 32))
+        )
+        var state = SyncState()
+        state.reminders = [reminderRecord(mappingID: mapping.id, frameID: "frame-1")]
+        try await stateStore.save(state)
+        let failingFileManager = FailAfterCreateDirectoryFileManager(successfulCalls: 1)
+        let failingPersistence = ConfigurationStore(
+            fileManager: failingFileManager,
+            rootURL: configurationDirectory,
+            configurationAuthenticator: LocalFileAuthenticator(testKey: configurationKey),
+            activityAuthenticator: LocalFileAuthenticator(testKey: activityKey)
+        )
+        let store = AppStore(
+            persistence: failingPersistence,
+            syncStateStore: stateStore
+        )
+
+        await store.removeReminderMapping(mapping, cleanup: .none)
+
+        #expect(store.configuration.reminderMappings.first?.enabled == false)
+        #expect(try normalPersistence.loadConfiguration().reminderMappings.first?.enabled == false)
+        #expect(try await stateStore.load().reminders.isEmpty)
+
+        let reloaded = AppStore(
+            persistence: normalPersistence,
+            syncStateStore: stateStore
+        )
+        let disabled = try #require(reloaded.configuration.reminderMappings.first)
+        await reloaded.removeReminderMapping(disabled, cleanup: .none)
+
+        #expect(try normalPersistence.loadConfiguration().reminderMappings.isEmpty)
+    }
+
     private func reminderRecord(mappingID: UUID, frameID: String) -> ReminderSyncRecord {
         ReminderSyncRecord(
             mappingID: mappingID,
@@ -608,13 +943,117 @@ struct SyncStateIdentityTests {
     }
 }
 
-private actor FailingAppSessionManager: SkylightSessionManaging {
-    private(set) var connectAttempts = 0
-    private(set) var clientAttempts = 0
+private struct ChoreSetupTransport: SkylightTransport {
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        #expect(request.url?.path == "/api/frames/frame-1/categories")
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        let json = #"{"data":[{"id":"person-1","type":"category","attributes":{"label":"Oliver","selected_for_chore_chart":true}}]}"#
+        return (Data(json.utf8), response)
+    }
+}
+
+private struct FrameHydrationTransport: SkylightTransport {
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let path = request.url?.path ?? ""
+        let json: String
+        switch path {
+        case "/api/frames/frame-2/devices":
+            json = #"{"data":[{"id":"device-2","type":"device","attributes":{"name":"Kitchen"}}]}"#
+        case "/api/frames/frame-2/albums":
+            json = #"{"data":[{"id":"album-2","type":"album","attributes":{"title":"Family"}}]}"#
+        case "/api/frames/frame-2/lists":
+            json = #"{"data":[{"id":"list-2","type":"list","attributes":{"label":"Groceries","kind":"shopping"}}]}"#
+        case "/api/frames/frame-2/meals/categories":
+            json = #"{"data":[{"id":"meal-2","type":"meal_category","attributes":{"label":"Dinner"}}]}"#
+        case "/api/frames/frame-2/categories":
+            json = #"{"data":[{"id":"person-2","type":"category","attributes":{"label":"Oliver","selected_for_chore_chart":true}}]}"#
+        default:
+            Issue.record("Unexpected frame hydration request: \(path)")
+            throw AppSessionTestError.offline
+        }
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        return (Data(json.utf8), response)
+    }
+}
+
+private actor StaticClientSessionManager: SkylightSessionManaging {
+    let storedClient: SkylightAPIClient
+
+    init(client: SkylightAPIClient) {
+        storedClient = client
+    }
 
     func storedEmail() async throws -> String? { "person@example.com" }
     func signOut() async throws {}
     func saveCredentials(email: String, password: String) async throws {}
+
+    func connect(
+        configuration: SkylightAccountConfiguration
+    ) async throws -> SkylightAccountConnection {
+        throw AppSessionTestError.offline
+    }
+
+    func client(
+        configuration: SkylightAccountConfiguration,
+        validateFrame: Bool
+    ) async throws -> SkylightAPIClient {
+        storedClient
+    }
+}
+
+@MainActor
+private final class ChoreSetupRemindersStore: AppRemindersStoring {
+    private(set) var currentLists: [AppleReminderListSnapshot] = []
+    private(set) var createdTitles: [String] = []
+    private(set) var deletedListIDs: [String] = []
+
+    func authorizationStatus() -> AppleRemindersAuthorizationStatus { .fullAccess }
+    func requestAccess() async throws -> Bool { true }
+    func lists() throws -> [AppleReminderListSnapshot] { currentLists }
+    func reminders(in listID: String) async throws -> [AppleReminderSnapshot] { [] }
+
+    func createList(named title: String) throws -> AppleReminderListSnapshot {
+        createdTitles.append(title)
+        let list = AppleReminderListSnapshot(
+            id: "created-list-\(createdTitles.count)",
+            title: title,
+            colorHex: nil,
+            sourceID: "source-1",
+            sourceTitle: "iCloud",
+            allowsContentModifications: true
+        )
+        currentLists.append(list)
+        return list
+    }
+
+    func deleteNewlyCreatedList(withID listID: String) throws {
+        deletedListIDs.append(listID)
+        currentLists.removeAll { $0.id == listID }
+    }
+
+    func syncRemoveReminder(withID reminderID: String) async throws {}
+}
+
+private actor FailingAppSessionManager: SkylightSessionManaging {
+    private(set) var connectAttempts = 0
+    private(set) var clientAttempts = 0
+    private(set) var savedCredentialCount = 0
+
+    func storedEmail() async throws -> String? { "person@example.com" }
+    func signOut() async throws {}
+    func saveCredentials(email: String, password: String) async throws {
+        savedCredentialCount += 1
+    }
 
     func connect(
         configuration: SkylightAccountConfiguration
@@ -721,4 +1160,30 @@ private actor SuspendingClientSessionManager: SkylightSessionManaging {
 
 private enum AppSessionTestError: Error {
     case offline
+}
+
+private final class FailAfterCreateDirectoryFileManager: FileManager, @unchecked Sendable {
+    private let successfulCalls: Int
+    private var calls = 0
+
+    init(successfulCalls: Int) {
+        self.successfulCalls = successfulCalls
+        super.init()
+    }
+
+    override func createDirectory(
+        at url: URL,
+        withIntermediateDirectories createIntermediates: Bool,
+        attributes: [FileAttributeKey: Any]? = nil
+    ) throws {
+        calls += 1
+        guard calls <= successfulCalls else {
+            throw CocoaError(.fileWriteNoPermission)
+        }
+        try super.createDirectory(
+            at: url,
+            withIntermediateDirectories: createIntermediates,
+            attributes: attributes
+        )
+    }
 }

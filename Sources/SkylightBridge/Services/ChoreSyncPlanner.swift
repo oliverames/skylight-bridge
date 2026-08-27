@@ -32,7 +32,8 @@ enum ChoreSyncPlanner {
         direction: ReminderSyncDirection,
         conflictPolicy: SyncConflictPolicy,
         today: String,
-        todayDate: Date
+        todayDate: Date,
+        calendar: Calendar = .current
     ) -> [ChoreSyncAction] {
         let appleByID = Dictionary(uniqueKeysWithValues: apple.map { ($0.id, $0) })
         let remoteByID = Dictionary(uniqueKeysWithValues: skylight.map { ($0.id, $0) })
@@ -52,12 +53,13 @@ enum ChoreSyncPlanner {
                     direction: direction,
                     policy: conflictPolicy,
                     today: today,
-                    todayDate: todayDate
+                    todayDate: todayDate,
+                    calendar: calendar
                 )
-            case (.some, .none):
-                if direction == .appleToSkylight {
+            case let (appleItem?, .none):
+                if direction == .appleToSkylight, !appleItem.recurrenceUnsupported {
                     actions.append(.createRemote(appleID: link.appleID))
-                } else {
+                } else if direction != .appleToSkylight {
                     actions.append(.deleteApple(appleID: link.appleID))
                 }
             case (.none, .some):
@@ -72,7 +74,9 @@ enum ChoreSyncPlanner {
         }
 
         if direction != .skylightToApple {
-            actions += apple.filter { !linkedApple.contains($0.id) }.map {
+            actions += apple.filter {
+                !linkedApple.contains($0.id) && !$0.recurrenceUnsupported
+            }.map {
                 .createRemote(appleID: $0.id)
             }
         }
@@ -91,7 +95,8 @@ enum ChoreSyncPlanner {
         direction: ReminderSyncDirection,
         policy: SyncConflictPolicy,
         today: String,
-        todayDate: Date
+        todayDate: Date,
+        calendar: Calendar
     ) -> [ChoreSyncAction] {
         var result: [ChoreSyncAction] = []
         let appleChanged = apple.modifiedAt.isMeaningfullyAfter(link.lastAppleModifiedAt)
@@ -140,7 +145,7 @@ enum ChoreSyncPlanner {
            let remoteStart = remote.startDate,
            let appleDue = apple.dueDate,
            appleDue < remoteStart,
-           !Calendar.current.isDate(appleDue, inSameDayAs: remoteStart) {
+           !calendar.isDate(appleDue, inSameDayAs: remoteStart) {
             result.append(.updateApple(appleID: apple.id, seriesID: remote.id))
         }
 
@@ -152,7 +157,8 @@ enum ChoreSyncPlanner {
             return result
         }
         let remoteCompleted = todayStatus == .complete || todayStatus == .skipped
-        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: todayDate) ?? .distantFuture
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: todayDate)
+            ?? .distantFuture
         // A rolled-forward due date signals completion only for a genuinely
         // recurring chore (EventKit spawns the next occurrence), including a
         // degraded rule it still advances. Postponing a one-off chore is a

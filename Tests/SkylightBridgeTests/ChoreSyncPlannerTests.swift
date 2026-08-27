@@ -25,6 +25,35 @@ struct ChoreSyncPlannerTests {
         #expect(actions == [.createRemote(appleID: "a"), .createApple(seriesID: "s")])
     }
 
+    @Test("An unsupported Apple recurrence is not narrowed during creation")
+    func skipsUnsupportedAppleRecurrence() {
+        let unsupported = ChoreReminderSnapshot(
+            id: "unsupported",
+            listID: "list",
+            memberKey: "oliver",
+            title: "Water plants",
+            notes: nil,
+            isCompleted: false,
+            dueDate: today,
+            recurrence: nil,
+            recurrenceUnsupported: true,
+            modifiedAt: today
+        )
+        let supported = appleSnapshot(id: "supported", member: "oliver")
+
+        let actions = ChoreSyncPlanner.plan(
+            apple: [unsupported, supported],
+            skylight: [],
+            links: [],
+            direction: .appleToSkylight,
+            conflictPolicy: .newestWins,
+            today: "2026-07-15",
+            todayDate: today
+        )
+
+        #expect(actions == [.createRemote(appleID: "supported")])
+    }
+
     @Test("A rolled-forward recurring reminder completes today's Skylight occurrence")
     func detectsAppleRollForward() {
         let prior = today

@@ -1,15 +1,31 @@
 import Foundation
 import SkylightBridgeShared
 
+enum SharedPreferencesApplicationError: Error, LocalizedError, Equatable {
+    case frameSelectionFailed(String)
+    case persistenceFailed
+
+    var errorDescription: String? {
+        switch self {
+        case let .frameSelectionFailed(frameID):
+            "The shared Skylight frame \(frameID) could not be selected and loaded."
+        case .persistenceFailed:
+            "The shared preferences could not be saved locally."
+        }
+    }
+}
+
 /// Connects the intentionally small CloudKit contract to macOS-only app
 /// configuration. Apple Notes, credentials, device IDs, local sync links, and
 /// activity never leave this Mac.
 @MainActor
 extension AppStore {
     func refreshSharediCloudState() async {
-        defer { hasLoadedSharediCloudState = true }
+        guard configurationLoadError == nil else { return }
 
         do {
+            try await waitForSharedPreferencesApplyWindow()
+            hasLoadedSharediCloudState = false
             await retryPendingPhotoMappingRetirements()
             let cloudPreferences = CloudPreferencesStore()
             let localPreferences = sharedPreferences()
@@ -25,8 +41,8 @@ extension AppStore {
             } else {
                 resolvedPreferences = try await cloudPreferences.save(localPreferences)
             }
-           storeSharedPreferences(resolvedPreferences)
-           applySharedPreferences(resolvedPreferences)
+            try await applySharedPreferences(resolvedPreferences)
+            storeSharedPreferences(resolvedPreferences)
 
             if FeatureFlags.multiDeviceCoordinationEnabled {
                 try await publishAndCheckHeartbeat()
@@ -40,6 +56,7 @@ extension AppStore {
             try await importSharedPhotoMappings()
             try await publishLocalSelectedPhotoMappings()
             recordSharediCloudSuccess()
+            hasLoadedSharediCloudState = true
             statusMessage = "Shared preferences and selected photos are up to date with iCloud."
         } catch {
             recordSharediCloudFailure(error, savedLocally: false)
@@ -49,12 +66,14 @@ extension AppStore {
     func publishSharediCloudState(
         intentionalPhotoAdditions: [UUID: Set<String>] = [:]
     ) async {
+        guard configurationLoadError == nil else { return }
         do {
+            try await waitForSharedPreferencesApplyWindow()
             await retryPendingPhotoMappingRetirements()
             let cloudPreferences = CloudPreferencesStore()
             let saved = try await cloudPreferences.save(sharedPreferences())
+            try await applySharedPreferences(saved)
             storeSharedPreferences(saved)
-            applySharedPreferences(saved)
             try await publishLocalSelectedPhotoMappings(
                 intentionalPhotoAdditions: intentionalPhotoAdditions
             )
@@ -65,7 +84,8 @@ extension AppStore {
    }
 
     func importSharedSyncState() async {
-        guard FeatureFlags.multiDeviceCoordinationEnabled else { return }
+        guard configurationLoadError == nil,
+              FeatureFlags.multiDeviceCoordinationEnabled else { return }
         do {
             let stateStore = SyncStateStore()
             var state = try await stateStore.load()
@@ -83,7 +103,8 @@ extension AppStore {
     }
 
     func publishSharedSyncState() async {
-        guard FeatureFlags.multiDeviceCoordinationEnabled else { return }
+        guard configurationLoadError == nil,
+              FeatureFlags.multiDeviceCoordinationEnabled else { return }
         do {
             let stateStore = SyncStateStore()
             let state = try await stateStore.load()
@@ -376,15 +397,11 @@ extension AppStore {
         return preferences
     }
 
-    private func applySharedPreferences(_ preferences: SharedPreferences) {
+    func applySharedPreferences(_ preferences: SharedPreferences) async throws {
+        try await waitForSharedPreferencesApplyWindow()
+        let priorDryRun = configuration.dryRun
+        let priorInterval = configuration.syncIntervalMinutes
         var changed = false
-        if configuration.account.frameID != preferences.selectedFrameID {
-            prepareForFrameChange(
-                from: configuration.account.frameID,
-                to: preferences.selectedFrameID
-            )
-            changed = true
-        }
         if configuration.dryRun != preferences.dryRun {
             configuration.dryRun = preferences.dryRun
             changed = true
@@ -393,8 +410,33 @@ extension AppStore {
             configuration.syncIntervalMinutes = preferences.preferredSyncIntervalMinutes
             changed = true
         }
-        if changed {
-            saveConfiguration()
+        let selectedFrameID = preferences.selectedFrameID.trimmed
+        if !selectedFrameID.isEmpty,
+           configuration.account.frameID != selectedFrameID {
+            guard await selectFrame(
+                selectedFrameID,
+                replacing: configuration.account.frameID
+            ) else {
+                configuration.dryRun = priorDryRun
+                configuration.syncIntervalMinutes = priorInterval
+                throw SharedPreferencesApplicationError.frameSelectionFailed(selectedFrameID)
+            }
+            return
+        }
+        if changed, !saveConfiguration() {
+            configuration.dryRun = priorDryRun
+            configuration.syncIntervalMinutes = priorInterval
+            throw SharedPreferencesApplicationError.persistenceFailed
+        }
+    }
+
+    /// CloudKit requests can outlive the operation that launched them. Wait
+    /// for account and sync ownership before applying their result, rather
+    /// than dropping a user change or mutating a live sync configuration.
+    private func waitForSharedPreferencesApplyWindow() async throws {
+        while isConnecting || isSyncing {
+            try Task.checkCancellation()
+            try await ContinuousClock().sleep(for: .milliseconds(100))
         }
     }
 
