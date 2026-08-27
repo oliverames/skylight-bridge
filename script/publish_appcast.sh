@@ -19,9 +19,19 @@ APPCAST_PATH="$ROOT_DIR/appcast.xml"
 SIGN_TOOL="$ROOT_DIR/.build/artifacts/sparkle/Sparkle/bin/sign_update"
 PAGES_DIR=""
 TMP_APPCAST=""
+MOUNT_DIR=""
+DMG_MOUNTED=false
 
 cleanup() {
   local result=$?
+  if [[ "$DMG_MOUNTED" == true && -n "$MOUNT_DIR" ]]; then
+    if hdiutil detach "$MOUNT_DIR" >/dev/null 2>&1; then
+      DMG_MOUNTED=false
+    fi
+  fi
+  if [[ "$DMG_MOUNTED" == false && -n "$MOUNT_DIR" && -d "$MOUNT_DIR" ]]; then
+    rmdir "$MOUNT_DIR" >/dev/null 2>&1 || true
+  fi
   if [[ -n "$PAGES_DIR" && -d "$PAGES_DIR" ]]; then
     rm -rf "$PAGES_DIR"
   fi
@@ -54,6 +64,7 @@ verify_dmg_version() {
     echo "Could not mount DMG to verify its version." >&2
     return 1
   fi
+  DMG_MOUNTED=true
   local app_plist marketing build
   app_plist="$(find "$MOUNT_DIR" -maxdepth 3 -path '*.app/Contents/Info.plist' | head -1)"
   if [[ -z "$app_plist" ]]; then
@@ -62,7 +73,9 @@ verify_dmg_version() {
   fi
   marketing="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_plist")"
   build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app_plist")"
-  hdiutil detach "$MOUNT_DIR" >/dev/null 2>&1 || true
+  if hdiutil detach "$MOUNT_DIR" >/dev/null 2>&1; then
+    DMG_MOUNTED=false
+  fi
   if [[ "$marketing" != "$VERSION" ]]; then
     echo "The DMG's app reports version $marketing, but the publish arguments say $VERSION." >&2
     return 1
@@ -73,10 +86,14 @@ verify_dmg_version() {
   fi
 }
 if ! verify_dmg_version; then
-  rm -rf "$MOUNT_DIR"
   exit 1
 fi
-rm -rf "$MOUNT_DIR"
+if [[ "$DMG_MOUNTED" == true ]]; then
+  echo "Could not detach DMG after verifying its version." >&2
+  exit 1
+fi
+rmdir "$MOUNT_DIR"
+MOUNT_DIR=""
 if [[ ! -x "$SIGN_TOOL" ]]; then
   echo "Sparkle sign_update is missing. Run 'swift package resolve' and retry." >&2
   exit 1

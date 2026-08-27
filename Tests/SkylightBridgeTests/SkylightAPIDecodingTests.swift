@@ -11,6 +11,7 @@ struct SkylightAPIDecodingTests {
             from: Data(json.utf8)
         )
         #expect(response.data.count == 1)
+        #expect(response.data.first?.id == "occurrence-1")
         #expect(response.data.first?.attributes.series == "series-1")
     }
 

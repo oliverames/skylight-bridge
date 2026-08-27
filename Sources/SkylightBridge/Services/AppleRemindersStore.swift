@@ -183,6 +183,23 @@ final class AppleRemindersStore {
         )
     }
 
+    /// Compensates only a list created moments earlier by the mapping editor
+    /// when its local configuration write fails. No reminder can be added
+    /// between the synchronous create and rollback calls.
+    func deleteNewlyCreatedList(withID listID: String) throws {
+        try requireFullAccess()
+        guard let calendar = eventStore.calendar(withIdentifier: listID),
+              calendar.allowedEntityTypes.contains(.reminder),
+              calendar.allowsContentModifications else {
+            return
+        }
+        do {
+            try eventStore.removeCalendar(calendar, commit: true)
+        } catch {
+            throw AppleRemindersStoreError.eventKit(error.localizedDescription)
+        }
+    }
+
     /// Removes an auto-created chore list, but only when it holds no reminders,
     /// so a list the user has repurposed is never deleted out from under them.
     /// Returns whether the list was actually removed.

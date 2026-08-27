@@ -57,10 +57,11 @@ enum ReminderSyncPlanner {
     static func titleOnlyAdoptionPairs(
         apple: [ReminderSnapshot],
         skylight: [SkylightListItemSnapshot],
-        primaryPairs: [ReminderAdoptionPair]
+        primaryPairs: [ReminderAdoptionPair],
+        links: [ReminderSyncLink]
     ) -> [ReminderAdoptionPair] {
-        let consumedAppleIDs = Set(primaryPairs.map(\.appleID))
-        let consumedSkylightIDs = Set(primaryPairs.map(\.skylightID))
+        let consumedAppleIDs = Set(primaryPairs.map(\.appleID)).union(links.map(\.appleID))
+        let consumedSkylightIDs = Set(primaryPairs.map(\.skylightID)).union(links.map(\.skylightID))
 
         var candidatesByTitle: [String: [SkylightListItemSnapshot]] = [:]
         for item in skylight where !consumedSkylightIDs.contains(item.id) {

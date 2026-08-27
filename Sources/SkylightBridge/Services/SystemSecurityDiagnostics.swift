@@ -66,7 +66,10 @@ enum SystemSecurityDiagnostics {
         bundleIdentifier: String = Bundle.main.bundleIdentifier ?? "",
         bundlePath: String = Bundle.main.bundleURL.path
     ) -> String {
-        """
+        let appLiteral = shellSingleQuoted(bundlePath)
+        let bundleIdentifierSQL = bundleIdentifier.replacingOccurrences(of: "'", with: "''")
+        let bundleIdentifierLiteral = shellSingleQuoted(bundleIdentifierSQL)
+        return """
         #!/bin/bash
         # Grant Skylight Bridge its Apple privacy permissions on a Mac where a
         # boot argument disables Apple Mobile File Integrity and macOS therefore
@@ -74,7 +77,8 @@ enum SystemSecurityDiagnostics {
         # only works while System Integrity Protection is disabled. Review before
         # running.
         set -e
-        APP="\(bundlePath)"
+        APP=\(appLiteral)
+        BUNDLE_ID_SQL=\(bundleIdentifierLiteral)
         DB="$HOME/Library/Application Support/com.apple.TCC/TCC.db"
 
         requirement() { codesign -d -r- "$1" 2>&1 | sed -n 's/^designated => //p'; }
@@ -86,19 +90,23 @@ enum SystemSecurityDiagnostics {
         for SVC in kTCCServiceReminders kTCCServicePhotos; do
           sqlite3 "$DB" "INSERT OR REPLACE INTO access \\
         (service,client,client_type,auth_value,auth_reason,auth_version,csreq,flags,last_modified) \\
-        VALUES('$SVC','\(bundleIdentifier)',0,2,2,1,X'$CHEX',0,strftime('%s','now'));"
+        VALUES('$SVC','$BUNDLE_ID_SQL',0,2,2,1,X'$CHEX',0,strftime('%s','now'));"
         done
 
         sqlite3 "$DB" "INSERT OR REPLACE INTO access \\
         (service,client,client_type,auth_value,auth_reason,auth_version,csreq,\\
         indirect_object_identifier_type,indirect_object_identifier,indirect_object_code_identity,flags,last_modified) \\
-        VALUES('kTCCServiceAppleEvents','\(bundleIdentifier)',0,2,2,1,X'$CHEX',\\
+        VALUES('kTCCServiceAppleEvents','$BUNDLE_ID_SQL',0,2,2,1,X'$CHEX',\\
         0,'com.apple.Notes',X'$NHEX',0,strftime('%s','now'));"
 
         rm -f /tmp/sb_client.csreq /tmp/sb_notes.csreq
         killall tccd
         echo "Done. Reopen Skylight Bridge and click Refresh."
         """
+    }
+
+    private static func shellSingleQuoted(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
     }
 
     /// Writes the grant script next to the app's own support files and returns
@@ -128,6 +136,6 @@ enum SystemSecurityDiagnostics {
     /// The single line to paste in Terminal to run the saved script. It carries
     /// no comment marker and no `!`, so every common shell takes it verbatim.
     static func permissionGrantCommand(forScriptAt scriptURL: URL) -> String {
-        "bash '\(scriptURL.path.replacingOccurrences(of: "'", with: "'\\''"))'"
+        "bash \(shellSingleQuoted(scriptURL.path))"
     }
 }

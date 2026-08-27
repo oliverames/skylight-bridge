@@ -127,13 +127,20 @@ struct SkylightAllChoresResponse: Codable, Equatable, Sendable {
 
     var data: [SkylightResource<SkylightChoreAttributes>] {
         let resources = [chores, routines].flatMap { group in
-            group.keys.sorted().flatMap { group[$0]?.data ?? [] }
+            group.keys.sorted(by: Self.bucketComesFirst).flatMap { group[$0]?.data ?? [] }
         }
         var seen: Set<String> = []
         return resources.filter { resource in
             let identity = resource.attributes.series ?? resource.id
             return seen.insert(identity).inserted
         }
+    }
+
+    private static func bucketComesFirst(_ lhs: String, _ rhs: String) -> Bool {
+        let priority = ["today": 0, "late": 1, "future": 2]
+        let left = priority[lhs.lowercased()] ?? 3
+        let right = priority[rhs.lowercased()] ?? 3
+        return left == right ? lhs < rhs : left < right
     }
 
     init(from decoder: Decoder) throws {

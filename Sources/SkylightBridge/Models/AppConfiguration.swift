@@ -242,10 +242,31 @@ struct SkylightAccountConfiguration: Codable, Sendable, Hashable {
 struct AppConfiguration: Codable, Sendable, Hashable {
     var account = SkylightAccountConfiguration()
     var photoMappings: [PhotoMapping] = []
+    /// Mapping records removed on this Mac must not be re-created by an older
+    /// CloudKit record. The shared package has no mapping tombstone yet, so the
+    /// local configuration keeps a durable suppression set.
+    var retiredPhotoMappingIDs: Set<UUID> = []
+    /// CloudKit has no mapping-delete API. Keep the portable source record
+    /// until a disabled replacement is confirmed in iCloud, so an offline
+    /// deletion is retried after relaunch instead of remaining active elsewhere.
+    var pendingPhotoMappingRetirements: [PhotoMapping] = []
     var reminderMappings: [ReminderListMapping] = []
     var choreMappings: [ChoreMapping] = []
     var recipeSelection = NotesSelection(kind: .recipes)
     var mealSelection = NotesSelection(kind: .meals)
+    /// Fixed category choices are frame-scoped. The active selections above
+    /// remain the UI's current values, while these dictionaries restore each
+    /// frame's choice when the user returns to it.
+    var recipeDestinationCategoryIDsByFrame: [String: String] = [:]
+    var mealDestinationCategoryIDsByFrame: [String: String] = [:]
+    /// Explicit destination choices are configuration, not sync history. IDs
+    /// are stored by mapping and frame so a disabled or dry-run edit survives
+    /// frame changes. Intent IDs distinguish a deliberate "New" choice from
+    /// an identifier cleared only because the selected frame changed.
+    var photoDestinationAlbumIDsByFrame: [String: String] = [:]
+    var reminderDestinationListIDsByFrame: [String: String] = [:]
+    var photoDestinationIntentIDsByFrame: [String: UUID] = [:]
+    var reminderDestinationIntentIDsByFrame: [String: UUID] = [:]
     var syncIntervalMinutes = 15
     var dryRun = true
     var launchAtLogin = false
@@ -268,6 +289,12 @@ struct AppConfiguration: Codable, Sendable, Hashable {
         photoMappings = try container.decodeIfPresent(
             [PhotoMapping].self, forKey: .photoMappings
         ) ?? []
+        retiredPhotoMappingIDs = try container.decodeIfPresent(
+            Set<UUID>.self, forKey: .retiredPhotoMappingIDs
+        ) ?? []
+        pendingPhotoMappingRetirements = try container.decodeIfPresent(
+            [PhotoMapping].self, forKey: .pendingPhotoMappingRetirements
+        ) ?? []
         reminderMappings = try container.decodeIfPresent(
             [ReminderListMapping].self, forKey: .reminderMappings
         ) ?? []
@@ -280,6 +307,30 @@ struct AppConfiguration: Codable, Sendable, Hashable {
         mealSelection = try container.decodeIfPresent(
             NotesSelection.self, forKey: .mealSelection
         ) ?? NotesSelection(kind: .meals)
+        recipeDestinationCategoryIDsByFrame = try container.decodeIfPresent(
+            [String: String].self,
+            forKey: .recipeDestinationCategoryIDsByFrame
+        ) ?? [:]
+        mealDestinationCategoryIDsByFrame = try container.decodeIfPresent(
+            [String: String].self,
+            forKey: .mealDestinationCategoryIDsByFrame
+        ) ?? [:]
+        photoDestinationAlbumIDsByFrame = try container.decodeIfPresent(
+            [String: String].self,
+            forKey: .photoDestinationAlbumIDsByFrame
+        ) ?? [:]
+        reminderDestinationListIDsByFrame = try container.decodeIfPresent(
+            [String: String].self,
+            forKey: .reminderDestinationListIDsByFrame
+        ) ?? [:]
+        photoDestinationIntentIDsByFrame = try container.decodeIfPresent(
+            [String: UUID].self,
+            forKey: .photoDestinationIntentIDsByFrame
+        ) ?? [:]
+        reminderDestinationIntentIDsByFrame = try container.decodeIfPresent(
+            [String: UUID].self,
+            forKey: .reminderDestinationIntentIDsByFrame
+        ) ?? [:]
         syncIntervalMinutes = try container.decodeIfPresent(
             Int.self, forKey: .syncIntervalMinutes
         ) ?? 15
@@ -296,5 +347,15 @@ struct AppConfiguration: Codable, Sendable, Hashable {
             } ||
             (recipeSelection.enabled && recipeSelection.folderID != nil) ||
             (mealSelection.enabled && mealSelection.folderID != nil)
+    }
+}
+
+enum FrameDestinationIdentity {
+    static func key(mappingID: UUID, frameID: String) -> String {
+        "\(mappingID.uuidString)|\(frameID.trimmed)"
+    }
+
+    static func belongsToMapping(_ key: String, mappingID: UUID) -> Bool {
+        key.hasPrefix("\(mappingID.uuidString)|")
     }
 }

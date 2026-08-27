@@ -22,14 +22,20 @@ struct AccountView: View {
                 }
 
                 if !store.skylightFrames.isEmpty {
-                    Picker("Frame", selection: $store.configuration.account.frameID) {
+                    Picker("Frame", selection: Binding(
+                        get: { store.configuration.account.frameID },
+                        set: { replacement in
+                            let previous = store.configuration.account.frameID
+                            Task {
+                                await store.selectFrame(replacement, replacing: previous)
+                            }
+                        }
+                    )) {
                         ForEach(store.skylightFrames) { frame in
                             Text(frame.attributes.name ?? "Unnamed Frame").tag(frame.id)
                         }
                     }
-                    .onChange(of: store.configuration.account.frameID) {
-                        Task { await store.selectFrame(store.configuration.account.frameID) }
-                    }
+                    .disabled(store.isConnecting || store.isSyncing)
 
                     if let device = store.skylightDevices.first(where: { $0.id == store.configuration.account.deviceID }) {
                         LabeledContent("Device", value: device.attributes.name ?? "Selected Automatically")
@@ -39,6 +45,7 @@ struct AccountView: View {
                 if store.isSkylightConnected {
                     LabeledContent("Session") {
                         Button("Sign Out…") { isConfirmingSignOut = true }
+                            .disabled(store.isConnecting || store.isSyncing)
                     }
                 }
             }

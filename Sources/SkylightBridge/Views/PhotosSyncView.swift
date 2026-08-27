@@ -66,6 +66,7 @@ struct PhotosSyncView: View {
         .sheet(item: $editedMapping) { mapping in
             PhotoMappingEditor(
                 mapping: mapping,
+                isNewMapping: !store.configuration.photoMappings.contains { $0.id == mapping.id },
                 collections: store.photoCollections,
                 skylightAlbums: store.skylightAlbums,
                 onCancel: { editedMapping = nil },
@@ -91,9 +92,16 @@ struct PhotosSyncView: View {
             }
     }
 
-    private func save(_ mapping: PhotoMapping) {
-        store.savePhotoMapping(mapping, triggerSync: true)
-        editedMapping = nil
+    private func save(_ mapping: PhotoMapping, destinationSelectionChanged: Bool) -> Bool {
+        let saved = store.savePhotoMapping(
+            mapping,
+            destinationSelectionChanged: destinationSelectionChanged,
+            triggerSync: true
+        )
+        if saved {
+            editedMapping = nil
+        }
+        return saved
     }
 
     private func delete(_ mapping: PhotoMapping) {
@@ -132,21 +140,25 @@ private struct PhotoMappingEditor: View {
     /// name re-sorted the whole selection.
     @State private var displayOrder: [String] = []
     @State private var namingProgress: (completed: Int, total: Int)?
+    @State private var saveError: String?
+    @State private var destinationSelectionChanged: Bool
     let collections: [ApplePhotoCollectionSnapshot]
     let skylightAlbums: [SkylightResource<SkylightAlbumAttributes>]
     let onCancel: () -> Void
-    let onSave: (PhotoMapping) -> Void
+    let onSave: (PhotoMapping, Bool) -> Bool
     let onPhotoNamesResolved: (UUID, [String: String]) -> Void
 
     init(
         mapping: PhotoMapping,
+        isNewMapping: Bool,
         collections: [ApplePhotoCollectionSnapshot],
         skylightAlbums: [SkylightResource<SkylightAlbumAttributes>],
         onCancel: @escaping () -> Void,
-        onSave: @escaping (PhotoMapping) -> Void,
+        onSave: @escaping (PhotoMapping, Bool) -> Bool,
         onPhotoNamesResolved: @escaping (UUID, [String: String]) -> Void
     ) {
         _draft = State(initialValue: mapping)
+        _destinationSelectionChanged = State(initialValue: isNewMapping)
         self.collections = collections
         self.skylightAlbums = skylightAlbums
         self.onCancel = onCancel
@@ -224,6 +236,13 @@ private struct PhotoMappingEditor: View {
                 } footer: {
                     TipFooter(text: "The current edited appearance is rendered as an sRGB JPEG. Location and extended metadata are removed.")
                 }
+                if let saveError {
+                    Section {
+                        Label(saveError, systemImage: "exclamationmark.triangle")
+                            .font(.callout)
+                            .foregroundStyle(.red)
+                    }
+                }
             }
             .formStyle(.grouped)
             .navigationTitle("Photo Mapping")
@@ -233,8 +252,12 @@ private struct PhotoMappingEditor: View {
                     canConfirm: canSave,
                     onCancel: onCancel,
                     onConfirm: {
-                        savedMappingID = draft.id
-                        onSave(draft)
+                        saveError = nil
+                        if onSave(draft, destinationSelectionChanged) {
+                            savedMappingID = draft.id
+                        } else {
+                            saveError = "The mapping could not be saved. See Activity for details."
+                        }
                     }
                 )
             }
@@ -378,6 +401,7 @@ private struct PhotoMappingEditor: View {
         Binding(
             get: { draft.destinationAlbumID ?? "" },
             set: { identifier in
+                destinationSelectionChanged = true
                 draft.destinationAlbumID = identifier.isEmpty ? nil : identifier
                 if let album = skylightAlbums.first(where: { $0.id == identifier }),
                    let title = album.attributes.title {

@@ -52,6 +52,7 @@ final class AppStore {
         static let donationLastPromptDate = "donationLastPromptDate"
         static let donationDismissedPermanently = "donationDismissedPermanently"
         static let donationSupportOpenedDate = "donationSupportOpenedDate"
+        static let isSkylightSignedOut = "isSkylightSignedOut"
     }
     var statusMessage = "Choose sources to begin."
     private var hasStarted = false
@@ -65,10 +66,17 @@ final class AppStore {
     @ObservationIgnored let photoLibrary = ApplePhotoLibrary()
     @ObservationIgnored private let remindersStore = AppleRemindersStore()
     @ObservationIgnored private let notesStore = AppleNotesStore()
-    @ObservationIgnored private let sessionManager = SkylightSessionManager()
+    @ObservationIgnored private let sessionManager: any SkylightSessionManaging
+    @ObservationIgnored private let syncStateStore: SyncStateStore
 
-    init(persistence: ConfigurationStore = ConfigurationStore()) {
+    init(
+        persistence: ConfigurationStore = ConfigurationStore(),
+        sessionManager: any SkylightSessionManaging = SkylightSessionManager(),
+        syncStateStore: SyncStateStore = SyncStateStore()
+    ) {
         self.persistence = persistence
+        self.sessionManager = sessionManager
+        self.syncStateStore = syncStateStore
         configuration = (try? persistence.loadConfiguration()) ?? .empty
         activity = (try? persistence.loadActivity()) ?? []
         photosAuthorizationStatus = photoLibrary.authorizationStatus()
@@ -77,7 +85,8 @@ final class AppStore {
     }
 
     var isSkylightConnected: Bool {
-        !configuration.account.frameID.isEmpty && !skylightFrames.isEmpty
+        let frameID = configuration.account.frameID.trimmed
+        return !frameID.isEmpty && skylightFrames.contains { $0.id == frameID }
     }
 
     /// Whether Sync Now can actually run. Mirrors the engine's gating copy so a
@@ -107,7 +116,8 @@ final class AppStore {
         await refreshSharediCloudState()
     }
 
-    func saveConfiguration(triggerSync: Bool = false) {
+    @discardableResult
+    func saveConfiguration(triggerSync: Bool = false) -> Bool {
         // Photo display names for deselected assets are dead weight; the
         // sealed file has a hard size ceiling, so prune orphans before saving.
         for index in configuration.photoMappings.indices {
@@ -119,24 +129,35 @@ final class AppStore {
         }
         do {
             try persistence.saveConfiguration(configuration)
-            configureScheduler()
-            try applyLaunchAtLoginPreference()
-            applyDockIconPreference()
-            statusMessage = "Configuration saved."
-            if hasLoadedSharediCloudState {
-                Task { await publishSharediCloudState() }
-            }
         } catch {
+            statusMessage = "Could not save configuration: \(error.localizedDescription)"
             appendActivity(.init(
                 level: .error,
                 area: .system,
                 message: "Could not save configuration: \(error.localizedDescription)"
             ))
-            return
+            return false
+        }
+        configureScheduler()
+        do {
+            try applyLaunchAtLoginPreference()
+            statusMessage = "Configuration saved."
+        } catch {
+            statusMessage = "Configuration saved, but the login setting could not be updated."
+            appendActivity(.init(
+                level: .warning,
+                area: .system,
+                message: "The configuration was saved, but the login setting could not be updated: \(error.localizedDescription)"
+            ))
+        }
+        applyDockIconPreference()
+        if hasLoadedSharediCloudState {
+            Task { await publishSharediCloudState() }
         }
         if triggerSync {
             autoSync()
         }
+        return true
     }
 
     /// The configuration a sync actually runs with. Hidden features are forced
@@ -283,12 +304,32 @@ final class AppStore {
         return list
     }
 
+    /// Rolls back a list that the mapping editor just created when the mapping
+    /// itself could not be persisted.
+    func discardNewlyCreatedReminderList(withID listID: String) -> Bool {
+        do {
+            try remindersStore.deleteNewlyCreatedList(withID: listID)
+            if let lists = try? remindersStore.lists() {
+                reminderLists = lists
+            }
+            appendActivity(.init(
+                level: .warning,
+                area: .reminders,
+                message: "Removed the new Apple Reminders list because its mapping could not be saved."
+            ))
+            return true
+        } catch {
+            recordSourceError(error, area: .reminders)
+            return false
+        }
+    }
+
     /// Creates or reuses one Apple Reminders list for each person already
     /// enabled in Skylight's Chore Chart, plus the shared Up for Grabs list.
     /// Skylight is deliberately the source of setup truth, so the frame must
     /// be configured before this action is available.
     func setupChoreListsFromSkylight() async {
-        guard !isSettingUpChoreLists else { return }
+        guard !isSettingUpChoreLists, !isConnecting, !isSyncing else { return }
         guard isSkylightConnected else {
             statusMessage = "Configure Skylight first, then set up chore lists."
             appendActivity(.init(
@@ -302,8 +343,12 @@ final class AppStore {
             statusMessage = "Allow Reminders access before setting up chore lists."
             return
         }
+        isConnecting = true
         isSettingUpChoreLists = true
-        defer { isSettingUpChoreLists = false }
+        defer {
+            isConnecting = false
+            isSettingUpChoreLists = false
+        }
 
         do {
             let frameID = configuration.account.frameID.trimmed
@@ -542,10 +587,17 @@ final class AppStore {
 
         do {
             try await sessionManager.saveCredentials(email: email, password: password)
+            // An explicit sign-in replaces the signed-out intent as soon as
+            // credentials are stored. If the first connection is transiently
+            // offline, startup can retry those valid credentials later.
+            UserDefaults.standard.set(false, forKey: SupportDefaultsKey.isSkylightSignedOut)
             let connection = try await sessionManager.connect(configuration: configuration.account)
             skylightFrames = connection.frames
+            prepareForFrameChange(
+                from: configuration.account.frameID,
+                to: connection.selectedFrameID
+            )
             skylightDevices = connection.devices
-            configuration.account.frameID = connection.selectedFrameID
             configuration.account.deviceID = connection.selectedDeviceID
             try persistence.saveConfiguration(configuration)
             configureScheduler()
@@ -619,7 +671,8 @@ final class AppStore {
     }
 
     func storedAccountEmail() async -> String {
-        (try? await sessionManager.storedEmail()) ?? ""
+        guard !isConnecting else { return "" }
+        return (try? await sessionManager.storedEmail()) ?? ""
     }
 
     /// Disconnects the Skylight account: revokes the session (best effort) and
@@ -627,34 +680,46 @@ final class AppStore {
     /// Mappings and sync history stay, so signing back in resumes where the
     /// account left off.
     func signOut() async {
-        guard !isConnecting else { return }
-        do {
-            try await sessionManager.signOut()
-        } catch {
-            recordSourceError(error, area: .account)
-            return
-        }
+        guard !isConnecting, !isSyncing else { return }
+        isConnecting = true
+        defer { isConnecting = false }
+        UserDefaults.standard.set(true, forKey: SupportDefaultsKey.isSkylightSignedOut)
+        // Clear connected state before token revocation yields. Reconnect and
+        // scheduled-sync paths then remain inert for the entire sign-out.
         skylightFrames = []
         skylightDevices = []
         skylightAlbums = []
         skylightLists = []
         skylightMealCategories = []
         skylightChoreCategories = []
-        connectionError = nil
+        var deletionError: (any Error)?
+        do {
+            try await sessionManager.signOut()
+        } catch {
+            deletionError = error
+        }
+        connectionError = deletionError?.localizedDescription
         multiClientWarning = nil
         // A stale failure banner must not outlive the account: signed out,
         // the menu bar should point at sign-in, not at a failed sync.
         lastSyncFailed = false
-        statusMessage = "Signed out of Skylight."
+        statusMessage = deletionError == nil
+            ? "Signed out of Skylight."
+            : "Signed out, but macOS could not remove every Keychain item."
         appendActivity(.init(
-            level: .info,
+            level: deletionError == nil ? .info : .warning,
             area: .account,
-            message: "Signed out of Skylight. The saved email, password, and session tokens were removed from the Keychain. Mappings were kept."
+            message: deletionError == nil
+                ? "Signed out of Skylight. The saved email, password, and session tokens were removed from the Keychain. Mappings were kept."
+                : "The Skylight connection was closed, but macOS could not remove every Keychain item: \(deletionError?.localizedDescription ?? "Unknown error"). Mappings were kept."
         ))
     }
 
     func restoreAccountConnection() async {
         guard !isConnecting else { return }
+        guard !UserDefaults.standard.bool(
+            forKey: SupportDefaultsKey.isSkylightSignedOut
+        ) else { return }
         isConnecting = true
         defer { isConnecting = false }
 
@@ -668,7 +733,10 @@ final class AppStore {
                 throw SkylightSessionManagerError.noFrames
             }
             if !skylightFrames.contains(where: { $0.id == configuration.account.frameID }) {
-                configuration.account.frameID = skylightFrames[0].id
+                prepareForFrameChange(
+                    from: configuration.account.frameID,
+                    to: skylightFrames[0].id
+                )
             }
             skylightDevices = try await client.listDevices(frameID: configuration.account.frameID)
             if !skylightDevices.contains(where: { $0.id == configuration.account.deviceID }) {
@@ -687,9 +755,14 @@ final class AppStore {
         }
     }
 
-    func selectFrame(_ frameID: String) async {
-        configuration.account.frameID = frameID
-        configuration.account.deviceID = ""
+    func selectFrame(_ frameID: String, replacing previousFrameID: String? = nil) async {
+        guard !isConnecting, !isSyncing else { return }
+        isConnecting = true
+        defer { isConnecting = false }
+        prepareForFrameChange(
+            from: previousFrameID ?? configuration.account.frameID,
+            to: frameID
+        )
         do {
             let client = try await sessionManager.client(configuration: configuration.account)
             skylightDevices = try await client.listDevices(frameID: frameID)
@@ -701,8 +774,86 @@ final class AppStore {
         }
     }
 
+    /// Clears every identifier scoped to the previous frame before the new
+    /// frame can sync. Titles and source selections remain, so each destination
+    /// can be resolved or created safely on the selected frame.
+    func prepareForFrameChange(from previousFrameID: String, to frameID: String) {
+        let previous = previousFrameID.trimmed
+        let replacement = frameID.trimmed
+        configuration.account.frameID = replacement
+        guard previous != replacement else { return }
+
+        if !previous.isEmpty {
+            for mapping in configuration.photoMappings {
+                let key = FrameDestinationIdentity.key(
+                    mappingID: mapping.id,
+                    frameID: previous
+                )
+                if let albumID = mapping.destinationAlbumID?.trimmed,
+                   !albumID.isEmpty {
+                    configuration.photoDestinationAlbumIDsByFrame[key] = albumID
+                } else if configuration.photoDestinationIntentIDsByFrame[key] != nil {
+                    configuration.photoDestinationAlbumIDsByFrame.removeValue(forKey: key)
+                }
+            }
+            for mapping in configuration.reminderMappings {
+                let key = FrameDestinationIdentity.key(
+                    mappingID: mapping.id,
+                    frameID: previous
+                )
+                let listID = mapping.destinationListID.trimmed
+                if !listID.isEmpty {
+                    configuration.reminderDestinationListIDsByFrame[key] = listID
+                } else if configuration.reminderDestinationIntentIDsByFrame[key] != nil {
+                    configuration.reminderDestinationListIDsByFrame.removeValue(forKey: key)
+                }
+            }
+            if let categoryID = configuration.recipeSelection.destinationCategoryID?.trimmed,
+               !categoryID.isEmpty {
+                configuration.recipeDestinationCategoryIDsByFrame[previous] = categoryID
+            } else {
+                configuration.recipeDestinationCategoryIDsByFrame.removeValue(forKey: previous)
+            }
+            if let categoryID = configuration.mealSelection.destinationCategoryID?.trimmed,
+               !categoryID.isEmpty {
+                configuration.mealDestinationCategoryIDsByFrame[previous] = categoryID
+            } else {
+                configuration.mealDestinationCategoryIDsByFrame.removeValue(forKey: previous)
+            }
+        }
+
+        configuration.account.deviceID = ""
+        for index in configuration.photoMappings.indices {
+            let mappingID = configuration.photoMappings[index].id
+            let key = FrameDestinationIdentity.key(
+                mappingID: mappingID,
+                frameID: replacement
+            )
+            configuration.photoMappings[index].destinationAlbumID =
+                configuration.photoDestinationAlbumIDsByFrame[key]
+        }
+        for index in configuration.reminderMappings.indices {
+            let mappingID = configuration.reminderMappings[index].id
+            let key = FrameDestinationIdentity.key(
+                mappingID: mappingID,
+                frameID: replacement
+            )
+            configuration.reminderMappings[index].destinationListID =
+                configuration.reminderDestinationListIDsByFrame[key] ?? ""
+        }
+        configuration.recipeSelection.destinationCategoryID =
+            configuration.recipeDestinationCategoryIDsByFrame[replacement]
+        configuration.mealSelection.destinationCategoryID =
+            configuration.mealDestinationCategoryIDsByFrame[replacement]
+        skylightDevices = []
+        skylightAlbums = []
+        skylightLists = []
+        skylightMealCategories = []
+        skylightChoreCategories = []
+    }
+
     func syncNow() async {
-        guard !isSyncing else { return }
+        guard !isSyncing, !isConnecting else { return }
         isSyncing = true
         defer { isSyncing = false }
 
@@ -762,7 +913,7 @@ final class AppStore {
                 try? await launchNotesIfNeeded()
             }
             await importSharedSyncState()
-            let coordinator = SyncCoordinator.live(apiClient: client)
+            let coordinator = SyncCoordinator.live(apiClient: client, stateStore: syncStateStore)
             let summary = try await coordinator.sync(configuration: syncConfiguration)
             try await refreshSkylightDestinations(using: client)
             record(summary.photos, area: .photos, dryRun: summary.dryRun)
@@ -840,7 +991,7 @@ final class AppStore {
     /// teardown did not complete and the mapping should be kept for a retry.
     private func runTeardown(
         _ area: IntegrationArea,
-        _ body: (SkylightAPIClient) async throws -> Void
+        _ body: () async throws -> Void
     ) async -> Bool {
         guard !isSyncing else {
             statusMessage = "A sync is running. Try again when it finishes."
@@ -864,12 +1015,27 @@ final class AppStore {
         defer { withExtendedLifetime(processLock) {} }
 
         do {
-            let client = try await sessionManager.client(configuration: configuration.account)
-            try await body(client)
+            try await body()
             return true
         } catch {
             recordSourceError(error, area: area)
             return false
+        }
+    }
+
+    private func runRemoteTeardown(
+        _ area: IntegrationArea,
+        _ body: (SkylightAPIClient) async throws -> Void
+    ) async -> Bool {
+        guard !isConnecting else {
+            statusMessage = "An account operation is running. Try again when it finishes."
+            return false
+        }
+        isConnecting = true
+        defer { isConnecting = false }
+        return await runTeardown(area) {
+            let client = try await sessionManager.client(configuration: configuration.account)
+            try await body(client)
         }
     }
 
@@ -881,9 +1047,9 @@ final class AppStore {
     func removePhotoMapping(_ mapping: PhotoMapping) async {
         let frameID = configuration.account.frameID.trimmed
         var completed = true
-        if !frameID.isEmpty, isSkylightConnected {
-            completed = await runTeardown(.photos) { client in
-                let coordinator = SyncCoordinator.live(apiClient: client)
+        if !frameID.isEmpty {
+            completed = await runRemoteTeardown(.photos) { client in
+                let coordinator = SyncCoordinator.live(apiClient: client, stateStore: syncStateStore)
                 let purge = try await coordinator.purgePhotoMapping(
                     mappingID: mapping.id,
                     frameID: frameID
@@ -902,8 +1068,22 @@ final class AppStore {
             }
         }
         guard completed else { return }
+        if mapping.sourceKind == .selectedPhotos {
+            configuration.pendingPhotoMappingRetirements.removeAll { $0.id == mapping.id }
+            configuration.pendingPhotoMappingRetirements.append(mapping)
+        }
         configuration.photoMappings.removeAll { $0.id == mapping.id }
+        configuration.retiredPhotoMappingIDs.insert(mapping.id)
+        configuration.photoDestinationAlbumIDsByFrame =
+            configuration.photoDestinationAlbumIDsByFrame.filter {
+                !FrameDestinationIdentity.belongsToMapping($0.key, mappingID: mapping.id)
+            }
+        configuration.photoDestinationIntentIDsByFrame =
+            configuration.photoDestinationIntentIDsByFrame.filter {
+                !FrameDestinationIdentity.belongsToMapping($0.key, mappingID: mapping.id)
+            }
         saveConfiguration()
+        await retireSharedPhotoMapping(mapping)
     }
 
     /// Stores a locally generated display title without changing the selected
@@ -923,6 +1103,38 @@ final class AppStore {
         saveConfiguration(triggerSync: true)
     }
 
+    @discardableResult
+    func saveReminderMapping(
+        _ mapping: ReminderListMapping,
+        destinationSelectionChanged: Bool,
+        triggerSync: Bool = true
+    ) -> Bool {
+        let previousConfiguration = configuration
+        let frameID = configuration.account.frameID.trimmed
+        if !frameID.isEmpty {
+            let key = FrameDestinationIdentity.key(mappingID: mapping.id, frameID: frameID)
+            let destinationID = mapping.destinationListID.trimmed
+            if destinationID.isEmpty {
+                configuration.reminderDestinationListIDsByFrame.removeValue(forKey: key)
+            } else {
+                configuration.reminderDestinationListIDsByFrame[key] = destinationID
+            }
+            if destinationSelectionChanged {
+                configuration.reminderDestinationIntentIDsByFrame[key] = UUID()
+            }
+        }
+        if let index = configuration.reminderMappings.firstIndex(where: { $0.id == mapping.id }) {
+            configuration.reminderMappings[index] = mapping
+        } else {
+            configuration.reminderMappings.append(mapping)
+        }
+        guard saveConfiguration(triggerSync: triggerSync) else {
+            configuration = previousConfiguration
+            return false
+        }
+        return true
+    }
+
     /// Deletes a reminder mapping. Because the mapping can be two-way, the caller
     /// chooses whether to also remove the synced items from Skylight, from Apple
     /// Reminders, or from neither.
@@ -932,9 +1144,43 @@ final class AppStore {
     ) async {
         let frameID = configuration.account.frameID.trimmed
         var completed = true
-        if !frameID.isEmpty, isSkylightConnected {
-            completed = await runTeardown(.reminders) { client in
-                let coordinator = SyncCoordinator.live(apiClient: client)
+        if side == .none {
+            completed = await runTeardown(.reminders) {
+                try await syncStateStore.removeReminderMappingRecords(mappingID: mapping.id)
+            }
+        } else if side == .appleReminders {
+            completed = await runTeardown(.reminders) {
+                var state = try await syncStateStore.load()
+                let records = state.reminders
+                    .filter { $0.mappingID == mapping.id }
+                    .sorted { $0.appleReminderID < $1.appleReminderID }
+                var removedIDs = Set<String>()
+                for record in records {
+                    if removedIDs.insert(record.appleReminderID).inserted {
+                        do {
+                            try await remindersStore.syncRemoveReminder(
+                                withID: record.appleReminderID
+                            )
+                        } catch let error as AppleRemindersStoreError {
+                            guard case .reminderNotFound = error else { throw error }
+                        }
+                    }
+                    state.reminders.removeAll { $0.id == record.id }
+                    try await syncStateStore.save(state)
+                }
+                state.reminderLists.removeAll { $0.mappingID == mapping.id }
+                try await syncStateStore.save(state)
+                if !removedIDs.isEmpty {
+                    appendActivity(.init(
+                        level: .success,
+                        area: .reminders,
+                        message: "Removed \(countDescription(removedIDs.count, singular: "item")) from Apple Reminders for “\(mapping.sourceListTitle)”."
+                    ))
+                }
+            }
+        } else if !frameID.isEmpty {
+            completed = await runRemoteTeardown(.reminders) { client in
+                let coordinator = SyncCoordinator.live(apiClient: client, stateStore: syncStateStore)
                 let affected = try await coordinator.purgeReminderMapping(
                     mappingID: mapping.id,
                     frameID: frameID,
@@ -952,6 +1198,14 @@ final class AppStore {
         }
         guard completed else { return }
         configuration.reminderMappings.removeAll { $0.id == mapping.id }
+        configuration.reminderDestinationListIDsByFrame =
+            configuration.reminderDestinationListIDsByFrame.filter {
+                !FrameDestinationIdentity.belongsToMapping($0.key, mappingID: mapping.id)
+            }
+        configuration.reminderDestinationIntentIDsByFrame =
+            configuration.reminderDestinationIntentIDsByFrame.filter {
+                !FrameDestinationIdentity.belongsToMapping($0.key, mappingID: mapping.id)
+            }
         saveConfiguration()
     }
 
@@ -963,9 +1217,9 @@ final class AppStore {
             ? configuration.account.frameID.trimmed
             : mapping.frameID.trimmed
         var completed = true
-        if !frameID.isEmpty, isSkylightConnected {
-            completed = await runTeardown(.chores) { client in
-                let coordinator = SyncCoordinator.live(apiClient: client)
+        if !frameID.isEmpty {
+            completed = await runRemoteTeardown(.chores) { client in
+                let coordinator = SyncCoordinator.live(apiClient: client, stateStore: syncStateStore)
                 let result = try await coordinator.teardownChoreMapping(
                     mappingID: mapping.id,
                     frameID: frameID,
@@ -1019,6 +1273,9 @@ final class AppStore {
     }
 
     func refreshSkylightDestinations() async {
+        guard !isConnecting, !isSyncing else { return }
+        isConnecting = true
+        defer { isConnecting = false }
         do {
             let client = try await sessionManager.client(configuration: configuration.account)
             try await refreshSkylightDestinations(using: client)
@@ -1071,27 +1328,99 @@ final class AppStore {
             ($0.attributes.label ?? "").localizedStandardCompare($1.attributes.label ?? "")
                 == .orderedAscending
         } ?? []
-        hydrateUniqueDestinationIDs()
+        let state = try? await syncStateStore.load()
+        hydrateUniqueDestinationIDs(from: state)
     }
 
-    private func hydrateUniqueDestinationIDs() {
+    /// Restores a destination from exact frame-scoped sync state before using
+    /// a title match. A title can identify a replacement album or list after
+    /// the original destination was renamed, so it is only a fallback.
+    func hydrateUniqueDestinationIDs(from state: SyncState?) {
+        let frameID = configuration.account.frameID.trimmed
         var changed = false
-        for index in configuration.photoMappings.indices
-        where configuration.photoMappings[index].destinationAlbumID?.isEmpty != false {
-            let title = configuration.photoMappings[index].destinationAlbumTitle
+        for index in configuration.photoMappings.indices {
+            let mapping = configuration.photoMappings[index]
+            if let configuredID = mapping.destinationAlbumID?.trimmed,
+               !configuredID.isEmpty,
+               skylightAlbums.contains(where: { $0.id == configuredID }) {
+                continue
+            }
+            if mapping.destinationAlbumID?.isEmpty == false {
+                configuration.photoMappings[index].destinationAlbumID = nil
+                changed = true
+            }
+            let key = FrameDestinationIdentity.key(mappingID: mapping.id, frameID: frameID)
+            let intentID = configuration.photoDestinationIntentIDsByFrame[key]
+            let stateDestinationIDs = (state?.photoDestinations
+                .filter {
+                    $0.mappingID == mapping.id &&
+                        $0.frameID == frameID &&
+                        (intentID == nil || $0.destinationIntentID == intentID)
+                }
+                .map(\.albumID) ?? []) + (state?.photos
+                .filter {
+                    intentID == nil && $0.mappingID == mapping.id && $0.frameID == frameID
+                }
+                .sorted { $0.lastSyncedAt > $1.lastSyncedAt }
+                .flatMap { [$0.destinationAlbumID] + $0.skylightAlbumIDs.sorted() } ?? [])
+            if let exact = stateDestinationIDs.first(where: { candidate in
+                skylightAlbums.contains { $0.id == candidate }
+            }) {
+                configuration.photoMappings[index].destinationAlbumID = exact
+                changed = true
+                continue
+            }
+            // An intent with no live acknowledged record means the user chose
+            // “New”. A same-title destination belongs to the older intent and
+            // must not silently replace that choice.
+            if intentID != nil { continue }
             let matches = skylightAlbums.filter {
-                $0.attributes.title?.localizedCaseInsensitiveCompare(title) == .orderedSame
+                $0.attributes.title?.localizedCaseInsensitiveCompare(
+                    mapping.destinationAlbumTitle
+                ) == .orderedSame
             }
             if matches.count == 1 {
                 configuration.photoMappings[index].destinationAlbumID = matches[0].id
                 changed = true
             }
         }
-        for index in configuration.reminderMappings.indices
-        where configuration.reminderMappings[index].destinationListID.isEmpty {
-            let title = configuration.reminderMappings[index].destinationListTitle
+        for index in configuration.reminderMappings.indices {
+            let mapping = configuration.reminderMappings[index]
+            let configuredID = mapping.destinationListID.trimmed
+            if !configuredID.isEmpty,
+               skylightLists.contains(where: { $0.id == configuredID }) {
+                continue
+            }
+            if !mapping.destinationListID.isEmpty {
+                configuration.reminderMappings[index].destinationListID = ""
+                changed = true
+            }
+            let key = FrameDestinationIdentity.key(mappingID: mapping.id, frameID: frameID)
+            let intentID = configuration.reminderDestinationIntentIDsByFrame[key]
+            let stateDestinationIDs = (state?.reminderLists
+                .filter {
+                    $0.mappingID == mapping.id &&
+                        $0.frameID == frameID &&
+                        (intentID == nil || $0.destinationIntentID == intentID)
+                }
+                .map(\.skylightListID) ?? []) + (state?.reminders
+                .filter {
+                    intentID == nil && $0.mappingID == mapping.id && $0.frameID == frameID
+                }
+                .sorted { $0.lastSkylightModifiedAt > $1.lastSkylightModifiedAt }
+                .map(\.skylightListID) ?? [])
+            if let exact = stateDestinationIDs.first(where: { candidate in
+                skylightLists.contains { $0.id == candidate }
+            }) {
+                configuration.reminderMappings[index].destinationListID = exact
+                changed = true
+                continue
+            }
+            if intentID != nil { continue }
             let matches = skylightLists.filter {
-                $0.attributes.label?.localizedCaseInsensitiveCompare(title) == .orderedSame
+                $0.attributes.label?.localizedCaseInsensitiveCompare(
+                    mapping.destinationListTitle
+                ) == .orderedSame
             }
             if matches.count == 1 {
                 configuration.reminderMappings[index].destinationListID = matches[0].id
@@ -1103,17 +1432,35 @@ final class AppStore {
         }
     }
 
+    /// Removes a durable CloudKit retirement only after the disabled mapping
+    /// was saved remotely and the smaller pending configuration was persisted.
+    func completePhotoMappingRetirement(_ mappingID: UUID) {
+        let previous = configuration.pendingPhotoMappingRetirements
+        configuration.pendingPhotoMappingRetirements.removeAll { $0.id == mappingID }
+        do {
+            try persistence.saveConfiguration(configuration)
+        } catch {
+            configuration.pendingPhotoMappingRetirements = previous
+            appendActivity(.init(
+                level: .warning,
+                area: .photos,
+                message: "The disabled iCloud mapping was saved, but its local retry marker could not be cleared: \(error.localizedDescription)"
+            ))
+        }
+    }
+
     /// Hiding the Dock icon switches the app to the accessory activation
     /// policy: menu bar extra and windows keep working, but the app leaves the
     /// Dock and the Command-Tab switcher.
     private func applyDockIconPreference() {
         // Mirror for AppDelegate, which needs the value before config loads.
         UserDefaults.standard.set(configuration.hideDockIcon, forKey: "hideDockIcon")
+        guard let application = NSApp else { return }
         let policy: NSApplication.ActivationPolicy = configuration.hideDockIcon ? .accessory : .regular
-        guard NSApp.activationPolicy() != policy else { return }
-        NSApp.setActivationPolicy(policy)
+        guard application.activationPolicy() != policy else { return }
+        application.setActivationPolicy(policy)
         if policy == .regular {
-            NSApp.activate(ignoringOtherApps: true)
+            application.activate(ignoringOtherApps: true)
         }
     }
 

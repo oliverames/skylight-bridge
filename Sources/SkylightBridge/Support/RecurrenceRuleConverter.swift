@@ -59,12 +59,16 @@ enum RecurrenceRuleConverter {
         var byHours: [Int] = []
         var until: Date?
         var count: Int?
+        var seenKeys: Set<String> = []
 
         for pair in body.split(separator: ";") {
             let parts = pair.split(separator: "=", maxSplits: 1)
             guard parts.count == 2 else { throw ConversionError.malformed(String(pair)) }
             let key = parts[0].trimmingCharacters(in: .whitespaces).uppercased()
             let value = parts[1].trimmingCharacters(in: .whitespaces).uppercased()
+            guard seenKeys.insert(key).inserted else {
+                throw ConversionError.malformed("Duplicate \(key)")
+            }
 
             switch key {
             case "FREQ":

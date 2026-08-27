@@ -208,6 +208,142 @@ struct SecurityHardeningTests {
         #expect(!script.contains("DELETE"))
     }
 
+    @Test("Permission-grant script quotes paths before the shell can expand them")
+    func permissionGrantScriptQuotesHostilePath() throws {
+        let bundleIdentifier = "com.example.o'malley"
+        let bundlePath = "/Applications/$(printf shell-expanded).app"
+        let script = SystemSecurityDiagnostics.permissionGrantScript(
+            bundleIdentifier: bundleIdentifier,
+            bundlePath: bundlePath
+        )
+
+        #expect(script.contains("APP='/Applications/$(printf shell-expanded).app'"))
+        #expect(!script.contains("APP=\"/Applications/$(printf"))
+        #expect(script.contains("VALUES('$SVC','$BUNDLE_ID_SQL'"))
+
+        let lines = script.split(separator: "\n").map(String.init)
+        let appAssignment = try #require(lines.first { $0.hasPrefix("APP=") })
+        let bundleAssignment = try #require(lines.first { $0.hasPrefix("BUNDLE_ID_SQL=") })
+        let appOutput = try shellOutput("""
+        \(appAssignment)
+        printf '%s' "$APP"
+        """)
+        let sqlOutput = try shellOutput("""
+        \(bundleAssignment)
+        /usr/bin/sqlite3 :memory: "CREATE TABLE access(client TEXT); INSERT INTO access VALUES('$BUNDLE_ID_SQL'); SELECT client FROM access;"
+        """)
+
+        #expect(appOutput == bundlePath)
+        #expect(sqlOutput == "\(bundleIdentifier)\n")
+    }
+
+    @Test("Sync-state writes reject files that the reader would reject")
+    func syncStateWriteLimitIsSymmetric() async throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = SyncStateStore(
+            rootURL: directory,
+            authenticator: LocalFileAuthenticator(testKey: Data(repeating: 0x72, count: 32))
+        )
+        var baseline = SyncState()
+        baseline.photos = [PhotoSyncRecord(
+            mappingID: UUID(), frameID: "frame-1", appleAssetID: "asset-1",
+            renderedHash: "small", skylightMessageID: "message-1",
+            skylightAlbumIDs: [],
+            lastSyncedAt: .distantPast
+        )]
+        try await store.save(baseline)
+
+        var oversized = baseline
+        oversized.photos[0].renderedHash = String(repeating: "x", count: 4_300_000)
+        do {
+            try await store.save(oversized)
+            Issue.record("Expected oversized sync state to be rejected")
+        } catch let error as LocalPersistenceError {
+            #expect(error == .fileTooLarge(label: "sync state", maximumBytes: 4_194_304))
+            #expect(error.localizedDescription.contains("safety limit"))
+            #expect(!error.localizedDescription.contains("space"))
+        }
+
+        let loaded = try await store.load()
+        #expect(loaded.photos == baseline.photos)
+    }
+
+    @Test("Activity writes reject files that the reader would reject")
+    func activityWriteLimitIsSymmetric() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ConfigurationStore(
+            rootURL: directory,
+            configurationAuthenticator: LocalFileAuthenticator(
+                testKey: Data(repeating: 0x73, count: 32)
+            ),
+            activityAuthenticator: LocalFileAuthenticator(
+                testKey: Data(repeating: 0x74, count: 32)
+            )
+        )
+        let baseline = [ActivityEntry(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+            date: Date(timeIntervalSince1970: 500.25),
+            level: .info,
+            area: .system,
+            message: "Existing activity"
+        )]
+        try store.saveActivity(baseline)
+        let oversized = (0..<500).map { index in
+            ActivityEntry(
+                level: .error,
+                area: .system,
+                message: "\(index)" + String(repeating: "🔒", count: 1_000)
+            )
+        }
+
+        do {
+            try store.saveActivity(oversized)
+            Issue.record("Expected oversized activity history to be rejected")
+        } catch let error as LocalPersistenceError {
+            #expect(error == .fileTooLarge(
+                label: "activity history",
+                maximumBytes: 2_097_152
+            ))
+        }
+
+        #expect(try store.loadActivity() == baseline)
+    }
+
+    @Test("A failed mapping save stays local and rolls back memory")
+    @MainActor
+    func failedMappingSaveRollsBack() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = ConfigurationStore(
+            rootURL: directory,
+            configurationAuthenticator: LocalFileAuthenticator(
+                testKey: Data(repeating: 0x75, count: 32)
+            ),
+            activityAuthenticator: LocalFileAuthenticator(
+                testKey: Data(repeating: 0x76, count: 32)
+            )
+        )
+        try persistence.saveConfiguration(.empty)
+        let store = AppStore(persistence: persistence)
+        var mapping = PhotoMapping(name: "Oversized", sourceKind: .selectedPhotos)
+        mapping.selectedAssetIDs = ["asset-1"]
+        mapping.selectedPhotoNames = [
+            "asset-1": String(repeating: "x", count: 4_300_000)
+        ]
+
+        let saved = store.savePhotoMapping(mapping, triggerSync: true)
+
+        #expect(!saved)
+        #expect(store.configuration.photoMappings.isEmpty)
+        #expect(try persistence.loadConfiguration().photoMappings.isEmpty)
+        #expect(store.statusMessage.contains("Could not save configuration"))
+    }
+
     @Test("The permission fix is delivered as a file plus a paste-safe command")
     func permissionGrantScriptIsWrittenToDisk() throws {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -238,6 +374,27 @@ private func propertyList(at url: URL) throws -> [String: Any] {
     return try #require(
         PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
     )
+}
+
+private func shellOutput(_ command: String) throws -> String {
+    let process = Process()
+    let output = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/bin/bash")
+    process.arguments = ["-c", command]
+    process.standardOutput = output
+    process.standardError = output
+    try process.run()
+    process.waitUntilExit()
+    let data = output.fileHandleForReading.readDataToEndOfFile()
+    let value = String(decoding: data, as: UTF8.self)
+    guard process.terminationStatus == 0 else {
+        throw SecurityHardeningTestError.shellFailed(process.terminationStatus, value)
+    }
+    return value
+}
+
+private enum SecurityHardeningTestError: Error {
+    case shellFailed(Int32, String)
 }
 
 private struct PreciseDatePayload: Codable {

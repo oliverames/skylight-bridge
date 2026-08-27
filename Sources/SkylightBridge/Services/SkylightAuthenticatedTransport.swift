@@ -4,6 +4,7 @@ typealias SkylightTokenPersistenceHook = @Sendable (SkylightOAuthToken) async th
 typealias SkylightRetrySleeper = @Sendable (TimeInterval) async throws -> Void
 
 actor SkylightAuthenticatedTransport: SkylightTransport {
+    private static let maximumRetryDelay: TimeInterval = 300
     private let base: any SkylightTransport
     private let tokenProvider: any SkylightOAuthTokenProvider
     private let persist: SkylightTokenPersistenceHook
@@ -35,37 +36,51 @@ actor SkylightAuthenticatedTransport: SkylightTransport {
 
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         var authorizedRequest = request
-        authorizedRequest.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        var result = try await base.data(for: authorizedRequest)
+        var retriedUnauthorized = false
+        var retriedRateLimit = false
 
-        if result.1.statusCode == 401 {
-            try await refreshTokens()
-            authorizedRequest.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-            result = try await base.data(for: authorizedRequest)
+        while true {
+            // The actor can yield during transport or backoff. Read the token
+            // again before every attempt so a concurrent refresh is honored.
+            let requestAccessToken = accessToken
+            authorizedRequest.setValue(
+                "Bearer \(requestAccessToken)",
+                forHTTPHeaderField: "Authorization"
+            )
+            let result = try await base.data(for: authorizedRequest)
+
+            if result.1.statusCode == 401, !retriedUnauthorized {
+                retriedUnauthorized = true
+                try await refreshTokens(rejectedAccessToken: requestAccessToken)
+                continue
+            }
+
+            if result.1.statusCode == 429,
+               !retriedRateLimit,
+               isIdempotent(method: authorizedRequest.httpMethod),
+               let delay = retryDelay(from: result.1) {
+                retriedRateLimit = true
+                try await sleep(delay)
+                continue
+            }
+
+            return result
         }
-
-        if result.1.statusCode == 429,
-           isIdempotent(method: authorizedRequest.httpMethod),
-           let delay = retryDelay(from: result.1) {
-            try await sleep(delay)
-            result = try await base.data(for: authorizedRequest)
-        }
-
-        return result
     }
 
     /// Rotates the token pair once per burst. Concurrent 401s join the single
     /// in-flight refresh; each waiter rethrows a failure and uses the updated
     /// pair when it succeeds.
-    private func refreshTokens() async throws {
+    private func refreshTokens(rejectedAccessToken: String) async throws {
+        guard accessToken == rejectedAccessToken else { return }
         if let inFlight = refreshTask {
             return try await inFlight.value
         }
         let tokenToRotate = refreshToken
         let task = Task<Void, Error> { [tokenProvider, persist] in
             let token = try await tokenProvider.refresh(refreshToken: tokenToRotate)
+            self.applyRefreshed(token)
             try await persist(token)
-            await self.applyRefreshed(token)
         }
         // Cleared on scope exit, after the rotation finished and the actor
         // state holds the new pair.
@@ -88,7 +103,10 @@ actor SkylightAuthenticatedTransport: SkylightTransport {
 
     private func retryDelay(from response: HTTPURLResponse) -> TimeInterval? {
         guard let value = response.value(forHTTPHeaderField: "Retry-After") else { return nil }
-        if let seconds = TimeInterval(value), seconds >= 0 {
+        if let seconds = TimeInterval(value),
+           seconds.isFinite,
+           seconds >= 0,
+           seconds <= Self.maximumRetryDelay {
             return seconds
         }
 
@@ -97,6 +115,8 @@ actor SkylightAuthenticatedTransport: SkylightTransport {
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
         formatter.dateFormat = "EEE',' dd MMM yyyy HH':'mm':'ss z"
         guard let date = formatter.date(from: value) else { return nil }
-        return max(0, date.timeIntervalSinceNow)
+        let delay = max(0, date.timeIntervalSinceNow)
+        guard delay.isFinite, delay <= Self.maximumRetryDelay else { return nil }
+        return delay
     }
 }

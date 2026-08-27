@@ -66,6 +66,24 @@ struct RecurrenceRuleConverterTests {
         }
     }
 
+    @Test("Duplicate RRULE properties are rejected instead of overwritten or merged")
+    func rejectsDuplicateProperties() {
+        let rules = [
+            "FREQ=DAILY;FREQ=WEEKLY",
+            "FREQ=DAILY;INTERVAL=1;INTERVAL=2",
+            "FREQ=DAILY;UNTIL=20260731;UNTIL=20260801",
+            "FREQ=DAILY;COUNT=2;COUNT=3",
+            "FREQ=WEEKLY;BYDAY=MO;BYDAY=TU",
+            "FREQ=MONTHLY;BYMONTHDAY=1;BYMONTHDAY=2",
+            "FREQ=DAILY;BYHOUR=8;BYHOUR=9"
+        ]
+        for rule in rules {
+            #expect(throws: RecurrenceRuleConverter.ConversionError.self) {
+                try RecurrenceRuleConverter.parse(rule)
+            }
+        }
+    }
+
     @Test("Skylight chore time slots parse and format without loss")
     func roundTripsByHour() throws {
         let parsed = try RecurrenceRuleConverter.parse(

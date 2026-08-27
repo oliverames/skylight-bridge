@@ -1,7 +1,7 @@
 import Foundation
 
 struct PhotoSyncRecord: Identifiable, Codable, Sendable, Hashable {
-    var id: String { "\(mappingID.uuidString):\(appleAssetID)" }
+    var id: String { "\(mappingID.uuidString):\(frameID):\(appleAssetID)" }
     let mappingID: UUID
     var frameID = ""
     var destinationAlbumID = ""
@@ -64,7 +64,7 @@ struct PhotoSyncRecord: Identifiable, Codable, Sendable, Hashable {
 }
 
 struct ReminderSyncRecord: Identifiable, Codable, Sendable, Hashable {
-    var id: String { "\(mappingID.uuidString):\(appleReminderID)" }
+    var id: String { "\(mappingID.uuidString):\(frameID):\(appleReminderID)" }
     let mappingID: UUID
     var frameID = ""
     var skylightListID = ""
@@ -144,6 +144,7 @@ struct ReminderListSyncRecord: Identifiable, Codable, Sendable, Hashable {
     var lastSyncedSkylightTitle: String
     var lastSyncedAppleColor: String?
     var lastSyncedSkylightColor: String?
+    var destinationIntentID: UUID?
 
     init(
         mappingID: UUID,
@@ -153,7 +154,8 @@ struct ReminderListSyncRecord: Identifiable, Codable, Sendable, Hashable {
         lastSyncedAppleTitle: String,
         lastSyncedSkylightTitle: String,
         lastSyncedAppleColor: String? = nil,
-        lastSyncedSkylightColor: String? = nil
+        lastSyncedSkylightColor: String? = nil,
+        destinationIntentID: UUID? = nil
     ) {
         self.mappingID = mappingID
         self.frameID = frameID
@@ -163,6 +165,7 @@ struct ReminderListSyncRecord: Identifiable, Codable, Sendable, Hashable {
         self.lastSyncedSkylightTitle = lastSyncedSkylightTitle
         self.lastSyncedAppleColor = lastSyncedAppleColor
         self.lastSyncedSkylightColor = lastSyncedSkylightColor
+        self.destinationIntentID = destinationIntentID
     }
 
     init(from decoder: Decoder) throws {
@@ -182,6 +185,9 @@ struct ReminderListSyncRecord: Identifiable, Codable, Sendable, Hashable {
         )
         lastSyncedSkylightColor = try container.decodeIfPresent(
             String.self, forKey: .lastSyncedSkylightColor
+        )
+        destinationIntentID = try container.decodeIfPresent(
+            UUID.self, forKey: .destinationIntentID
         )
     }
 }
@@ -319,7 +325,7 @@ struct NoteSyncRecord: Identifiable, Codable, Sendable, Hashable {
 /// albums are recorded, so mapping deletion never removes an album the user
 /// pointed the mapping at.
 struct PhotoAlbumRecord: Identifiable, Codable, Sendable, Hashable {
-    var id: String { "\(mappingID.uuidString):\(albumID)" }
+    var id: String { "\(mappingID.uuidString):\(frameID):\(albumID)" }
     let mappingID: UUID
     var frameID = ""
     let albumID: String
@@ -340,6 +346,29 @@ struct PhotoAlbumRecord: Identifiable, Codable, Sendable, Hashable {
     }
 }
 
+/// The destination a mapping most recently used on one frame. This differs
+/// from `PhotoAlbumRecord`, which records cleanup ownership and can retain old
+/// bridge-created albums after the mapping moves elsewhere.
+struct PhotoDestinationSyncRecord: Identifiable, Codable, Sendable, Hashable {
+    var id: String { "\(mappingID.uuidString):\(frameID)" }
+    let mappingID: UUID
+    var frameID: String
+    var albumID: String
+    var destinationIntentID: UUID?
+
+    init(
+        mappingID: UUID,
+        frameID: String,
+        albumID: String,
+        destinationIntentID: UUID? = nil
+    ) {
+        self.mappingID = mappingID
+        self.frameID = frameID
+        self.albumID = albumID
+        self.destinationIntentID = destinationIntentID
+    }
+}
+
 struct SyncState: Codable, Sendable {
     var photos: [PhotoSyncRecord] = []
     var reminders: [ReminderSyncRecord] = []
@@ -348,6 +377,8 @@ struct SyncState: Codable, Sendable {
     var notes: [NoteSyncRecord] = []
     // Absent in state files written before album tracking existed.
     var photoAlbums: [PhotoAlbumRecord] = []
+    // Absent before frame-specific destination recovery existed.
+    var photoDestinations: [PhotoDestinationSyncRecord] = []
     // Frames whose recipe records have had wrongly cached fallback categories
     // cleared (one-time repair; see syncRecipes). Absent before 1.4.1.
     var recipeFallbackCacheClearedFrameIDs: Set<String> = []
@@ -364,6 +395,10 @@ struct SyncState: Codable, Sendable {
         chores = try container.decodeIfPresent([ChoreSyncRecord].self, forKey: .chores) ?? []
         notes = try container.decodeIfPresent([NoteSyncRecord].self, forKey: .notes) ?? []
         photoAlbums = try container.decodeIfPresent([PhotoAlbumRecord].self, forKey: .photoAlbums) ?? []
+        photoDestinations = try container.decodeIfPresent(
+            [PhotoDestinationSyncRecord].self,
+            forKey: .photoDestinations
+        ) ?? []
         recipeFallbackCacheClearedFrameIDs = try container.decodeIfPresent(
             Set<String>.self,
             forKey: .recipeFallbackCacheClearedFrameIDs

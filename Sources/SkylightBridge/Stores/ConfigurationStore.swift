@@ -1,5 +1,16 @@
 import Foundation
 
+enum LocalPersistenceError: Error, LocalizedError, Equatable, Sendable {
+    case fileTooLarge(label: String, maximumBytes: Int)
+
+    var errorDescription: String? {
+        switch self {
+        case let .fileTooLarge(label, maximumBytes):
+            "Could not save \(label) because it exceeds the \(maximumBytes)-byte safety limit."
+        }
+    }
+}
+
 struct ConfigurationStore {
     // Matches the sync-state store's headroom. Large selected-photo mappings
     // legitimately exceed 1 MB of JSON, and a read cap below real usage would
@@ -50,11 +61,9 @@ struct ConfigurationStore {
         // Symmetric with the read cap: refuse an oversized write loudly rather
         // than saving a file the next launch would refuse to load.
         guard sealed.count <= Self.maximumConfigurationBytes else {
-            // NSFileWriteTooLargeErrorCode (640); Foundation does not
-            // re-export the constant to Swift.
-            throw CocoaError(
-                CocoaError.Code(rawValue: 640),
-                userInfo: [NSFilePathErrorKey: configurationURL.path]
+            throw LocalPersistenceError.fileTooLarge(
+                label: "configuration",
+                maximumBytes: Self.maximumConfigurationBytes
             )
         }
         try prepareDirectory(for: configurationURL)
@@ -70,11 +79,15 @@ struct ConfigurationStore {
     }
 
     func saveActivity(_ activity: [ActivityEntry]) throws {
+        let sealed = try activityAuthenticator.seal(Array(activity.prefix(500)))
+        guard sealed.count <= Self.maximumActivityBytes else {
+            throw LocalPersistenceError.fileTooLarge(
+                label: "activity history",
+                maximumBytes: Self.maximumActivityBytes
+            )
+        }
         try prepareDirectory(for: activityURL)
-        try write(
-            activityAuthenticator.seal(Array(activity.prefix(500))),
-            to: activityURL
-        )
+        try write(sealed, to: activityURL)
     }
 
     private func prepareDirectory(for fileURL: URL) throws {

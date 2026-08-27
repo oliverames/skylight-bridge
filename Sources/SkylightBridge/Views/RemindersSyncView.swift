@@ -68,6 +68,7 @@ struct RemindersSyncView: View {
         .sheet(item: $editedMapping) { mapping in
             ReminderMappingEditor(
                 mapping: mapping,
+                isNewMapping: !store.configuration.reminderMappings.contains { $0.id == mapping.id },
                 reminderLists: store.reminderLists,
                 reminders: store.remindersByListID[mapping.sourceListID] ?? [],
                 skylightLists: store.skylightLists,
@@ -118,14 +119,16 @@ struct RemindersSyncView: View {
         return "\(mapping.sourceListTitle) \(arrow) \(mapping.destinationListTitle)"
     }
 
-    private func save(_ mapping: ReminderListMapping) {
-        if let index = store.configuration.reminderMappings.firstIndex(where: { $0.id == mapping.id }) {
-            store.configuration.reminderMappings[index] = mapping
-        } else {
-            store.configuration.reminderMappings.append(mapping)
+    private func save(_ mapping: ReminderListMapping, destinationSelectionChanged: Bool) -> Bool {
+        let saved = store.saveReminderMapping(
+            mapping,
+            destinationSelectionChanged: destinationSelectionChanged,
+            triggerSync: true
+        )
+        if saved {
+            editedMapping = nil
         }
-        store.saveConfiguration(triggerSync: true)
-        editedMapping = nil
+        return saved
     }
 
     private func delete(_ mapping: ReminderListMapping, cleanup side: ReminderMappingCleanupSide) {
@@ -164,16 +167,18 @@ private struct ReminderMappingEditor: View {
     @State private var loadedReminders: [AppleReminderSnapshot]
     @State private var filter = ""
     @State private var saveError: String?
+    @State private var destinationSelectionChanged: Bool
     let reminderLists: [AppleReminderListSnapshot]
     let skylightLists: [SkylightResource<SkylightListAttributes>]
     let loadReminders: (String) async -> Void
     let remindersForList: (String) -> [AppleReminderSnapshot]
     let createAppleList: (String) throws -> AppleReminderListSnapshot
     let onCancel: () -> Void
-    let onSave: (ReminderListMapping) -> Void
+    let onSave: (ReminderListMapping, Bool) -> Bool
 
     init(
         mapping: ReminderListMapping,
+        isNewMapping: Bool,
         reminderLists: [AppleReminderListSnapshot],
         reminders: [AppleReminderSnapshot],
         skylightLists: [SkylightResource<SkylightListAttributes>],
@@ -181,9 +186,10 @@ private struct ReminderMappingEditor: View {
         remindersForList: @escaping (String) -> [AppleReminderSnapshot],
         createAppleList: @escaping (String) throws -> AppleReminderListSnapshot,
         onCancel: @escaping () -> Void,
-        onSave: @escaping (ReminderListMapping) -> Void
+        onSave: @escaping (ReminderListMapping, Bool) -> Bool
     ) {
         _draft = State(initialValue: mapping)
+        _destinationSelectionChanged = State(initialValue: isNewMapping)
         _appleChoice = State(
             initialValue: mapping.sourceListID.isEmpty ? .none : .existing(mapping.sourceListID)
         )
@@ -380,6 +386,7 @@ private struct ReminderMappingEditor: View {
         Binding(
             get: { draft.destinationListID },
             set: { listID in
+                destinationSelectionChanged = true
                 draft.destinationListID = listID
                 if let list = skylightLists.first(where: { $0.id == listID }) {
                     draft.destinationListTitle = list.attributes.label ?? ""
@@ -420,7 +427,9 @@ private struct ReminderMappingEditor: View {
                 return
             }
         }
-        onSave(mapping)
+        if !onSave(mapping, destinationSelectionChanged) {
+            saveError = "The mapping could not be saved. See Activity for details."
+        }
     }
 
     private var canSave: Bool {

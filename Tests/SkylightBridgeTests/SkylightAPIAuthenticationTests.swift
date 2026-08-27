@@ -175,6 +175,131 @@ struct SkylightAPIAuthenticationTests {
         #expect(await postBase.requests.count == 1)
     }
 
+    @Test("Invalid or excessive Retry-After values never reach the sleeper")
+    func rejectsUnsafeRetryAfterValues() async throws {
+        let provider = SkylightStubTokenProvider(token: SkylightOAuthToken(
+            accessToken: "unused", refreshToken: "unused",
+            expiresIn: 1, tokenType: nil
+        ))
+        for value in ["inf", "999999999"] {
+            let base = SkylightSequenceTransport(responses: [
+                .init(statusCode: 429, headers: ["Retry-After": value])
+            ])
+            let transport = SkylightAuthenticatedTransport(
+                base: base,
+                accessToken: "access",
+                refreshToken: "refresh",
+                tokenProvider: provider,
+                persist: { _ in },
+                sleep: { _ in Issue.record("Unsafe Retry-After value reached the sleeper") }
+            )
+            var request = URLRequest(url: URL(string: "https://example.test/read")!)
+            request.httpMethod = "GET"
+
+            let result = try await transport.data(for: request)
+
+            #expect(result.1.statusCode == 429)
+            #expect(await base.requests.count == 1)
+        }
+    }
+
+    @Test("A rate-limit retry uses a token refreshed by another request")
+    func rateLimitRetryUsesConcurrentRefresh() async throws {
+        let base = SkylightRateLimitRefreshTransport()
+        let gate = SkylightRetryGate()
+        let provider = SkylightStubTokenProvider(token: SkylightOAuthToken(
+            accessToken: "new-access", refreshToken: "new-refresh",
+            expiresIn: 3_600, tokenType: "Bearer"
+        ))
+        let transport = SkylightAuthenticatedTransport(
+            base: base,
+            accessToken: "old-access",
+            refreshToken: "old-refresh",
+            tokenProvider: provider,
+            persist: { _ in },
+            sleep: { _ in await gate.suspend() }
+        )
+        var limitedRequest = URLRequest(url: URL(string: "https://example.test/limited")!)
+        limitedRequest.httpMethod = "GET"
+        var refreshRequest = URLRequest(url: URL(string: "https://example.test/refresh")!)
+        refreshRequest.httpMethod = "GET"
+
+        let limitedTask = Task { try await transport.data(for: limitedRequest) }
+        await gate.waitUntilSuspended()
+        let refreshedResult = try await transport.data(for: refreshRequest)
+        await gate.resume()
+        let limitedResult = try await limitedTask.value
+
+        #expect(refreshedResult.1.statusCode == 204)
+        #expect(limitedResult.1.statusCode == 204)
+        let limitedTokens = await base.requests
+            .filter { $0.url?.path == "/limited" }
+            .map { $0.value(forHTTPHeaderField: "Authorization") }
+        #expect(limitedTokens == ["Bearer old-access", "Bearer new-access"])
+        #expect(await provider.receivedRefreshTokens == ["old-refresh"])
+    }
+
+    @Test("A delayed 401 from the old session does not rotate the new refresh token")
+    func delayedOld401DoesNotRefreshTwice() async throws {
+        let base = SkylightDelayed401Transport()
+        let provider = SkylightStubTokenProvider(token: SkylightOAuthToken(
+            accessToken: "new-access", refreshToken: "new-refresh",
+            expiresIn: 3_600, tokenType: "Bearer"
+        ))
+        let transport = SkylightAuthenticatedTransport(
+            base: base,
+            accessToken: "old-access",
+            refreshToken: "old-refresh",
+            tokenProvider: provider,
+            persist: { _ in }
+        )
+        let fast = URLRequest(url: URL(string: "https://example.test/fast")!)
+        let slow = URLRequest(url: URL(string: "https://example.test/slow")!)
+
+        async let fastResult = transport.data(for: fast)
+        async let slowResult = transport.data(for: slow)
+        let results = try await [fastResult, slowResult]
+        let statuses = results.map(\.1.statusCode)
+
+        #expect(statuses == [204, 204])
+        #expect(await provider.receivedRefreshTokens == ["old-refresh"])
+    }
+
+    @Test("A persistence failure keeps the rotated token usable in memory")
+    func persistenceFailureKeepsRotatedTokenInMemory() async throws {
+        let base = SkylightSequenceTransport(responses: [
+            .init(statusCode: 401),
+            .init(statusCode: 204)
+        ])
+        let provider = SkylightStubTokenProvider(token: SkylightOAuthToken(
+            accessToken: "new-access", refreshToken: "new-refresh",
+            expiresIn: 3_600, tokenType: "Bearer"
+        ))
+        let transport = SkylightAuthenticatedTransport(
+            base: base,
+            accessToken: "old-access",
+            refreshToken: "old-refresh",
+            tokenProvider: provider,
+            persist: { _ in throw SkylightAuthenticationTestError.persistenceFailed }
+        )
+        let request = URLRequest(url: URL(string: "https://example.test/read")!)
+
+        do {
+            _ = try await transport.data(for: request)
+            Issue.record("Expected token persistence to fail")
+        } catch SkylightAuthenticationTestError.persistenceFailed {
+            // Expected. The actor must still retain the rotated pair.
+        }
+        let result = try await transport.data(for: request)
+        let requests = await base.requests
+
+        #expect(result.1.statusCode == 204)
+        #expect(requests.map { $0.value(forHTTPHeaderField: "Authorization") } == [
+            "Bearer old-access", "Bearer new-access"
+        ])
+        #expect(await provider.receivedRefreshTokens == ["old-refresh"])
+    }
+
     @Test("Concurrent 401s share one refresh instead of replaying the old token")
     func concurrent401sShareSingleRefresh() async throws {
         let framesBody = #"{"data":[{"id":"frame-1","type":"frame","attributes":{"name":"Kitchen"}}]}"#
@@ -271,6 +396,74 @@ private actor SkylightSequenceTransport: SkylightTransport {
         )!
         return (Data(stub.body.utf8), response)
     }
+}
+
+private actor SkylightDelayed401Transport: SkylightTransport {
+    private(set) var requests: [URLRequest] = []
+
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        requests.append(request)
+        let usesOldToken = request.value(forHTTPHeaderField: "Authorization") == "Bearer old-access"
+        if request.url?.path == "/slow", usesOldToken {
+            try await Task.sleep(for: .milliseconds(150))
+        }
+        let status = usesOldToken ? 401 : 204
+        let response = HTTPURLResponse(
+            url: request.url!, statusCode: status,
+            httpVersion: nil, headerFields: nil
+        )!
+        return (Data(), response)
+    }
+}
+
+private actor SkylightRateLimitRefreshTransport: SkylightTransport {
+    private(set) var requests: [URLRequest] = []
+    private var hasRateLimited = false
+
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        requests.append(request)
+        let authorization = request.value(forHTTPHeaderField: "Authorization")
+        let status: Int
+        if request.url?.path == "/limited", !hasRateLimited {
+            hasRateLimited = true
+            status = 429
+        } else if authorization == "Bearer old-access" {
+            status = 401
+        } else {
+            status = 204
+        }
+        let headers = status == 429 ? ["Retry-After": "1"] : nil
+        let response = HTTPURLResponse(
+            url: request.url!, statusCode: status,
+            httpVersion: nil, headerFields: headers
+        )!
+        return (Data(), response)
+    }
+}
+
+private actor SkylightRetryGate {
+    private var suspended = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func suspend() async {
+        suspended = true
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func waitUntilSuspended() async {
+        while !suspended {
+            await Task.yield()
+        }
+    }
+
+    func resume() {
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+private enum SkylightAuthenticationTestError: Error {
+    case persistenceFailed
 }
 
 private actor SkylightStubTokenProvider: SkylightOAuthTokenProvider {

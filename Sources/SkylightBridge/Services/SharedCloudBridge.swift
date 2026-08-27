@@ -10,6 +10,7 @@ extension AppStore {
         defer { hasLoadedSharediCloudState = true }
 
         do {
+            await retryPendingPhotoMappingRetirements()
             let cloudPreferences = CloudPreferencesStore()
             let localPreferences = sharedPreferences()
             let resolvedPreferences: SharedPreferences
@@ -49,6 +50,7 @@ extension AppStore {
         intentionalPhotoAdditions: [UUID: Set<String>] = [:]
     ) async {
         do {
+            await retryPendingPhotoMappingRetirements()
             let cloudPreferences = CloudPreferencesStore()
             let saved = try await cloudPreferences.save(sharedPreferences())
             storeSharedPreferences(saved)
@@ -193,8 +195,11 @@ extension AppStore {
             modifiedAt: .distantPast
         )
         let merged = try await store.mergeRemote(into: local)
-        let existingPhotoKeys = Set(state.photos.map { "\($0.mappingID.uuidString):\($0.appleAssetID)" })
-        for link in merged.photoLinks where !existingPhotoKeys.contains(link.id) {
+        let existingPhotoKeys = Set(state.photos.map {
+            "\($0.frameID):\($0.mappingID.uuidString):\($0.appleAssetID)"
+        })
+        for link in merged.photoLinks
+        where !existingPhotoKeys.contains("\(link.frameID):\(link.mappingID):\(link.appleAssetID)") {
             guard let mappingID = UUID(uuidString: link.mappingID) else { continue }
             state.photos.append(PhotoSyncRecord(
                 mappingID: mappingID,
@@ -206,8 +211,11 @@ extension AppStore {
                 lastSyncedAt: link.lastSyncedAt
             ))
         }
-        let existingReminderKeys = Set(state.reminders.map { "\($0.mappingID.uuidString):\($0.appleReminderID)" })
-        for link in merged.reminderLinks where !existingReminderKeys.contains(link.id) {
+        let existingReminderKeys = Set(state.reminders.map {
+            "\($0.frameID):\($0.mappingID.uuidString):\($0.appleReminderID)"
+        })
+        for link in merged.reminderLinks
+        where !existingReminderKeys.contains("\(link.frameID):\(link.mappingID):\(link.appleReminderID)") {
             guard let mappingID = UUID(uuidString: link.mappingID) else { continue }
             state.reminders.append(ReminderSyncRecord(
                 mappingID: mappingID,
@@ -255,16 +263,40 @@ extension AppStore {
 
     /// Saves a photo mapping and mirrors only individual-photo changes to
     /// CloudKit. Album and Favorites mappings are intentionally device-local.
-    func savePhotoMapping(_ mapping: PhotoMapping, triggerSync: Bool = true) {
+    @discardableResult
+    func savePhotoMapping(
+        _ mapping: PhotoMapping,
+        destinationSelectionChanged: Bool = false,
+        triggerSync: Bool = true
+    ) -> Bool {
+        let previousConfiguration = configuration
         let previous = configuration.photoMappings.first { $0.id == mapping.id }
+        configuration.retiredPhotoMappingIDs.remove(mapping.id)
+        configuration.pendingPhotoMappingRetirements.removeAll { $0.id == mapping.id }
+        let frameID = configuration.account.frameID.trimmed
+        if !frameID.isEmpty {
+            let key = FrameDestinationIdentity.key(mappingID: mapping.id, frameID: frameID)
+            if let destinationID = mapping.destinationAlbumID?.trimmed,
+               !destinationID.isEmpty {
+                configuration.photoDestinationAlbumIDsByFrame[key] = destinationID
+            } else {
+                configuration.photoDestinationAlbumIDsByFrame.removeValue(forKey: key)
+            }
+            if destinationSelectionChanged || previous == nil {
+                configuration.photoDestinationIntentIDsByFrame[key] = UUID()
+            }
+        }
         if let index = configuration.photoMappings.firstIndex(where: { $0.id == mapping.id }) {
             configuration.photoMappings[index] = mapping
         } else {
             configuration.photoMappings.append(mapping)
         }
-        saveConfiguration(triggerSync: triggerSync)
+        guard saveConfiguration(triggerSync: triggerSync) else {
+            configuration = previousConfiguration
+            return false
+        }
 
-        guard mapping.sourceKind == .selectedPhotos else { return }
+        guard mapping.sourceKind == .selectedPhotos else { return true }
         let addedAssetIDs = mapping.selectedAssetIDs.subtracting(previous?.selectedAssetIDs ?? [])
         let removedAssetIDs = (previous?.selectedAssetIDs ?? []).subtracting(mapping.selectedAssetIDs)
         Task {
@@ -273,6 +305,58 @@ extension AppStore {
             )
             await publishRemovedSelectedPhotos(removedAssetIDs, for: mapping)
         }
+        return true
+    }
+
+    /// The shared package has no mapping-delete operation. Publish a newer
+    /// disabled record so existing and newly connected devices stop syncing
+    /// the retired mapping, while the local suppression set prevents reimport.
+    func retireSharedPhotoMapping(_ mapping: PhotoMapping) async {
+        guard mapping.sourceKind == .selectedPhotos else { return }
+        do {
+            let cloudMappings = CloudPhotoMappingStore()
+            let retired = SharedPhotoMapping.portableRetirement(
+                from: mapping,
+                modifiedByInstallationID: cloudInstallationID
+            )
+            let saved = try await cloudMappings.saveMapping(retired)
+            cacheSharedPhotoMapping(saved)
+            acknowledgePhotoMappingRetirement(
+                mapping.id,
+                savedRecordIsEnabled: saved.isEnabled
+            )
+        } catch {
+            if SharedCloudKitFailure.isProductionSchemaConfigurationError(error) {
+                recordSharediCloudFailure(error, savedLocally: true)
+                return
+            }
+            appendActivity(.init(
+                level: .warning,
+                area: .photos,
+                message: "The mapping was removed on this Mac, but its disabled state could not be shared through iCloud: \(error.localizedDescription)"
+            ))
+        }
+    }
+
+    private func retryPendingPhotoMappingRetirements() async {
+        for mapping in configuration.pendingPhotoMappingRetirements {
+            await retireSharedPhotoMapping(mapping)
+        }
+    }
+
+    func acknowledgePhotoMappingRetirement(
+        _ mappingID: UUID,
+        savedRecordIsEnabled: Bool
+    ) {
+        guard !savedRecordIsEnabled else {
+            appendActivity(.init(
+                level: .warning,
+                area: .photos,
+                message: "iCloud kept a newer active copy of the removed mapping. Its disabled state will be retried."
+            ))
+            return
+        }
+        completePhotoMappingRetirement(mappingID)
     }
 
     private func sharedPreferences() -> SharedPreferences {
@@ -295,10 +379,10 @@ extension AppStore {
     private func applySharedPreferences(_ preferences: SharedPreferences) {
         var changed = false
         if configuration.account.frameID != preferences.selectedFrameID {
-            configuration.account.frameID = preferences.selectedFrameID
-            // A device belongs to this physical Mac and is deliberately not
-            // shared. It will be selected again when the account reconnects.
-            configuration.account.deviceID = ""
+            prepareForFrameChange(
+                from: configuration.account.frameID,
+                to: preferences.selectedFrameID
+            )
             changed = true
         }
         if configuration.dryRun != preferences.dryRun {
@@ -390,7 +474,7 @@ extension AppStore {
         let remoteMappings = try await cloudMappings.loadMappings()
         var didChange = false
 
-        for shared in remoteMappings {
+        for shared in remoteMappings where !configuration.retiredPhotoMappingIDs.contains(shared.id) {
             let selections = try await cloudMappings.loadSelections(for: shared.id)
             let activeCloudIdentifiers = selections
                 .filter(\.isIncluded)
@@ -447,47 +531,21 @@ extension AppStore {
     }
 
     private func sharedPhotoMapping(for mapping: PhotoMapping) -> SharedPhotoMapping {
-        if let cached = cachedSharedPhotoMappings()[mapping.id], cached.matches(mapping) {
+        if let cached = cachedSharedPhotoMappings()[mapping.id], cached.matchesPortableFields(of: mapping) {
             return cached
         }
-        return SharedPhotoMapping(
-            id: mapping.id,
-            name: mapping.name,
-            destinationAlbumID: mapping.destinationAlbumID,
-            destinationAlbumTitle: mapping.destinationAlbumTitle,
-            removalPolicy: mapping.removalPolicy.sharedCloudValue,
-            maximumLongEdge: mapping.maximumLongEdge,
-            jpegQuality: mapping.jpegQuality,
-            isEnabled: mapping.enabled,
+        return SharedPhotoMapping.portable(
+            from: mapping,
             modifiedByInstallationID: cloudInstallationID
         )
     }
 
     private func photoMapping(from shared: SharedPhotoMapping) -> PhotoMapping {
-        PhotoMapping(
-            id: shared.id,
-            name: shared.name,
-            sourceKind: .selectedPhotos,
-            sourceCollectionID: nil,
-            sourceCollectionTitle: nil,
-            selectedAssetIDs: [],
-            destinationAlbumID: shared.destinationAlbumID,
-            destinationAlbumTitle: shared.destinationAlbumTitle,
-            removalPolicy: shared.removalPolicy.localValue,
-            maximumLongEdge: shared.maximumLongEdge,
-            jpegQuality: shared.jpegQuality,
-            enabled: shared.isEnabled
-        )
+        shared.localPhotoMapping()
     }
 
     private func apply(_ shared: SharedPhotoMapping, to mapping: inout PhotoMapping) {
-        mapping.name = shared.name
-        mapping.destinationAlbumID = shared.destinationAlbumID
-        mapping.destinationAlbumTitle = shared.destinationAlbumTitle
-        mapping.removalPolicy = shared.removalPolicy.localValue
-        mapping.maximumLongEdge = shared.maximumLongEdge
-        mapping.jpegQuality = shared.jpegQuality
-        mapping.enabled = shared.isEnabled
+        shared.applyPortableFields(to: &mapping)
     }
 
     private var cloudInstallationID: String {
@@ -531,11 +589,74 @@ extension AppStore {
     }
 }
 
-private extension SharedPhotoMapping {
-    func matches(_ mapping: PhotoMapping) -> Bool {
+extension SharedPhotoMapping {
+    /// Album IDs are scoped to one Skylight frame, while selected-photo
+    /// mappings are shared across devices without a frame field. Share the
+    /// human-readable title and portable settings only. The active Mac
+    /// resolves the destination from its frame-scoped sync state or title.
+    static func portable(
+        from mapping: PhotoMapping,
+        modifiedByInstallationID: String
+    ) -> SharedPhotoMapping {
+        SharedPhotoMapping(
+            id: mapping.id,
+            name: mapping.name,
+            destinationAlbumID: nil,
+            destinationAlbumTitle: mapping.destinationAlbumTitle,
+            removalPolicy: mapping.removalPolicy.sharedCloudValue,
+            maximumLongEdge: mapping.maximumLongEdge,
+            jpegQuality: mapping.jpegQuality,
+            isEnabled: mapping.enabled,
+            modifiedByInstallationID: modifiedByInstallationID
+        )
+    }
+
+    static func portableRetirement(
+        from mapping: PhotoMapping,
+        at date: Date = .now,
+        modifiedByInstallationID: String
+    ) -> SharedPhotoMapping {
+        var retired = portable(
+            from: mapping,
+            modifiedByInstallationID: modifiedByInstallationID
+        )
+        retired.isEnabled = false
+        retired.modifiedAt = date
+        return retired
+    }
+
+    func localPhotoMapping() -> PhotoMapping {
+        PhotoMapping(
+            id: id,
+            name: name,
+            sourceKind: .selectedPhotos,
+            sourceCollectionID: nil,
+            sourceCollectionTitle: nil,
+            selectedAssetIDs: [],
+            destinationAlbumID: nil,
+            destinationAlbumTitle: destinationAlbumTitle,
+            removalPolicy: removalPolicy.localValue,
+            maximumLongEdge: maximumLongEdge,
+            jpegQuality: jpegQuality,
+            enabled: isEnabled
+        )
+    }
+
+    func applyPortableFields(to mapping: inout PhotoMapping) {
+        mapping.name = name
+        // Preserve the receiver's frame-scoped destination ID. A remote value
+        // may belong to a different frame and must never be imported.
+        mapping.destinationAlbumTitle = destinationAlbumTitle
+        mapping.removalPolicy = removalPolicy.localValue
+        mapping.maximumLongEdge = maximumLongEdge
+        mapping.jpegQuality = jpegQuality
+        mapping.enabled = isEnabled
+    }
+
+    func matchesPortableFields(of mapping: PhotoMapping) -> Bool {
         id == mapping.id &&
             name == mapping.name &&
-            destinationAlbumID == mapping.destinationAlbumID &&
+            destinationAlbumID == nil &&
             destinationAlbumTitle == mapping.destinationAlbumTitle &&
             removalPolicy == mapping.removalPolicy.sharedCloudValue &&
             maximumLongEdge == mapping.maximumLongEdge &&

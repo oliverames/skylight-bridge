@@ -24,7 +24,8 @@ struct ReminderTitleOnlyAdoptionTests {
         let secondaryPairs = ReminderSyncPlanner.titleOnlyAdoptionPairs(
             apple: apple,
             skylight: skylight,
-            primaryPairs: primaryPairs
+            primaryPairs: primaryPairs,
+            links: []
         )
         #expect(secondaryPairs.count == 1)
         #expect(secondaryPairs[0].appleID == "apple-1")
@@ -50,7 +51,8 @@ struct ReminderTitleOnlyAdoptionTests {
         let secondaryPairs = ReminderSyncPlanner.titleOnlyAdoptionPairs(
             apple: apple,
             skylight: skylight,
-            primaryPairs: primaryPairs
+            primaryPairs: primaryPairs,
+            links: []
         )
         #expect(secondaryPairs.isEmpty)
     }
@@ -60,8 +62,41 @@ struct ReminderTitleOnlyAdoptionTests {
         let secondaryPairs = ReminderSyncPlanner.titleOnlyAdoptionPairs(
             apple: [],
             skylight: [],
-            primaryPairs: []
+            primaryPairs: [],
+            links: []
         )
         #expect(secondaryPairs.isEmpty)
+    }
+
+    @Test("Title-only adoption never steals a persisted link")
+    func titleOnlyAdoptionExcludesPersistedLinks() {
+        let date = Date(timeIntervalSince1970: 100)
+        let apple = [
+            ReminderSnapshot(
+                id: "apple-linked", title: "Milk", notes: nil,
+                isCompleted: true, modifiedAt: date
+            )
+        ]
+        let skylight = [
+            SkylightListItemSnapshot(
+                id: "remote-linked", title: "Milk", notes: nil,
+                isCompleted: false, modifiedAt: date
+            )
+        ]
+        let links = [ReminderSyncLink(
+            appleID: "apple-linked",
+            skylightID: "remote-linked",
+            lastAppleModifiedAt: date,
+            lastSkylightModifiedAt: date
+        )]
+
+        let pairs = ReminderSyncPlanner.titleOnlyAdoptionPairs(
+            apple: apple,
+            skylight: skylight,
+            primaryPairs: [],
+            links: links
+        )
+
+        #expect(pairs.isEmpty)
     }
 }

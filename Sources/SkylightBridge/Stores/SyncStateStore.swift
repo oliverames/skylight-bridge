@@ -37,6 +37,13 @@ actor SyncStateStore {
     }
 
     func save(_ state: SyncState) throws {
+        let sealed = try authenticator.seal(state)
+        guard sealed.count <= Self.maximumStateBytes else {
+            throw LocalPersistenceError.fileTooLarge(
+                label: "sync state",
+                maximumBytes: Self.maximumStateBytes
+            )
+        }
         try fileManager.createDirectory(
             at: fileURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -45,10 +52,20 @@ actor SyncStateStore {
             [.posixPermissions: 0o700],
             ofItemAtPath: fileURL.deletingLastPathComponent().path
         )
-        try authenticator.seal(state).write(
+        try sealed.write(
             to: fileURL,
             options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
         )
         try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+    }
+
+    /// Removes only local identity links for a reminder mapping. This supports
+    /// “Remove Mapping Only” while signed out or offline because no Skylight or
+    /// Apple Reminders operation is required.
+    func removeReminderMappingRecords(mappingID: UUID) throws {
+        var state = try load()
+        state.reminders.removeAll { $0.mappingID == mappingID }
+        state.reminderLists.removeAll { $0.mappingID == mappingID }
+        try save(state)
     }
 }

@@ -8,6 +8,27 @@ struct SkylightAccountConnection: Sendable {
     let selectedDeviceID: String
 }
 
+protocol SkylightSessionManaging: Sendable {
+    func storedEmail() async throws -> String?
+    func signOut() async throws
+    func saveCredentials(email: String, password: String) async throws
+    func connect(
+        configuration: SkylightAccountConfiguration
+    ) async throws -> SkylightAccountConnection
+    func client(
+        configuration: SkylightAccountConfiguration,
+        validateFrame: Bool
+    ) async throws -> SkylightAPIClient
+}
+
+extension SkylightSessionManaging {
+    func client(
+        configuration: SkylightAccountConfiguration
+    ) async throws -> SkylightAPIClient {
+        try await client(configuration: configuration, validateFrame: true)
+    }
+}
+
 enum SkylightSessionManagerError: Error, LocalizedError, Sendable {
     case missingCredentials
     case missingTokens
@@ -264,3 +285,5 @@ actor SkylightSessionManager {
         return value
     }
 }
+
+extension SkylightSessionManager: SkylightSessionManaging {}

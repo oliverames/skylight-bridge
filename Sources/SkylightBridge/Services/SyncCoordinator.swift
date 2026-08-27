@@ -654,6 +654,7 @@ actor SyncCoordinator {
         summary.photos = try await syncPhotos(
             mappings: configuration.photoMappings.filter(\.enabled),
             frameID: frameID,
+            destinationIntentIDs: configuration.photoDestinationIntentIDsByFrame,
             dryRun: configuration.dryRun,
             state: &state
         )
@@ -661,6 +662,7 @@ actor SyncCoordinator {
         summary.reminders = try await syncReminders(
             mappings: configuration.reminderMappings.filter(\.enabled),
             frameID: frameID,
+            destinationIntentIDs: configuration.reminderDestinationIntentIDsByFrame,
             dryRun: configuration.dryRun,
             state: &state
         )
@@ -709,20 +711,39 @@ actor SyncCoordinator {
         var result = PhotoMappingPurge()
 
         let records = state.photos
-            .filter { $0.mappingID == mappingID && $0.frameID == frameID }
-            .sorted { $0.appleAssetID < $1.appleAssetID }
+            .filter { $0.mappingID == mappingID }
+            .sorted { ($0.frameID, $0.appleAssetID) < ($1.frameID, $1.appleAssetID) }
         for record in records {
-            do {
-                if !record.skylightAlbumIDs.isEmpty {
+            let recordFrameID = Self.resolvedFrameID(record.frameID, fallback: frameID)
+            let otherOwners = state.photos.filter {
+                $0.mappingID != mappingID &&
+                    Self.resolvedFrameID($0.frameID, fallback: frameID) == recordFrameID &&
+                    $0.skylightMessageID == record.skylightMessageID
+            }
+            let albumsUsedByOtherOwners = otherOwners.reduce(into: Set<String>()) {
+                $0.formUnion($1.skylightAlbumIDs)
+            }
+            let removableAlbumIDs = record.skylightAlbumIDs.subtracting(albumsUsedByOtherOwners)
+            if !removableAlbumIDs.isEmpty {
+                do {
                     try await api.removeMessages(
-                        frameID: frameID,
-                        albumIDs: record.skylightAlbumIDs.sorted(),
+                        frameID: recordFrameID,
+                        albumIDs: removableAlbumIDs.sorted(),
                         messageIDs: [record.skylightMessageID]
                     )
+                } catch where Self.isAlreadyAbsent(error) {
+                    // Missing membership already satisfies this part of the purge.
                 }
-                try await api.deleteMessage(frameID: frameID, messageID: record.skylightMessageID)
-            } catch where Self.isAlreadyAbsent(error) {
-                // The copy is already gone; the record can still be forgotten.
+            }
+            if otherOwners.isEmpty {
+                do {
+                    try await api.deleteMessage(
+                        frameID: recordFrameID,
+                        messageID: record.skylightMessageID
+                    )
+                } catch where Self.isAlreadyAbsent(error) {
+                    // The copy is already gone; the record can still be forgotten.
+                }
             }
             state.photos.removeAll { $0.id == record.id }
             try await stateStore.saveSyncState(state)
@@ -730,23 +751,45 @@ actor SyncCoordinator {
         }
 
         let albumRecords = state.photoAlbums
-            .filter { $0.mappingID == mappingID && $0.frameID == frameID }
-            .sorted { $0.albumID < $1.albumID }
+            .filter { $0.mappingID == mappingID }
+            .sorted { ($0.frameID, $0.albumID) < ($1.frameID, $1.albumID) }
         for albumRecord in albumRecords {
+            let albumFrameID = Self.resolvedFrameID(albumRecord.frameID, fallback: frameID)
             // "Failed to list" must not read as "empty": deleting on a transport
             // error could destroy an album holding photos the user added on
-            // Skylight. Keep the record so a later purge can retry.
-            guard let remaining = try? await api.listAllAlbumMessageIDs(
-                frameID: frameID,
-                albumID: albumRecord.albumID
-            ) else { continue }
+            // Skylight. Propagate the error so the mapping and album record stay
+            // available for a later retry.
+            let remaining: [String]
+            var albumAlreadyAbsent = false
+            do {
+                remaining = try await api.listAllAlbumMessageIDs(
+                    frameID: albumFrameID,
+                    albumID: albumRecord.albumID
+                )
+            } catch where Self.isAlreadyAbsent(error) {
+                // A prior attempt may have deleted the album and then failed
+                // to checkpoint. Its absence completes the retry safely.
+                remaining = []
+                albumAlreadyAbsent = true
+            }
             if remaining.isEmpty {
-                do {
-                    try await api.deleteAlbum(frameID: frameID, albumID: albumRecord.albumID)
-                } catch where Self.isAlreadyAbsent(error) {}
+                if !albumAlreadyAbsent {
+                    do {
+                        try await api.deleteAlbum(
+                            frameID: albumFrameID,
+                            albumID: albumRecord.albumID
+                        )
+                    } catch where Self.isAlreadyAbsent(error) {}
+                }
                 result.albums += 1
             }
             state.photoAlbums.removeAll { $0.id == albumRecord.id }
+            try await stateStore.saveSyncState(state)
+        }
+
+        let destinationCount = state.photoDestinations.count
+        state.photoDestinations.removeAll { $0.mappingID == mappingID }
+        if state.photoDestinations.count != destinationCount {
             try await stateStore.saveSyncState(state)
         }
 
@@ -760,7 +803,16 @@ actor SyncCoordinator {
         if case let .httpStatus(code, _, _) = error as? SkylightAPIError {
             return code == 404 || code == 410
         }
+        if let appleError = error as? AppleRemindersStoreError,
+           case .reminderNotFound = appleError {
+            return true
+        }
         return false
+    }
+
+    private static func resolvedFrameID(_ storedFrameID: String, fallback: String) -> String {
+        let stored = storedFrameID.trimmed
+        return stored.isEmpty ? fallback.trimmed : stored
     }
 
     /// Removes the linked items for a reminder mapping from the chosen side, then
@@ -773,23 +825,29 @@ actor SyncCoordinator {
     ) async throws -> Int {
         var state = try await stateStore.loadSyncState()
         let records = state.reminders
-            .filter { $0.mappingID == mappingID && $0.frameID == frameID }
-            .sorted { $0.appleReminderID < $1.appleReminderID }
+            .filter { $0.mappingID == mappingID }
+            .sorted { ($0.frameID, $0.appleReminderID) < ($1.frameID, $1.appleReminderID) }
         var affected = 0
+        var removedAppleReminderIDs: Set<String> = []
         for record in records {
+            let recordFrameID = Self.resolvedFrameID(record.frameID, fallback: frameID)
             switch side {
             case .skylight:
                 do {
                     try await api.deleteListItem(
-                        frameID: frameID,
+                        frameID: recordFrameID,
                         listID: record.skylightListID,
                         itemID: record.skylightItemID
                     )
                 } catch where Self.isAlreadyAbsent(error) {}
                 affected += 1
             case .appleReminders:
-                try await reminderSource.syncRemoveReminder(withID: record.appleReminderID)
-                affected += 1
+                if removedAppleReminderIDs.insert(record.appleReminderID).inserted {
+                    do {
+                        try await reminderSource.syncRemoveReminder(withID: record.appleReminderID)
+                    } catch where Self.isAlreadyAbsent(error) {}
+                    affected += 1
+                }
             case .none:
                 break
             }
@@ -798,7 +856,7 @@ actor SyncCoordinator {
         }
         let listRecordCount = state.reminderLists.count
         state.reminderLists.removeAll {
-            $0.mappingID == mappingID && $0.frameID == frameID
+            $0.mappingID == mappingID
         }
         if state.reminderLists.count != listRecordCount {
             try await stateStore.saveSyncState(state)
@@ -850,7 +908,7 @@ actor SyncCoordinator {
         // the user has since put their own reminders into.
         if mode.removesAppleReminders, let source = choreReminderSource {
             for listID in appleListIDs where !listID.trimmed.isEmpty {
-                if (try? await source.syncDeleteReminderListIfEmpty(withID: listID)) == true {
+                if try await source.syncDeleteReminderListIfEmpty(withID: listID) {
                     result.listsRemoved += 1
                 }
             }
@@ -862,6 +920,7 @@ actor SyncCoordinator {
     private func syncPhotos(
         mappings: [PhotoMapping],
         frameID: String,
+        destinationIntentIDs: [String: UUID],
         dryRun: Bool,
         state: inout SyncState
     ) async throws -> SyncDomainSummary {
@@ -881,13 +940,34 @@ actor SyncCoordinator {
             let mappingRecords = state.photos.filter {
                 $0.mappingID == mapping.id && $0.frameID == frameID
             }
+            let destinationKey = FrameDestinationIdentity.key(
+                mappingID: mapping.id,
+                frameID: frameID
+            )
+            let destinationIntentID = destinationIntentIDs[destinationKey]
+            let recordedDestinationIDs = state.photoDestinations
+                .filter {
+                    $0.mappingID == mapping.id &&
+                        $0.frameID == frameID &&
+                        (destinationIntentID == nil ||
+                            $0.destinationIntentID == destinationIntentID)
+                }
+                .map(\.albumID) + (destinationIntentID == nil
+                    ? mappingRecords
+                        .sorted { $0.lastSyncedAt > $1.lastSyncedAt }
+                        .flatMap { record in
+                            [record.destinationAlbumID] + record.skylightAlbumIDs.sorted()
+                        }
+                    : [])
             let currentAssetIDs = Set(sourceAssets.map(\.id))
             let needsDestination = !currentAssetIDs.isEmpty
             let destination = try await resolvePhotoDestination(
                 mapping: mapping,
                 frameID: frameID,
                 dryRun: dryRun,
-                needed: needsDestination
+                needed: needsDestination,
+                recordedDestinationIDs: recordedDestinationIDs,
+                hasDestinationIntent: destinationIntentID != nil
             )
             if destination.needsCreation {
                 summary.planned += 1
@@ -900,7 +980,25 @@ actor SyncCoordinator {
                             albumID: albumID,
                             in: &state
                         )
+                    }
+                }
+            }
+            if !dryRun, let destinationID = destination.id, !destinationID.trimmed.isEmpty {
+                let record = PhotoDestinationSyncRecord(
+                    mappingID: mapping.id,
+                    frameID: frameID,
+                    albumID: destinationID,
+                    destinationIntentID: destinationIntentID
+                )
+                if !state.photoDestinations.contains(record) {
+                    upsertPhotoDestinationRecord(record, in: &state)
+                    if destination.needsCreation {
+                        // Persist cleanup ownership and destination identity in
+                        // one write. If rendering fails next, the retry must
+                        // reuse the album it just created.
                         try await checkpoint(state, dryRun: dryRun)
+                    } else {
+                        markStateDirty()
                     }
                 }
             }
@@ -1171,7 +1269,9 @@ actor SyncCoordinator {
         mapping: PhotoMapping,
         frameID: String,
         dryRun: Bool,
-        needed: Bool
+        needed: Bool,
+        recordedDestinationIDs: [String],
+        hasDestinationIntent: Bool
     ) async throws -> PhotoDestinationResolution {
         guard needed else {
             return PhotoDestinationResolution(id: mapping.destinationAlbumID, needsCreation: false)
@@ -1184,18 +1284,31 @@ actor SyncCoordinator {
             return PhotoDestinationResolution(id: albumID, needsCreation: false)
         }
 
+        // Configuration destination IDs are frame-scoped and are cleared when
+        // the user changes frames. The sync state retains the exact ID per
+        // frame, so returning to a frame can reuse an album even if its title
+        // changed since the mapping was created.
+        if let recordedID = recordedDestinationIDs.first(where: { candidate in
+            let candidate = candidate.trimmed
+            return !candidate.isEmpty && albums.contains { $0.id == candidate }
+        }) {
+            return PhotoDestinationResolution(id: recordedID.trimmed, needsCreation: false)
+        }
+
         let title = mapping.destinationAlbumTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else {
             throw SyncCoordinatorError.missingPhotoDestination(mapping.id)
         }
-        let matches = albums.filter {
-            $0.attributes.title?.localizedCaseInsensitiveCompare(title) == .orderedSame
-        }
-        guard matches.count <= 1 else {
-            throw SyncCoordinatorError.ambiguousPhotoDestination(title)
-        }
-        if let existing = matches.first {
-            return PhotoDestinationResolution(id: existing.id, needsCreation: false)
+        if !hasDestinationIntent {
+            let matches = albums.filter {
+                $0.attributes.title?.localizedCaseInsensitiveCompare(title) == .orderedSame
+            }
+            guard matches.count <= 1 else {
+                throw SyncCoordinatorError.ambiguousPhotoDestination(title)
+            }
+            if let existing = matches.first {
+                return PhotoDestinationResolution(id: existing.id, needsCreation: false)
+            }
         }
         guard !dryRun else {
             return PhotoDestinationResolution(id: nil, needsCreation: true)
@@ -1341,6 +1454,7 @@ actor SyncCoordinator {
     private func syncReminders(
         mappings: [ReminderListMapping],
         frameID: String,
+        destinationIntentIDs: [String: UUID],
         dryRun: Bool,
         state: inout SyncState
     ) async throws -> SyncDomainSummary {
@@ -1352,10 +1466,30 @@ actor SyncCoordinator {
             let selectedApple = mapping.selectionMode == .everything
                 ? allApple
                 : allApple.filter { mapping.selectedReminderIDs.contains($0.id) }
+            let destinationKey = FrameDestinationIdentity.key(
+                mappingID: mapping.id,
+                frameID: frameID
+            )
+            let destinationIntentID = destinationIntentIDs[destinationKey]
+            let recordedDestinationIDs = state.reminderLists
+                .filter {
+                    $0.mappingID == mapping.id &&
+                        $0.frameID == frameID &&
+                        (destinationIntentID == nil ||
+                            $0.destinationIntentID == destinationIntentID)
+                }
+                .map(\.skylightListID) + (destinationIntentID == nil
+                    ? state.reminders
+                        .filter { $0.mappingID == mapping.id && $0.frameID == frameID }
+                        .sorted { $0.lastSkylightModifiedAt > $1.lastSkylightModifiedAt }
+                        .map(\.skylightListID)
+                    : [])
             let destination = try await resolveReminderDestination(
                 mapping: mapping,
                 frameID: frameID,
-                dryRun: dryRun
+                dryRun: dryRun,
+                recordedDestinationIDs: recordedDestinationIDs,
+                hasDestinationIntent: destinationIntentID != nil
             )
             if destination.needsCreation {
                 summary.planned += 1
@@ -1369,6 +1503,7 @@ actor SyncCoordinator {
                     appleList: appleList,
                     skylightListID: destinationID,
                     skylightAttributes: attributes,
+                    destinationIntentID: destinationIntentID,
                     dryRun: dryRun,
                     state: &state
                 )
@@ -1485,7 +1620,18 @@ actor SyncCoordinator {
                 let secondaryPairs = ReminderSyncPlanner.titleOnlyAdoptionPairs(
                     apple: appleSnapshots,
                     skylight: remoteSnapshots,
-                    primaryPairs: pairs
+                    primaryPairs: pairs,
+                    links: activeRecords.map {
+                        ReminderSyncLink(
+                            appleID: $0.appleReminderID,
+                            skylightID: $0.skylightItemID,
+                            lastAppleModifiedAt: $0.lastAppleModifiedAt,
+                            lastSkylightModifiedAt: $0.lastSkylightModifiedAt,
+                            baselineTitle: $0.lastSyncedTitle,
+                            baselineCompleted: $0.lastSyncedCompleted,
+                            remoteSuppressedAt: $0.remoteSuppressedAt
+                        )
+                    }
                 )
                 for pair in secondaryPairs {
                     guard let apple = appleForAdoption[pair.appleID],
@@ -1715,7 +1861,9 @@ actor SyncCoordinator {
     private func resolveReminderDestination(
         mapping: ReminderListMapping,
         frameID: String,
-        dryRun: Bool
+        dryRun: Bool,
+        recordedDestinationIDs: [String],
+        hasDestinationIntent: Bool
     ) async throws -> ReminderDestinationResolution {
         let lists = try await api.listLists(frameID: frameID).data
         let configuredID = mapping.destinationListID.trimmed
@@ -1729,22 +1877,38 @@ actor SyncCoordinator {
                 needsCreation: false
             )
         }
+        // Like albums, list IDs belong to one frame. A frame-scoped sync-state
+        // record is the durable route back after a destination was renamed.
+        if let recorded = recordedDestinationIDs.lazy
+            .map(\.trimmed)
+            .first(where: { candidate in
+                !candidate.isEmpty && lists.contains { $0.id == candidate }
+            }),
+           let list = lists.first(where: { $0.id == recorded }) {
+            return ReminderDestinationResolution(
+                id: recorded,
+                attributes: list.attributes,
+                needsCreation: false
+            )
+        }
         let title = mapping.destinationListTitle.trimmed
         guard !title.isEmpty else {
             throw SyncCoordinatorError.missingReminderDestination(mapping.id)
         }
-        let matches = lists.filter {
-            $0.attributes.label?.localizedCaseInsensitiveCompare(title) == .orderedSame
-        }
-        guard matches.count <= 1 else {
-            throw SyncCoordinatorError.ambiguousReminderDestination(title)
-        }
-        if let existing = matches.first {
-            return ReminderDestinationResolution(
-                id: existing.id,
-                attributes: existing.attributes,
-                needsCreation: false
-            )
+        if !hasDestinationIntent {
+            let matches = lists.filter {
+                $0.attributes.label?.localizedCaseInsensitiveCompare(title) == .orderedSame
+            }
+            guard matches.count <= 1 else {
+                throw SyncCoordinatorError.ambiguousReminderDestination(title)
+            }
+            if let existing = matches.first {
+                return ReminderDestinationResolution(
+                    id: existing.id,
+                    attributes: existing.attributes,
+                    needsCreation: false
+                )
+            }
         }
         guard !dryRun else {
             return ReminderDestinationResolution(id: nil, attributes: nil, needsCreation: true)
@@ -1766,6 +1930,7 @@ actor SyncCoordinator {
         appleList: AppleReminderListSnapshot,
         skylightListID: String,
         skylightAttributes: SkylightListAttributes,
+        destinationIntentID: UUID?,
         dryRun: Bool,
         state: inout SyncState
     ) async throws -> SyncDomainSummary {
@@ -1791,7 +1956,8 @@ actor SyncCoordinator {
                 lastSyncedAppleTitle: appleTitle,
                 lastSyncedSkylightTitle: skylightTitle,
                 lastSyncedAppleColor: appleColor,
-                lastSyncedSkylightColor: skylightColor
+                lastSyncedSkylightColor: skylightColor,
+                destinationIntentID: destinationIntentID
             ), in: &state)
             try await checkpoint(state, dryRun: false)
             return summary
@@ -1831,7 +1997,8 @@ actor SyncCoordinator {
                 lastSyncedAppleTitle: appleTitle,
                 lastSyncedSkylightTitle: skylightTitle,
                 lastSyncedAppleColor: appleColor,
-                lastSyncedSkylightColor: skylightColor
+                lastSyncedSkylightColor: skylightColor,
+                destinationIntentID: destinationIntentID
             ), in: &state)
             try await checkpoint(state, dryRun: false)
             return summary
@@ -1883,7 +2050,8 @@ actor SyncCoordinator {
             lastSyncedAppleTitle: syncedTitles.apple,
             lastSyncedSkylightTitle: syncedTitles.skylight,
             lastSyncedAppleColor: syncedColors.apple,
-            lastSyncedSkylightColor: syncedColors.skylight
+            lastSyncedSkylightColor: syncedColors.skylight,
+            destinationIntentID: destinationIntentID
         ), in: &state)
         try await checkpoint(state, dryRun: false)
         summary.applied = summary.planned
@@ -2068,11 +2236,11 @@ actor SyncCoordinator {
                 guard liveAppleIDs.contains(record.appleReminderID),
                       let linked = appleSnapshots.first(where: { $0.id == record.appleReminderID }),
                       linked.isCompleted,
-                      linked.recurrence != nil else { continue }
+                      linked.recurrence != nil || linked.recurrenceUnsupported else { continue }
                 let candidates = appleSnapshots.filter {
                     !claimedAppleIDs.contains($0.id) &&
                         !$0.isCompleted &&
-                        $0.recurrence != nil &&
+                        ($0.recurrence != nil || $0.recurrenceUnsupported) &&
                         $0.memberKey == record.memberKey &&
                         $0.title.trimmed.localizedCaseInsensitiveCompare(
                             record.lastSyncedTitle?.trimmed ?? linked.title.trimmed
@@ -3710,10 +3878,19 @@ actor SyncCoordinator {
     private func upsertReminderRecord(_ record: ReminderSyncRecord, in state: inout SyncState) {
         state.reminders.removeAll {
             $0.mappingID == record.mappingID &&
+                $0.frameID == record.frameID &&
                 ($0.appleReminderID == record.appleReminderID ||
                     $0.skylightItemID == record.skylightItemID)
         }
         state.reminders.append(record)
+    }
+
+    private func upsertPhotoDestinationRecord(
+        _ record: PhotoDestinationSyncRecord,
+        in state: inout SyncState
+    ) {
+        state.photoDestinations.removeAll { $0.id == record.id }
+        state.photoDestinations.append(record)
     }
 
     private func upsertReminderListRecord(
