@@ -8,9 +8,19 @@ protocol SharedPreferencesCloudStoring: Sendable {
 
 extension CloudPreferencesStore: SharedPreferencesCloudStoring {}
 
+protocol SharedPhotoMappingCloudStoring: Sendable {
+    func loadMappings() async throws -> [SharedPhotoMapping]
+    func saveMapping(_ proposed: SharedPhotoMapping) async throws -> SharedPhotoMapping
+    func loadSelections(for mappingID: UUID) async throws -> [SharedPhotoSelection]
+    func saveSelection(_ proposed: SharedPhotoSelection) async throws -> SharedPhotoSelection
+}
+
+extension CloudPhotoMappingStore: SharedPhotoMappingCloudStoring {}
+
 enum SharedPreferencesApplicationError: Error, LocalizedError, Equatable {
     case frameSelectionFailed(String)
     case persistenceFailed
+    case selectedPhotoChangesPending(Int)
 
     var errorDescription: String? {
         switch self {
@@ -18,6 +28,8 @@ enum SharedPreferencesApplicationError: Error, LocalizedError, Equatable {
             "The shared Skylight frame \(frameID) could not be selected and loaded."
         case .persistenceFailed:
             "The shared preferences could not be saved locally."
+        case let .selectedPhotoChangesPending(count):
+            "\(count) selected-photo iCloud change\(count == 1 ? " is" : "s are") still pending and will retry during the next shared-state refresh."
         }
     }
 }
@@ -39,6 +51,9 @@ extension AppStore {
             _ = try await refreshSharedPreferences(
                 using: sharedPreferencesStore
             )
+            // Preferences are now stable. Let later user edits queue a full
+            // publish behind this operation, even if photo CloudKit work fails.
+            hasLoadedSharediCloudState = true
             let synchronizedPreferenceMutationVersion = sharedPreferenceMutationVersion
 
             if FeatureFlags.multiDeviceCoordinationEnabled {
@@ -52,16 +67,14 @@ extension AppStore {
             // first would create a newer add record and silently resurrect it.
             try await importSharedPhotoMappings()
             try await publishPendingSelectedPhotoChanges()
-            // Keep full shared-state publishing suppressed until removes are
-            // imported. A preference changed during the unrelated Cloud work
-            // still gets one final serialized write before the flag flips.
+            // A preference changed during the unrelated Cloud work still gets
+            // one final serialized write before this operation releases.
             if sharedPreferenceMutationVersion != synchronizedPreferenceMutationVersion {
                 _ = try await publishSharedPreferences(
                     using: sharedPreferencesStore
                 )
             }
             recordSharediCloudSuccess()
-            hasLoadedSharediCloudState = true
             statusMessage = "Shared preferences and selected photos are up to date with iCloud."
         } catch {
             recordSharediCloudFailure(error, savedLocally: false)
@@ -297,8 +310,16 @@ extension AppStore {
     ) -> Bool {
         let previousConfiguration = configuration
         let previous = configuration.photoMappings.first { $0.id == mapping.id }
-        configuration.retiredPhotoMappingIDs.remove(mapping.id)
-        configuration.pendingPhotoMappingRetirements.removeAll { $0.id == mapping.id }
+        let wasSharedSelectedPhotos = previous?.sourceKind == .selectedPhotos
+        let isSharedSelectedPhotos = mapping.sourceKind == .selectedPhotos
+        if isSharedSelectedPhotos {
+            configuration.retiredPhotoMappingIDs.remove(mapping.id)
+            configuration.pendingPhotoMappingRetirements.removeAll { $0.id == mapping.id }
+        } else if wasSharedSelectedPhotos, let previous {
+            configuration.retiredPhotoMappingIDs.insert(mapping.id)
+            configuration.pendingPhotoMappingRetirements.removeAll { $0.id == mapping.id }
+            configuration.pendingPhotoMappingRetirements.append(previous)
+        }
         let frameID = configuration.account.frameID.trimmed
         if !frameID.isEmpty {
             let key = FrameDestinationIdentity.key(mappingID: mapping.id, frameID: frameID)
@@ -317,12 +338,22 @@ extension AppStore {
         } else {
             configuration.photoMappings.append(mapping)
         }
-        guard saveConfiguration(triggerSync: triggerSync) else {
+        guard saveConfiguration(
+            triggerSync: triggerSync,
+            publishSharedState: !isSharedSelectedPhotos && !wasSharedSelectedPhotos
+        ) else {
             configuration = previousConfiguration
             return false
         }
 
-        guard mapping.sourceKind == .selectedPhotos else { return true }
+        guard isSharedSelectedPhotos else {
+            if wasSharedSelectedPhotos, let previous {
+                pendingSharedPhotoChanges.discard(mappingID: mapping.id)
+                Task { await retireSharedPhotoMapping(previous) }
+            }
+            return true
+        }
+        pendingSharedPhotoChanges.recordPortableMapping(mapping)
         let addedAssetIDs = mapping.selectedAssetIDs.subtracting(previous?.selectedAssetIDs ?? [])
         let removedAssetIDs = (previous?.selectedAssetIDs ?? []).subtracting(mapping.selectedAssetIDs)
         pendingSharedPhotoChanges.record(
@@ -340,14 +371,27 @@ extension AppStore {
     /// disabled record so existing and newly connected devices stop syncing
     /// the retired mapping, while the local suppression set prevents reimport.
     func retireSharedPhotoMapping(_ mapping: PhotoMapping) async {
-        guard mapping.sourceKind == .selectedPhotos else { return }
         do {
-            let cloudMappings = CloudPhotoMappingStore()
+            try await acquireSharedCloudOperation()
+            defer { sharedCloudOperationInProgress = false }
+            await retireSharedPhotoMappingWithinOperation(mapping)
+        } catch is CancellationError {
+            // The durable pending retirement remains for the next refresh.
+        } catch {
+            recordSharediCloudFailure(error, savedLocally: true)
+        }
+    }
+
+    private func retireSharedPhotoMappingWithinOperation(_ mapping: PhotoMapping) async {
+        guard mapping.sourceKind == .selectedPhotos,
+              configuration.retiredPhotoMappingIDs.contains(mapping.id),
+              configuration.pendingPhotoMappingRetirements.contains(mapping) else { return }
+        do {
             let retired = SharedPhotoMapping.portableRetirement(
                 from: mapping,
                 modifiedByInstallationID: cloudInstallationID
             )
-            let saved = try await cloudMappings.saveMapping(retired)
+            let saved = try await sharedPhotoMappingStore.saveMapping(retired)
             cacheSharedPhotoMapping(saved)
             acknowledgePhotoMappingRetirement(
                 mapping.id,
@@ -368,7 +412,7 @@ extension AppStore {
 
     private func retryPendingPhotoMappingRetirements() async {
         for mapping in configuration.pendingPhotoMappingRetirements {
-            await retireSharedPhotoMapping(mapping)
+            await retireSharedPhotoMappingWithinOperation(mapping)
         }
     }
 
@@ -584,20 +628,30 @@ extension AppStore {
     }
 
     private func publishPendingSelectedPhotoChanges() async throws {
-        guard photosAuthorizationStatus == .fullAccess else { return }
+        guard photosAuthorizationStatus == .fullAccess else {
+            if !pendingSharedPhotoChanges.isEmpty {
+                throw SharedPreferencesApplicationError.selectedPhotoChangesPending(
+                    pendingSharedPhotoChanges.changeCount
+                )
+            }
+            return
+        }
 
         repeat {
             let pending = pendingSharedPhotoChanges
             var configurationChanged = false
             for index in configuration.photoMappings.indices {
-                let mapping = configuration.photoMappings[index]
+                var mapping = pending.applyingPortableFields(
+                    to: configuration.photoMappings[index]
+                )
                 guard mapping.sourceKind == .selectedPhotos else { continue }
                 let reconciledAssetIDs = pending.applying(
                     to: mapping.selectedAssetIDs,
                     mappingID: mapping.id
                 )
-                if reconciledAssetIDs != mapping.selectedAssetIDs {
-                    configuration.photoMappings[index].selectedAssetIDs = reconciledAssetIDs
+                mapping.selectedAssetIDs = reconciledAssetIDs
+                if mapping != configuration.photoMappings[index] {
+                    configuration.photoMappings[index] = mapping
                     configurationChanged = true
                 }
             }
@@ -606,67 +660,120 @@ extension AppStore {
                 throw SharedPreferencesApplicationError.persistenceFailed
             }
 
-            try await publishLocalSelectedPhotoMappings(
-                intentionalPhotoAdditions: pending.additions
-            )
+            var acknowledged = try await publishLocalSelectedPhotoMappings(pending: pending)
             for (mappingID, localAssetIDs) in pending.removals {
-                try await publishRemovedSelectedPhotos(
+                let resolvedAssetIDs = try await publishRemovedSelectedPhotos(
                     localAssetIDs,
                     mappingID: mappingID
                 )
+                if !resolvedAssetIDs.isEmpty {
+                    acknowledged.removals[mappingID] = resolvedAssetIDs
+                }
             }
-            pendingSharedPhotoChanges.acknowledge(pending)
+            pendingSharedPhotoChanges.acknowledge(acknowledged)
+            if pendingSharedPhotoChanges.isEmpty {
+                return
+            }
+
+            // PhotoKit can omit identifiers it cannot currently translate.
+            // Retain those intents for a later operation instead of spinning
+            // here or claiming that an unpublished change reached CloudKit.
+            guard acknowledged.additions == pending.additions,
+                  acknowledged.removals == pending.removals,
+                  acknowledged.portableMappings == pending.portableMappings else {
+                throw SharedPreferencesApplicationError.selectedPhotoChangesPending(
+                    pendingSharedPhotoChanges.changeCount
+                )
+            }
         } while !pendingSharedPhotoChanges.isEmpty
     }
 
     private func publishLocalSelectedPhotoMappings(
-        intentionalPhotoAdditions: [UUID: Set<String>] = [:]
-    ) async throws {
-        guard photosAuthorizationStatus == .fullAccess else { return }
-        let cloudMappings = CloudPhotoMappingStore()
-        for mapping in configuration.photoMappings where mapping.sourceKind == .selectedPhotos {
+        pending: PendingSharedPhotoChanges
+    ) async throws -> PendingSharedPhotoChanges {
+        guard photosAuthorizationStatus == .fullAccess else { return .init() }
+        var acknowledged = PendingSharedPhotoChanges()
+        let mappingIDs = configuration.photoMappings
+            .filter { $0.sourceKind == .selectedPhotos }
+            .map(\.id)
+        for mappingID in mappingIDs {
+            guard !configuration.retiredPhotoMappingIDs.contains(mappingID),
+                  var mapping = configuration.photoMappings.first(where: {
+                      $0.id == mappingID && $0.sourceKind == .selectedPhotos
+                  }) else { continue }
+            mapping = pending.applyingPortableFields(to: mapping)
+            mapping.selectedAssetIDs = pending.applying(
+                to: mapping.selectedAssetIDs,
+                mappingID: mappingID
+            )
             let shared = sharedPhotoMapping(for: mapping)
-            let savedMapping = try await cloudMappings.saveMapping(shared)
+            let savedMapping = try await sharedPhotoMappingStore.saveMapping(shared)
             cacheSharedPhotoMapping(savedMapping)
+
+            guard !configuration.retiredPhotoMappingIDs.contains(mappingID),
+                  configuration.photoMappings.contains(where: {
+                      $0.id == mappingID && $0.sourceKind == .selectedPhotos
+                  }) else { continue }
 
             let cloudIdentifiers = try photoLibrary.cloudAssetIdentifiers(
                 for: Array(mapping.selectedAssetIDs)
             )
-            let remoteSelections = try await cloudMappings.loadSelections(for: mapping.id)
+            guard !configuration.retiredPhotoMappingIDs.contains(mappingID),
+                  configuration.photoMappings.contains(where: {
+                      $0.id == mappingID && $0.sourceKind == .selectedPhotos
+                  }) else { continue }
+            let remoteSelections = try await sharedPhotoMappingStore.loadSelections(for: mappingID)
             let remoteSelectionByCloudIdentifier = Dictionary(
                 uniqueKeysWithValues: remoteSelections.map {
                     ($0.cloudAssetIdentifier, $0)
                 }
             )
-            let explicitlyAddedLocalIdentifiers = intentionalPhotoAdditions[mapping.id] ?? []
+            let explicitlyAddedLocalIdentifiers = pending.additions[mappingID] ?? []
+            var resolvedAdditions = Set<String>()
             for (localIdentifier, cloudIdentifier) in cloudIdentifiers {
+                guard !configuration.retiredPhotoMappingIDs.contains(mappingID),
+                      configuration.photoMappings.contains(where: {
+                          $0.id == mappingID && $0.sourceKind == .selectedPhotos
+                      }) else { break }
                 guard SharedPhotoSelection.shouldPublishAdd(
                     for: remoteSelectionByCloudIdentifier[cloudIdentifier],
                     isExplicitUserAddition: explicitlyAddedLocalIdentifiers.contains(localIdentifier)
                 ) else {
                     continue
                 }
-                _ = try await cloudMappings.saveSelection(
+                let savedSelection = try await sharedPhotoMappingStore.saveSelection(
                     .adding(
-                        mappingID: mapping.id,
+                        mappingID: mappingID,
                         cloudAssetIdentifier: cloudIdentifier,
                         at: .now,
                         by: cloudInstallationID
                     )
                 )
+                if explicitlyAddedLocalIdentifiers.contains(localIdentifier),
+                   savedSelection.isIncluded {
+                    resolvedAdditions.insert(localIdentifier)
+                }
+            }
+            if !resolvedAdditions.isEmpty {
+                acknowledged.additions[mappingID] = resolvedAdditions
+            }
+            if let portableMapping = pending.portableMappings[mappingID],
+               savedMapping.matchesPortableFields(of: portableMapping) {
+                acknowledged.portableMappings[mappingID] = portableMapping
             }
         }
+        return acknowledged
     }
 
     private func publishRemovedSelectedPhotos(
         _ localAssetIDs: Set<String>,
         mappingID: UUID
-    ) async throws {
-        guard !localAssetIDs.isEmpty else { return }
+    ) async throws -> Set<String> {
+        guard !localAssetIDs.isEmpty else { return [] }
         let cloudIdentifiers = try photoLibrary.cloudAssetIdentifiers(for: Array(localAssetIDs))
-        let cloudMappings = CloudPhotoMappingStore()
-        for cloudIdentifier in cloudIdentifiers.values {
-            _ = try await cloudMappings.saveSelection(
+        var resolvedRemovals = Set<String>()
+        for (localIdentifier, cloudIdentifier) in cloudIdentifiers {
+            let savedSelection = try await sharedPhotoMappingStore.saveSelection(
                 .removing(
                     mappingID: mappingID,
                     cloudAssetIdentifier: cloudIdentifier,
@@ -674,32 +781,43 @@ extension AppStore {
                     by: cloudInstallationID
                 )
             )
+            if !savedSelection.isIncluded {
+                resolvedRemovals.insert(localIdentifier)
+            }
         }
+        return resolvedRemovals
     }
 
     private func importSharedPhotoMappings() async throws {
         guard photosAuthorizationStatus == .fullAccess else { return }
-        let cloudMappings = CloudPhotoMappingStore()
-        let remoteMappings = try await cloudMappings.loadMappings()
+        let remoteMappings = try await sharedPhotoMappingStore.loadMappings()
         var didChange = false
 
         for shared in remoteMappings where !configuration.retiredPhotoMappingIDs.contains(shared.id) {
-            let selections = try await cloudMappings.loadSelections(for: shared.id)
+            let selections = try await sharedPhotoMappingStore.loadSelections(for: shared.id)
             let activeCloudIdentifiers = selections
                 .filter(\.isIncluded)
                 .map(\.cloudAssetIdentifier)
             let localIdentifiers = try photoLibrary.localAssetIdentifiers(
                 for: activeCloudIdentifiers
             )
+            // The user may remove a mapping while either CloudKit or PhotoKit
+            // is resolving it. Do not re-add a mapping retired during an await.
+            guard !configuration.retiredPhotoMappingIDs.contains(shared.id) else { continue }
 
             if let index = configuration.photoMappings.firstIndex(where: { $0.id == shared.id }) {
                 var mapping = configuration.photoMappings[index]
                 guard mapping.sourceKind == .selectedPhotos else { continue }
                 apply(shared, to: &mapping)
+                mapping = pendingSharedPhotoChanges.applyingPortableFields(to: mapping)
                 reconcile(
                     selections: selections,
                     localIdentifiers: localIdentifiers,
                     into: &mapping
+                )
+                mapping.selectedAssetIDs = pendingSharedPhotoChanges.applying(
+                    to: mapping.selectedAssetIDs,
+                    mappingID: mapping.id
                 )
                 if configuration.photoMappings[index] != mapping {
                     configuration.photoMappings[index] = mapping
@@ -707,7 +825,12 @@ extension AppStore {
                 }
             } else {
                 var mapping = photoMapping(from: shared)
+                mapping = pendingSharedPhotoChanges.applyingPortableFields(to: mapping)
                 mapping.selectedAssetIDs = Set(localIdentifiers.values)
+                mapping.selectedAssetIDs = pendingSharedPhotoChanges.applying(
+                    to: mapping.selectedAssetIDs,
+                    mappingID: mapping.id
+                )
                 configuration.photoMappings.append(mapping)
                 didChange = true
             }

@@ -55,10 +55,18 @@ struct SharedPreferenceMutationRecord: Sendable {
 struct PendingSharedPhotoChanges: Sendable {
     var additions: [UUID: Set<String>] = [:]
     var removals: [UUID: Set<String>] = [:]
+    var portableMappings: [UUID: PhotoMapping] = [:]
 
     var isEmpty: Bool {
         additions.values.allSatisfy(\.isEmpty)
             && removals.values.allSatisfy(\.isEmpty)
+            && portableMappings.isEmpty
+    }
+
+    var changeCount: Int {
+        additions.values.reduce(0) { $0 + $1.count }
+            + removals.values.reduce(0) { $0 + $1.count }
+            + portableMappings.count
     }
 
     mutating func record(
@@ -79,6 +87,22 @@ struct PendingSharedPhotoChanges: Sendable {
             .subtracting(removals[mappingID] ?? [])
     }
 
+    mutating func recordPortableMapping(_ mapping: PhotoMapping) {
+        portableMappings[mapping.id] = mapping
+    }
+
+    func applyingPortableFields(to mapping: PhotoMapping) -> PhotoMapping {
+        guard let pending = portableMappings[mapping.id] else { return mapping }
+        var result = mapping
+        result.name = pending.name
+        result.destinationAlbumTitle = pending.destinationAlbumTitle
+        result.removalPolicy = pending.removalPolicy
+        result.maximumLongEdge = pending.maximumLongEdge
+        result.jpegQuality = pending.jpegQuality
+        result.enabled = pending.enabled
+        return result
+    }
+
     mutating func acknowledge(_ published: PendingSharedPhotoChanges) {
         for (mappingID, assetIDs) in published.additions {
             additions[mappingID]?.subtract(assetIDs)
@@ -86,7 +110,17 @@ struct PendingSharedPhotoChanges: Sendable {
         for (mappingID, assetIDs) in published.removals {
             removals[mappingID]?.subtract(assetIDs)
         }
+        for (mappingID, mapping) in published.portableMappings
+        where portableMappings[mappingID] == mapping {
+            portableMappings.removeValue(forKey: mappingID)
+        }
         removeEmptyEntries()
+    }
+
+    mutating func discard(mappingID: UUID) {
+        additions.removeValue(forKey: mappingID)
+        removals.removeValue(forKey: mappingID)
+        portableMappings.removeValue(forKey: mappingID)
     }
 
     private mutating func removeEmptyEntries() {
@@ -178,6 +212,7 @@ final class AppStore {
     @ObservationIgnored private let sessionManager: any SkylightSessionManaging
     @ObservationIgnored private let syncStateStore: SyncStateStore
     @ObservationIgnored let sharedPreferencesStore: any SharedPreferencesCloudStoring
+    @ObservationIgnored let sharedPhotoMappingStore: any SharedPhotoMappingCloudStoring
     @ObservationIgnored var sharedCloudOperationInProgress = false
     @ObservationIgnored var sharedPreferencesOperationInProgress = false
     @ObservationIgnored var sharedPreferenceMutationVersion: UInt64 = 0
@@ -189,13 +224,15 @@ final class AppStore {
         sessionManager: any SkylightSessionManaging = SkylightSessionManager(),
         syncStateStore: SyncStateStore = SyncStateStore(),
         remindersStore: any AppRemindersStoring = AppleRemindersStore(),
-        sharedPreferencesStore: any SharedPreferencesCloudStoring = CloudPreferencesStore()
+        sharedPreferencesStore: any SharedPreferencesCloudStoring = CloudPreferencesStore(),
+        sharedPhotoMappingStore: any SharedPhotoMappingCloudStoring = CloudPhotoMappingStore()
     ) {
         self.persistence = persistence
         self.sessionManager = sessionManager
         self.syncStateStore = syncStateStore
         self.remindersStore = remindersStore
         self.sharedPreferencesStore = sharedPreferencesStore
+        self.sharedPhotoMappingStore = sharedPhotoMappingStore
         do {
             configuration = try persistence.loadConfiguration()
         } catch {
@@ -1385,6 +1422,11 @@ final class AppStore {
             configuration = originalConfiguration
             return
         }
+        if mapping.sourceKind == .selectedPhotos {
+            pendingSharedPhotoChanges.recordPortableMapping(
+                configuration.photoMappings[mappingIndex]
+            )
+        }
         let disabledConfiguration = configuration
         let frameID = configuration.account.frameID.trimmed
         var completed = true
@@ -1427,6 +1469,7 @@ final class AppStore {
             configuration = disabledConfiguration
             return
         }
+        pendingSharedPhotoChanges.discard(mappingID: mapping.id)
         await retireSharedPhotoMapping(mapping)
     }
 

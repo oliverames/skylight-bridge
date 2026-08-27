@@ -29,6 +29,12 @@ struct SyncStateIdentityTests {
             ) == ["asset-added", "asset-removed"]
         )
 
+        var partiallyAcknowledged = PendingSharedPhotoChanges()
+        partiallyAcknowledged.additions[mappingID] = ["asset-added"]
+        pending.acknowledge(partiallyAcknowledged)
+        #expect(pending.additions[mappingID] == ["asset-removed"])
+        #expect(pending.removals[mappingID] == ["asset-toggled"])
+
         let published = pending
         pending.record(
             mappingID: mappingID,
@@ -39,11 +45,49 @@ struct SyncStateIdentityTests {
 
         #expect(pending.additions[mappingID] == ["asset-later"])
         #expect(pending.removals[mappingID] == nil)
+
+        var original = PhotoMapping(name: "Original", sourceKind: .selectedPhotos)
+        original.id = mappingID
+        pending.recordPortableMapping(original)
+        var publishedPortable = PendingSharedPhotoChanges()
+        publishedPortable.portableMappings[mappingID] = original
+        var latest = original
+        latest.name = "Latest"
+        latest.maximumLongEdge = 1_440
+        pending.recordPortableMapping(latest)
+        pending.acknowledge(publishedPortable)
+
+        let reapplied = pending.applyingPortableFields(
+            to: PhotoMapping(id: mappingID, name: "Remote", sourceKind: .selectedPhotos)
+        )
+        #expect(reapplied.name == "Latest")
+        #expect(reapplied.maximumLongEdge == 1_440)
+        #expect(pending.portableMappings[mappingID] == latest)
+
+        pending.discard(mappingID: mappingID)
+        #expect(pending.isEmpty)
     }
 
     @Test("Shared-state publishes wait for the full Cloud operation gate")
     @MainActor
     func sharedStatePublishWaitsForCloudOperationGate() async throws {
+        let defaults = UserDefaults.standard
+        let preferencesKey = "shared-preferences-v1"
+        let installationKey = "cloud-installation-id"
+        let previousPreferences = defaults.data(forKey: preferencesKey)
+        let previousInstallationID = defaults.string(forKey: installationKey)
+        defer {
+            if let previousPreferences {
+                defaults.set(previousPreferences, forKey: preferencesKey)
+            } else {
+                defaults.removeObject(forKey: preferencesKey)
+            }
+            if let previousInstallationID {
+                defaults.set(previousInstallationID, forKey: installationKey)
+            } else {
+                defaults.removeObject(forKey: installationKey)
+            }
+        }
         let directory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -64,6 +108,90 @@ struct SyncStateIdentityTests {
         store.sharedCloudOperationInProgress = false
         #expect(await publish.value)
         #expect(await preferences.saveCount == 1)
+    }
+
+    @Test("A blocked retirement stops after the mapping is reactivated")
+    @MainActor
+    func stalePhotoRetirementStopsAfterReactivation() async throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = testConfigurationStore(rootURL: directory)
+        let selected = PhotoMapping(name: "Family", sourceKind: .selectedPhotos)
+        var configuration = AppConfiguration.empty
+        configuration.photoMappings = [selected]
+        try persistence.saveConfiguration(configuration)
+        let photoStore = RecordingPhotoMappingStore()
+        let store = AppStore(
+            persistence: persistence,
+            sharedPreferencesStore: CountingPreferencesStore(),
+            sharedPhotoMappingStore: photoStore
+        )
+        store.photosAuthorizationStatus = .denied
+        store.sharedCloudOperationInProgress = true
+
+        var localOnly = selected
+        localOnly.sourceKind = .album
+        #expect(store.savePhotoMapping(localOnly, triggerSync: false))
+        let blockedRetirement = Task {
+            await store.retireSharedPhotoMapping(selected)
+        }
+        try await ContinuousClock().sleep(for: .milliseconds(150))
+
+        var reactivated = localOnly
+        reactivated.sourceKind = .selectedPhotos
+        #expect(store.savePhotoMapping(reactivated, triggerSync: false))
+        #expect(!store.configuration.retiredPhotoMappingIDs.contains(selected.id))
+        #expect(store.configuration.pendingPhotoMappingRetirements.isEmpty)
+
+        store.sharedCloudOperationInProgress = false
+        await blockedRetirement.value
+
+        #expect(await photoStore.savedMappings().isEmpty)
+    }
+
+    @Test("Unresolved selected-photo identifiers remain pending and report failure")
+    @MainActor
+    func unresolvedSelectedPhotoIdentifiersRemainPending() async throws {
+        let defaults = UserDefaults.standard
+        let preferencesKey = "shared-preferences-v1"
+        let installationKey = "cloud-installation-id"
+        let previousPreferences = defaults.data(forKey: preferencesKey)
+        let previousInstallationID = defaults.string(forKey: installationKey)
+        defer {
+            if let previousPreferences {
+                defaults.set(previousPreferences, forKey: preferencesKey)
+            } else {
+                defaults.removeObject(forKey: preferencesKey)
+            }
+            if let previousInstallationID {
+                defaults.set(previousInstallationID, forKey: installationKey)
+            } else {
+                defaults.removeObject(forKey: installationKey)
+            }
+        }
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = testConfigurationStore(rootURL: directory)
+        try persistence.saveConfiguration(.empty)
+        let store = AppStore(
+            persistence: persistence,
+            sharedPreferencesStore: CountingPreferencesStore()
+        )
+        let mappingID = UUID()
+        store.photosAuthorizationStatus = .denied
+        store.pendingSharedPhotoChanges.record(
+            mappingID: mappingID,
+            additions: ["unresolved-asset"],
+            removals: []
+        )
+
+        let published = await store.publishSharediCloudState()
+
+        #expect(!published)
+        #expect(store.pendingSharedPhotoChanges.additions[mappingID] == ["unresolved-asset"])
+        #expect(store.activity.contains { $0.message.contains("still pending") })
     }
 
     @Test("Frame-scoped sync records have distinct identities")
@@ -1416,6 +1544,25 @@ private actor CountingPreferencesStore: SharedPreferencesCloudStoring {
         saveCount += 1
         return proposed
     }
+}
+
+private actor RecordingPhotoMappingStore: SharedPhotoMappingCloudStoring {
+    private var mappings: [SharedPhotoMapping] = []
+
+    func loadMappings() async throws -> [SharedPhotoMapping] { mappings }
+
+    func saveMapping(_ proposed: SharedPhotoMapping) async throws -> SharedPhotoMapping {
+        mappings.append(proposed)
+        return proposed
+    }
+
+    func loadSelections(for mappingID: UUID) async throws -> [SharedPhotoSelection] { [] }
+
+    func saveSelection(_ proposed: SharedPhotoSelection) async throws -> SharedPhotoSelection {
+        proposed
+    }
+
+    func savedMappings() -> [SharedPhotoMapping] { mappings }
 }
 
 @MainActor
