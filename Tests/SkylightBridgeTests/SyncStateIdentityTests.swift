@@ -575,6 +575,8 @@ struct SyncStateIdentityTests {
         let store = AppStore(persistence: unreadableStore, sessionManager: sessions)
 
         #expect(store.configurationLoadError != nil)
+        await store.start()
+        #expect(store.statusMessage.contains("Configuration recovery is required"))
         store.configuration.dryRun = false
         #expect(!store.saveConfiguration())
         await store.restoreAccountConnection()
@@ -585,6 +587,7 @@ struct SyncStateIdentityTests {
         #expect(await sessions.connectAttempts == 0)
         #expect(await sessions.clientAttempts == 0)
         #expect(!store.hasLoadedSharediCloudState)
+        #expect(store.recoveryStatusMessage?.contains("Configuration recovery is required") == true)
     }
 
     @Test("An activity load failure protects the original history")
@@ -622,8 +625,10 @@ struct SyncStateIdentityTests {
         #expect(store.activityLoadError != nil)
         store.appendActivity(.init(level: .error, area: .system, message: "New entry"))
         store.clearActivity()
+        store.completeSourceRefresh()
 
         #expect(store.activity.isEmpty)
+        #expect(store.statusMessage.contains("Activity recovery is required"))
         #expect(try Data(contentsOf: activityURL) == originalBytes)
         #expect(try originalStore.loadActivity() == baseline)
     }
@@ -735,6 +740,113 @@ struct SyncStateIdentityTests {
         #expect(try persistence.loadConfiguration() == store.configuration)
     }
 
+    @Test("Foreground shared settings survive an in-flight iCloud refresh")
+    @MainActor
+    func sharedPreferenceRefreshPreservesForegroundChanges() async throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let defaults = UserDefaults.standard
+        let preferencesKey = "shared-preferences-v1"
+        let installationKey = "cloud-installation-id"
+        let previousPreferences = defaults.data(forKey: preferencesKey)
+        let previousInstallationID = defaults.string(forKey: installationKey)
+        defer {
+            if let previousPreferences {
+                defaults.set(previousPreferences, forKey: preferencesKey)
+            } else {
+                defaults.removeObject(forKey: preferencesKey)
+            }
+            if let previousInstallationID {
+                defaults.set(previousInstallationID, forKey: installationKey)
+            } else {
+                defaults.removeObject(forKey: installationKey)
+            }
+        }
+
+        let cached = SharedPreferences(
+            selectedFrameID: "frame-1",
+            dryRun: true,
+            preferredSyncIntervalMinutes: 15,
+            modifiedAt: Date(timeIntervalSince1970: 100),
+            modifiedByInstallationID: "mac"
+        )
+        defaults.set(try JSONEncoder().encode(cached), forKey: preferencesKey)
+        defaults.set("mac", forKey: installationKey)
+
+        var configuration = AppConfiguration.empty
+        configuration.account.frameID = "frame-1"
+        configuration.dryRun = true
+        configuration.syncIntervalMinutes = 15
+        let persistence = testConfigurationStore(rootURL: directory)
+        try persistence.saveConfiguration(configuration)
+        let remote = SharedPreferences(
+            selectedFrameID: "frame-1",
+            dryRun: true,
+            preferredSyncIntervalMinutes: 15,
+            modifiedAt: Date(timeIntervalSince1970: 200),
+            modifiedByInstallationID: "phone"
+        )
+        let cloudStore = SuspendedPreferencesStore(remote: remote)
+        let client = SkylightAPIClient(
+            accessToken: "token",
+            transport: FrameHydrationTransport()
+        )
+        let stateStore = SyncStateStore(
+            rootURL: directory.appendingPathComponent("sync-state", isDirectory: true),
+            authenticator: LocalFileAuthenticator(testKey: Data(repeating: 0x74, count: 32))
+        )
+        let store = AppStore(
+            persistence: persistence,
+            sessionManager: StaticClientSessionManager(client: client),
+            syncStateStore: stateStore,
+            sharedPreferencesStore: cloudStore
+        )
+        store.skylightFrames = [
+            SkylightResource(
+                id: "frame-1",
+                attributes: SkylightFrameAttributes(name: "Office", timezone: "UTC", plus: false)
+            ),
+            SkylightResource(
+                id: "frame-2",
+                attributes: SkylightFrameAttributes(
+                    name: "Kitchen",
+                    timezone: "America/New_York",
+                    plus: false
+                )
+            )
+        ]
+
+        let refresh = Task {
+            try await store.refreshSharedPreferences(using: cloudStore)
+        }
+        await cloudStore.waitUntilLoadStarts()
+
+        #expect(await store.selectFrame("frame-2", replacing: "frame-1"))
+        store.configuration.dryRun = false
+        store.configuration.syncIntervalMinutes = 45
+        #expect(store.saveConfiguration(
+            sharedPreferenceFields: [.dryRun, .syncInterval],
+            publishSharedState: false
+        ))
+        await cloudStore.resumeLoad()
+        let resolved = try await refresh.value
+        let saved = try #require(await cloudStore.savedPreferences())
+        let savedConfiguration = try persistence.loadConfiguration()
+
+        #expect(store.configuration.account.frameID == "frame-2")
+        #expect(store.configuration.dryRun == false)
+        #expect(store.configuration.syncIntervalMinutes == 45)
+        #expect(resolved.selectedFrameID == "frame-2")
+        #expect(resolved.dryRun == false)
+        #expect(resolved.preferredSyncIntervalMinutes == 45)
+        #expect(saved.selectedFrameID == "frame-2")
+        #expect(saved.dryRun == false)
+        #expect(saved.preferredSyncIntervalMinutes == 45)
+        #expect(savedConfiguration == store.configuration)
+    }
+
     @Test("Explicit sign-in is blocked while sync owns the account snapshot")
     @MainActor
     func explicitSignInDoesNotOverlapSync() async throws {
@@ -808,6 +920,78 @@ struct SyncStateIdentityTests {
         #expect(store.skylightChoreCategories == priorChoreCategories)
         #expect(await sessions.clientAttempts == 1)
         #expect(try persistence.loadConfiguration() == priorConfiguration)
+    }
+
+    @Test("A frame switch persists its hydrated state in one transaction")
+    @MainActor
+    func frameSwitchUsesOneConfigurationWrite() async throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let stateDirectory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+            try? FileManager.default.removeItem(at: stateDirectory)
+        }
+        let configurationKey = Data(repeating: 0x71, count: 32)
+        let activityKey = Data(repeating: 0x72, count: 32)
+        var configuration = AppConfiguration.empty
+        configuration.account.frameID = "frame-1"
+        configuration.account.deviceID = "device-1"
+        configuration.photoMappings = [PhotoMapping(
+            name: "Family",
+            destinationAlbumID: "album-1",
+            destinationAlbumTitle: "Family"
+        )]
+        let normalPersistence = ConfigurationStore(
+            rootURL: directory,
+            configurationAuthenticator: LocalFileAuthenticator(testKey: configurationKey),
+            activityAuthenticator: LocalFileAuthenticator(testKey: activityKey)
+        )
+        try normalPersistence.saveConfiguration(configuration)
+        let failingPersistence = ConfigurationStore(
+            fileManager: FailAfterCreateDirectoryFileManager(successfulCalls: 1),
+            rootURL: directory,
+            configurationAuthenticator: LocalFileAuthenticator(testKey: configurationKey),
+            activityAuthenticator: LocalFileAuthenticator(testKey: activityKey)
+        )
+        let stateStore = SyncStateStore(
+            rootURL: stateDirectory,
+            authenticator: LocalFileAuthenticator(testKey: Data(repeating: 0x73, count: 32))
+        )
+        let client = SkylightAPIClient(
+            accessToken: "token",
+            transport: FrameHydrationTransport()
+        )
+        let store = AppStore(
+            persistence: failingPersistence,
+            sessionManager: StaticClientSessionManager(client: client),
+            syncStateStore: stateStore
+        )
+        store.skylightFrames = [
+            SkylightResource(
+                id: "frame-1",
+                attributes: SkylightFrameAttributes(name: "Office", timezone: "UTC", plus: false)
+            ),
+            SkylightResource(
+                id: "frame-2",
+                attributes: SkylightFrameAttributes(
+                    name: "Kitchen",
+                    timezone: "America/New_York",
+                    plus: false
+                )
+            )
+        ]
+
+        let selected = await store.selectFrame("frame-2", replacing: "frame-1")
+        let saved = try normalPersistence.loadConfiguration()
+
+        #expect(selected)
+        #expect(store.configuration.account.frameID == "frame-2")
+        #expect(store.configuration.account.deviceID == "device-2")
+        #expect(store.configuration.photoMappings.first?.destinationAlbumID == "album-2")
+        #expect(store.skylightAlbums.map(\.id) == ["album-2"])
+        #expect(saved == store.configuration)
     }
 
     @Test("A failed final mapping removal save leaves a disabled retry")
@@ -1008,6 +1192,45 @@ private actor StaticClientSessionManager: SkylightSessionManaging {
         validateFrame: Bool
     ) async throws -> SkylightAPIClient {
         storedClient
+    }
+}
+
+private actor SuspendedPreferencesStore: SharedPreferencesCloudStoring {
+    private var remote: SharedPreferences?
+    private var loadStarted = false
+    private var loadContinuation: CheckedContinuation<SharedPreferences?, Never>?
+
+    init(remote: SharedPreferences?) {
+        self.remote = remote
+    }
+
+    func load() async throws -> SharedPreferences? {
+        loadStarted = true
+        return await withCheckedContinuation { continuation in
+            loadContinuation = continuation
+        }
+    }
+
+    func save(_ proposed: SharedPreferences) async throws -> SharedPreferences {
+        let saved = remote?.merging(proposed) ?? proposed
+        remote = saved
+        return saved
+    }
+
+    func waitUntilLoadStarts() async {
+        while !loadStarted {
+            await Task.yield()
+        }
+    }
+
+    func resumeLoad() {
+        let continuation = loadContinuation
+        loadContinuation = nil
+        continuation?.resume(returning: remote)
+    }
+
+    func savedPreferences() -> SharedPreferences? {
+        remote
     }
 }
 

@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import Observation
+import SkylightBridgeShared
 
 private enum AppStorePersistenceError: LocalizedError {
     case configurationRecoveryRequired(String)
@@ -28,6 +29,28 @@ protocol AppRemindersStoring {
 }
 
 extension AppleRemindersStore: AppRemindersStoring {}
+
+struct SharedPreferenceFields: OptionSet, Sendable {
+    let rawValue: UInt8
+
+    static let selectedFrame = Self(rawValue: 1 << 0)
+    static let dryRun = Self(rawValue: 1 << 1)
+    static let syncInterval = Self(rawValue: 1 << 2)
+}
+
+struct SharedPreferenceMutationRecord: Sendable {
+    var selectedFrame: (version: UInt64, value: String, modifiedAt: Date)?
+    var dryRun: (version: UInt64, value: Bool, modifiedAt: Date)?
+    var syncInterval: (version: UInt64, value: Int, modifiedAt: Date)?
+
+    var latestVersion: UInt64 {
+        max(
+            selectedFrame?.version ?? 0,
+            dryRun?.version ?? 0,
+            syncInterval?.version ?? 0
+        )
+    }
+}
 
 @MainActor
 @Observable
@@ -89,6 +112,15 @@ final class AppStore {
     /// Non-nil when the activity file failed authentication, decoding, or
     /// reading. Logging stays read-only so the unreadable file is preserved.
     private(set) var activityLoadError: String?
+    var recoveryStatusMessage: String? {
+        if let configurationLoadError {
+            return "Configuration recovery is required: \(configurationLoadError)"
+        }
+        if let activityLoadError {
+            return "Activity recovery is required: \(activityLoadError)"
+        }
+        return nil
+    }
     private var hasStarted = false
     /// Newest-first, trimmed to `maximumActivityEntries` in memory as well as
     /// on disk; the Activity page renders every row it is handed.
@@ -102,17 +134,23 @@ final class AppStore {
     @ObservationIgnored private let notesStore = AppleNotesStore()
     @ObservationIgnored private let sessionManager: any SkylightSessionManaging
     @ObservationIgnored private let syncStateStore: SyncStateStore
+    @ObservationIgnored let sharedPreferencesStore: any SharedPreferencesCloudStoring
+    @ObservationIgnored var sharedPreferencesOperationInProgress = false
+    @ObservationIgnored var sharedPreferenceMutationVersion: UInt64 = 0
+    @ObservationIgnored var sharedPreferenceMutations = SharedPreferenceMutationRecord()
 
     init(
         persistence: ConfigurationStore = ConfigurationStore(),
         sessionManager: any SkylightSessionManaging = SkylightSessionManager(),
         syncStateStore: SyncStateStore = SyncStateStore(),
-        remindersStore: any AppRemindersStoring = AppleRemindersStore()
+        remindersStore: any AppRemindersStoring = AppleRemindersStore(),
+        sharedPreferencesStore: any SharedPreferencesCloudStoring = CloudPreferencesStore()
     ) {
         self.persistence = persistence
         self.sessionManager = sessionManager
         self.syncStateStore = syncStateStore
         self.remindersStore = remindersStore
+        self.sharedPreferencesStore = sharedPreferencesStore
         do {
             configuration = try persistence.loadConfiguration()
         } catch {
@@ -130,10 +168,8 @@ final class AppStore {
         if configurationLoadError == nil {
             configureScheduler()
         }
-        if let configurationLoadError {
-            statusMessage = "Configuration recovery is required: \(configurationLoadError)"
-        } else if let activityLoadError {
-            statusMessage = "Activity recovery is required: \(activityLoadError)"
+        if let recoveryStatusMessage {
+            statusMessage = recoveryStatusMessage
         }
     }
 
@@ -170,14 +206,19 @@ final class AppStore {
     func start() async {
         guard !hasStarted else { return }
         hasStarted = true
+        defer {
+            if let recoveryStatusMessage {
+                statusMessage = recoveryStatusMessage
+            }
+        }
         applyDockIconPreference()
         if !UserDefaults.standard.bool(forKey: SupportDefaultsKey.hasCompletedOnboarding) {
             isOnboardingPresented = true
         }
         guard configurationLoadError == nil else {
-            // Local source authorization is safe to refresh, but account and
-            // CloudKit work could publish the empty recovery fallback.
-            await refreshSources()
+            // Keep recovery startup read-only. Even local source refreshes can
+            // launch apps or prompt for access while the original file needs
+            // attention.
             return
         }
         async let sources: Void = refreshSources()
@@ -187,7 +228,11 @@ final class AppStore {
     }
 
     @discardableResult
-    func saveConfiguration(triggerSync: Bool = false) -> Bool {
+    func saveConfiguration(
+        triggerSync: Bool = false,
+        sharedPreferenceFields: SharedPreferenceFields = [],
+        publishSharedState: Bool = true
+    ) -> Bool {
         // Photo display names for deselected assets are dead weight; the
         // sealed file has a hard size ceiling, so prune orphans before saving.
         for index in configuration.photoMappings.indices {
@@ -211,6 +256,9 @@ final class AppStore {
         if configurationLoadError == nil {
             configureScheduler()
         }
+        if !sharedPreferenceFields.isEmpty {
+            recordSharedPreferenceMutation(sharedPreferenceFields)
+        }
         do {
             try applyLaunchAtLoginPreference()
             statusMessage = "Configuration saved."
@@ -223,13 +271,40 @@ final class AppStore {
             ))
         }
         applyDockIconPreference()
-        if hasLoadedSharediCloudState {
+        if publishSharedState, hasLoadedSharediCloudState {
             Task { await publishSharediCloudState() }
         }
         if triggerSync {
             autoSync()
         }
         return true
+    }
+
+    private func recordSharedPreferenceMutation(_ fields: SharedPreferenceFields) {
+        sharedPreferenceMutationVersion &+= 1
+        let version = sharedPreferenceMutationVersion
+        let modifiedAt = Date.now
+        if fields.contains(.selectedFrame) {
+            sharedPreferenceMutations.selectedFrame = (
+                version,
+                configuration.account.frameID,
+                modifiedAt
+            )
+        }
+        if fields.contains(.dryRun) {
+            sharedPreferenceMutations.dryRun = (
+                version,
+                configuration.dryRun,
+                modifiedAt
+            )
+        }
+        if fields.contains(.syncInterval) {
+            sharedPreferenceMutations.syncInterval = (
+                version,
+                configuration.syncIntervalMinutes,
+                modifiedAt
+            )
+        }
     }
 
     private func persistConfiguration() throws {
@@ -308,7 +383,11 @@ final class AppStore {
             await loadNotesFolders()
         }
 
-        statusMessage = "Sources refreshed."
+        completeSourceRefresh()
+    }
+
+    func completeSourceRefresh() {
+        statusMessage = recoveryStatusMessage ?? "Sources refreshed."
     }
 
     /// Reads the Notes folder list whenever Automation access already exists.
@@ -735,7 +814,9 @@ final class AppStore {
             configuration.account.deviceID = connection.selectedDeviceID
             try persistConfiguration()
             configureScheduler()
-            try await refreshSkylightDestinations(using: connection.client)
+            if try await refreshSkylightDestinations(using: connection.client) {
+                try persistConfiguration()
+            }
             statusMessage = "Connected to Skylight."
             appendActivity(.init(
                 level: .success,
@@ -877,7 +958,7 @@ final class AppStore {
             if !skylightDevices.contains(where: { $0.id == configuration.account.deviceID }) {
                 configuration.account.deviceID = skylightDevices.first?.id ?? ""
             }
-            try await refreshSkylightDestinations(using: client)
+            _ = try await refreshSkylightDestinations(using: client)
             try persistConfiguration()
             statusMessage = "Connected to Skylight."
             connectionError = nil
@@ -893,7 +974,8 @@ final class AppStore {
     @discardableResult
     func selectFrame(
         _ frameID: String,
-        replacing previousFrameID: String? = nil
+        replacing previousFrameID: String? = nil,
+        recordSharedPreferenceMutation: Bool = true
     ) async -> Bool {
         guard configurationLoadError == nil else { return false }
         guard !isConnecting, !isSyncing else { return false }
@@ -924,8 +1006,11 @@ final class AppStore {
             let client = try await sessionManager.client(configuration: configuration.account)
             skylightDevices = try await client.listDevices(frameID: frameID)
             configuration.account.deviceID = skylightDevices.first?.id ?? ""
-            try await refreshSkylightDestinations(using: client)
-            guard saveConfiguration() else { return false }
+            _ = try await refreshSkylightDestinations(using: client)
+            guard saveConfiguration(
+                sharedPreferenceFields: recordSharedPreferenceMutation ? [.selectedFrame] : [],
+                publishSharedState: recordSharedPreferenceMutation
+            ) else { return false }
             committed = true
             return true
         } catch {
@@ -1082,7 +1167,9 @@ final class AppStore {
                 timeZone: syncTimeZone
             )
             let summary = try await coordinator.sync(configuration: syncConfiguration)
-            try await refreshSkylightDestinations(using: client, frameID: syncFrameID)
+            if try await refreshSkylightDestinations(using: client, frameID: syncFrameID) {
+                try persistConfiguration()
+            }
             record(summary.photos, area: .photos, dryRun: summary.dryRun)
             record(summary.reminders, area: .reminders, dryRun: summary.dryRun)
             record(summary.chores, area: .chores, dryRun: summary.dryRun)
@@ -1517,7 +1604,9 @@ final class AppStore {
         defer { isConnecting = false }
         do {
             let client = try await sessionManager.client(configuration: configuration.account)
-            try await refreshSkylightDestinations(using: client)
+            if try await refreshSkylightDestinations(using: client) {
+                try persistConfiguration()
+            }
         } catch SkylightSessionManagerError.missingCredentials {
             // Account setup is optional until the first sync.
         } catch {
@@ -1542,14 +1631,14 @@ final class AppStore {
     private func refreshSkylightDestinations(
         using client: SkylightAPIClient,
         frameID requestedFrameID: String? = nil
-    ) async throws {
+    ) async throws -> Bool {
         let frameID = (requestedFrameID ?? configuration.account.frameID).trimmed
         guard !frameID.isEmpty else {
             skylightAlbums = []
             skylightLists = []
             skylightMealCategories = []
             skylightChoreCategories = []
-            return
+            return false
         }
         async let albums = client.listAlbums(frameID: frameID)
         async let lists = client.listLists(frameID: frameID).data
@@ -1571,13 +1660,14 @@ final class AppStore {
                 == .orderedAscending
         } ?? []
         let state = try? await syncStateStore.load()
-        hydrateUniqueDestinationIDs(from: state)
+        return hydrateUniqueDestinationIDs(from: state)
     }
 
     /// Restores a destination from exact frame-scoped sync state before using
     /// a title match. A title can identify a replacement album or list after
     /// the original destination was renamed, so it is only a fallback.
-    func hydrateUniqueDestinationIDs(from state: SyncState?) {
+    @discardableResult
+    func hydrateUniqueDestinationIDs(from state: SyncState?) -> Bool {
         let frameID = configuration.account.frameID.trimmed
         var changed = false
         for index in configuration.photoMappings.indices {
@@ -1669,9 +1759,7 @@ final class AppStore {
                 changed = true
             }
         }
-        if changed {
-            try? persistConfiguration()
-        }
+        return changed
     }
 
     /// Removes a durable CloudKit retirement only after the disabled mapping

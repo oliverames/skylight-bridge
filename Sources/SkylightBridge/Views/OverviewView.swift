@@ -14,6 +14,16 @@ struct OverviewView: View {
 
     var body: some View {
         Form {
+            if let recoveryStatusMessage = store.recoveryStatusMessage {
+                Section("Recovery required") {
+                    Label(
+                        recoveryStatusMessage,
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .foregroundStyle(.red)
+                }
+            }
+
             Section {
                 appRow
                 connectionRow

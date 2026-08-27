@@ -1,6 +1,13 @@
 import Foundation
 import SkylightBridgeShared
 
+protocol SharedPreferencesCloudStoring: Sendable {
+    func load() async throws -> SharedPreferences?
+    func save(_ proposed: SharedPreferences) async throws -> SharedPreferences
+}
+
+extension CloudPreferencesStore: SharedPreferencesCloudStoring {}
+
 enum SharedPreferencesApplicationError: Error, LocalizedError, Equatable {
     case frameSelectionFailed(String)
     case persistenceFailed
@@ -27,22 +34,10 @@ extension AppStore {
             try await waitForSharedPreferencesApplyWindow()
             hasLoadedSharediCloudState = false
             await retryPendingPhotoMappingRetirements()
-            let cloudPreferences = CloudPreferencesStore()
-            let localPreferences = sharedPreferences()
-            let resolvedPreferences: SharedPreferences
-            if let remote = try await cloudPreferences.load() {
-                let merged = localPreferences.merging(remote)
-                // A preference saved while this Mac was offline must be
-                // written back after the field-wise merge. Otherwise it would
-                // look correct locally but never reach the iPhone.
-                resolvedPreferences = merged == remote
-                    ? merged
-                    : try await cloudPreferences.save(merged)
-            } else {
-                resolvedPreferences = try await cloudPreferences.save(localPreferences)
-            }
-            try await applySharedPreferences(resolvedPreferences)
-            storeSharedPreferences(resolvedPreferences)
+            _ = try await refreshSharedPreferences(
+                using: sharedPreferencesStore
+            )
+            let synchronizedPreferenceMutationVersion = sharedPreferenceMutationVersion
 
             if FeatureFlags.multiDeviceCoordinationEnabled {
                 try await publishAndCheckHeartbeat()
@@ -55,6 +50,14 @@ extension AppStore {
             // first would create a newer add record and silently resurrect it.
             try await importSharedPhotoMappings()
             try await publishLocalSelectedPhotoMappings()
+            // Keep full shared-state publishing suppressed until removes are
+            // imported. A preference changed during the unrelated Cloud work
+            // still gets one final serialized write before the flag flips.
+            if sharedPreferenceMutationVersion != synchronizedPreferenceMutationVersion {
+                _ = try await publishSharedPreferences(
+                    using: sharedPreferencesStore
+                )
+            }
             recordSharediCloudSuccess()
             hasLoadedSharediCloudState = true
             statusMessage = "Shared preferences and selected photos are up to date with iCloud."
@@ -70,10 +73,9 @@ extension AppStore {
         do {
             try await waitForSharedPreferencesApplyWindow()
             await retryPendingPhotoMappingRetirements()
-            let cloudPreferences = CloudPreferencesStore()
-            let saved = try await cloudPreferences.save(sharedPreferences())
-            try await applySharedPreferences(saved)
-            storeSharedPreferences(saved)
+            _ = try await publishSharedPreferences(
+                using: sharedPreferencesStore
+            )
             try await publishLocalSelectedPhotoMappings(
                 intentionalPhotoAdditions: intentionalPhotoAdditions
             )
@@ -397,6 +399,133 @@ extension AppStore {
         return preferences
     }
 
+    func refreshSharedPreferences(
+        using cloudPreferences: any SharedPreferencesCloudStoring
+    ) async throws -> SharedPreferences {
+        try await acquireSharedPreferencesOperation()
+        defer { sharedPreferencesOperationInProgress = false }
+
+        let observedMutationVersion = sharedPreferenceMutationVersion
+        let localPreferences = sharedPreferences()
+        let resolvedPreferences: SharedPreferences
+        if let remote = try await cloudPreferences.load() {
+            let merged = localPreferences.merging(remote)
+            // A preference saved while this Mac was offline must be written
+            // back after the field-wise merge. Otherwise it would look
+            // correct locally but never reach the iPhone.
+            resolvedPreferences = merged == remote
+                ? merged
+                : try await cloudPreferences.save(merged)
+        } else {
+            resolvedPreferences = try await cloudPreferences.save(localPreferences)
+        }
+        let stablePreferences = try await reconcileSharedPreferences(
+            resolvedPreferences,
+            observedMutationVersion: observedMutationVersion,
+            using: cloudPreferences
+        )
+        storeSharedPreferences(stablePreferences)
+        return stablePreferences
+    }
+
+    private func publishSharedPreferences(
+        using cloudPreferences: any SharedPreferencesCloudStoring
+    ) async throws -> SharedPreferences {
+        try await acquireSharedPreferencesOperation()
+        defer { sharedPreferencesOperationInProgress = false }
+
+        let observedMutationVersion = sharedPreferenceMutationVersion
+        let saved = try await cloudPreferences.save(sharedPreferences())
+        let stablePreferences = try await reconcileSharedPreferences(
+            saved,
+            observedMutationVersion: observedMutationVersion,
+            using: cloudPreferences
+        )
+        storeSharedPreferences(stablePreferences)
+        return stablePreferences
+    }
+
+    private func reconcileSharedPreferences(
+        _ initialPreferences: SharedPreferences,
+        observedMutationVersion initialMutationVersion: UInt64,
+        using cloudPreferences: any SharedPreferencesCloudStoring
+    ) async throws -> SharedPreferences {
+        var preferences = initialPreferences
+        var observedMutationVersion = initialMutationVersion
+
+        while true {
+            let mutations = sharedPreferenceMutations(after: observedMutationVersion)
+            if mutations.latestVersion > 0 {
+                apply(mutations, to: &preferences)
+                let includedMutationVersion = sharedPreferenceMutationVersion
+                preferences = try await cloudPreferences.save(preferences)
+                observedMutationVersion = includedMutationVersion
+                continue
+            }
+
+            observedMutationVersion = sharedPreferenceMutationVersion
+            try await applySharedPreferences(preferences)
+            if sharedPreferenceMutationVersion == observedMutationVersion {
+                return preferences
+            }
+        }
+    }
+
+    private func sharedPreferenceMutations(
+        after version: UInt64
+    ) -> SharedPreferenceMutationRecord {
+        var result = SharedPreferenceMutationRecord()
+        if let mutation = sharedPreferenceMutations.selectedFrame,
+           mutation.version > version {
+            result.selectedFrame = mutation
+        }
+        if let mutation = sharedPreferenceMutations.dryRun,
+           mutation.version > version {
+            result.dryRun = mutation
+        }
+        if let mutation = sharedPreferenceMutations.syncInterval,
+           mutation.version > version {
+            result.syncInterval = mutation
+        }
+        return result
+    }
+
+    private func apply(
+        _ mutations: SharedPreferenceMutationRecord,
+        to preferences: inout SharedPreferences
+    ) {
+        let installationID = cloudInstallationID
+        if let mutation = mutations.selectedFrame {
+            preferences.setSelectedFrameID(
+                mutation.value,
+                at: mutation.modifiedAt,
+                by: installationID
+            )
+        }
+        if let mutation = mutations.dryRun {
+            preferences.setDryRun(
+                mutation.value,
+                at: mutation.modifiedAt,
+                by: installationID
+            )
+        }
+        if let mutation = mutations.syncInterval {
+            preferences.setPreferredSyncInterval(
+                mutation.value,
+                at: mutation.modifiedAt,
+                by: installationID
+            )
+        }
+    }
+
+    private func acquireSharedPreferencesOperation() async throws {
+        while sharedPreferencesOperationInProgress {
+            try Task.checkCancellation()
+            try await ContinuousClock().sleep(for: .milliseconds(100))
+        }
+        sharedPreferencesOperationInProgress = true
+    }
+
     func applySharedPreferences(_ preferences: SharedPreferences) async throws {
         try await waitForSharedPreferencesApplyWindow()
         let priorDryRun = configuration.dryRun
@@ -415,7 +544,8 @@ extension AppStore {
            configuration.account.frameID != selectedFrameID {
             guard await selectFrame(
                 selectedFrameID,
-                replacing: configuration.account.frameID
+                replacing: configuration.account.frameID,
+                recordSharedPreferenceMutation: false
             ) else {
                 configuration.dryRun = priorDryRun
                 configuration.syncIntervalMinutes = priorInterval
@@ -423,7 +553,7 @@ extension AppStore {
             }
             return
         }
-        if changed, !saveConfiguration() {
+        if changed, !saveConfiguration(publishSharedState: false) {
             configuration.dryRun = priorDryRun
             configuration.syncIntervalMinutes = priorInterval
             throw SharedPreferencesApplicationError.persistenceFailed

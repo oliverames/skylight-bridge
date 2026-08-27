@@ -2057,6 +2057,51 @@ struct SyncCoordinatorTests {
         #expect(await api.choreListRequests.first?.before == "2026-08-29")
     }
 
+    @Test("Chore due dates preserve the frame wall clock across Mac timezones")
+    func choreDueDatesUseFrameCalendar() throws {
+        var macCalendar = Calendar(identifier: .gregorian)
+        macCalendar.timeZone = try #require(TimeZone(identifier: "America/New_York"))
+        var frameCalendar = Calendar(identifier: .gregorian)
+        frameCalendar.timeZone = try #require(TimeZone(identifier: "America/Los_Angeles"))
+
+        var dateOnly = DateComponents()
+        dateOnly.calendar = macCalendar
+        dateOnly.timeZone = macCalendar.timeZone
+        dateOnly.year = 2026
+        dateOnly.month = 8
+        dateOnly.day = 28
+        let dateOnlyValue = try #require(
+            AppleRemindersStore.choreDate(from: dateOnly, calendar: frameCalendar)
+        )
+        let dateOnlyRoundTrip = AppleRemindersStore.choreDateComponents(
+            dateOnlyValue,
+            calendar: frameCalendar
+        )
+
+        #expect(dateOnlyRoundTrip.year == 2026)
+        #expect(dateOnlyRoundTrip.month == 8)
+        #expect(dateOnlyRoundTrip.day == 28)
+        #expect(dateOnlyRoundTrip.hour == nil)
+        #expect(dateOnlyRoundTrip.minute == nil)
+
+        var timed = dateOnly
+        timed.hour = 14
+        timed.minute = 30
+        let timedValue = try #require(
+            AppleRemindersStore.choreDate(from: timed, calendar: frameCalendar)
+        )
+        let timedRoundTrip = AppleRemindersStore.choreDateComponents(
+            timedValue,
+            calendar: frameCalendar
+        )
+
+        #expect(timedRoundTrip.year == 2026)
+        #expect(timedRoundTrip.month == 8)
+        #expect(timedRoundTrip.day == 28)
+        #expect(timedRoundTrip.hour == 14)
+        #expect(timedRoundTrip.minute == 30)
+    }
+
     @Test("Meal weekdays resolve from the selected frame timezone")
     func mealDateUsesFrameTimezone() throws {
         let instant = try #require(

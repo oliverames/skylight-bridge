@@ -194,7 +194,7 @@ struct SyncSettingsView: View {
             Section("Schedule") {
                 Stepper(
                     "Sync every \(store.configuration.syncIntervalMinutes) minutes",
-                    value: $store.configuration.syncIntervalMinutes,
+                    value: syncIntervalBinding,
                     in: 10...240,
                     step: 5
                 )
@@ -211,7 +211,7 @@ struct SyncSettingsView: View {
             }
 
             Section("Safety") {
-                Toggle("Preview changes without applying them", isOn: $store.configuration.dryRun)
+                Toggle("Preview changes without applying them", isOn: dryRunBinding)
                 Label(
                     store.configuration.dryRun
                         ? "Preview mode is on. Syncs are planned and logged without changing Apple or Skylight data."
@@ -230,10 +230,28 @@ struct SyncSettingsView: View {
         // Mapping toggles elsewhere autosave, so these settings do too; a Save
         // button here silently lost changes on quit and made "Hide Dock icon"
         // appear broken until pressed.
-        .onChange(of: store.configuration.syncIntervalMinutes) { store.saveConfiguration() }
         .onChange(of: store.configuration.launchAtLogin) { store.saveConfiguration() }
         .onChange(of: store.configuration.hideDockIcon) { store.saveConfiguration() }
-        .onChange(of: store.configuration.dryRun) { store.saveConfiguration() }
+    }
+
+    private var syncIntervalBinding: Binding<Int> {
+        Binding(
+            get: { store.configuration.syncIntervalMinutes },
+            set: { value in
+                store.configuration.syncIntervalMinutes = value
+                store.saveConfiguration(sharedPreferenceFields: [.syncInterval])
+            }
+        )
+    }
+
+    private var dryRunBinding: Binding<Bool> {
+        Binding(
+            get: { store.configuration.dryRun },
+            set: { value in
+                store.configuration.dryRun = value
+                store.saveConfiguration(sharedPreferenceFields: [.dryRun])
+            }
+        )
     }
 }
 
