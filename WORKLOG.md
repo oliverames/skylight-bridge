@@ -1,3 +1,56 @@
+## 2026-08-27 - Shared Cloud gate deadlock fixed; 1.6.2 and 1.6.3 released
+
+**What changed**: Released 1.6.2 (build 27), which shipped the reconciliation
+work the previous entry left unreleased, then found and fixed a deadlock and
+released 1.6.3 (build 28).
+
+`publishSharediCloudState` and `refreshSharediCloudState` took the shared Cloud
+operation gate and then awaited `waitForSharedPreferencesApplyWindow`, which
+spins on `isConnecting || isSyncing`. `runTeardown` takes the same two pieces of
+state in the opposite order: it sets `isSyncing` first, then calls
+`retireSharedPhotoMapping`, which wants the gate. Either order alone is fine;
+together they form a cycle that cannot resolve. Holding the gate through that
+wait was independently harmful, because every unrelated Cloud operation blocks
+on the gate, including a mapping retirement that never consults the apply
+window. Commit `5323bfb` adds `acquireSharedCloudOperationInApplyWindow`, which
+waits for the window first and takes the gate second; the window can close
+between the two steps, so it releases the gate and retries rather than
+proceeding across a sync.
+
+**Decisions made**: No timeout was added to the wait. Once the cycle is gone a
+long `isConnecting` only delays the publish, which is correct behavior, and a
+timeout would turn a slow network into a spurious failure. Reordering is safe
+because taking the gate first never bought exclusion in the first place:
+`syncNow` gates only on `!isSyncing && !isConnecting` and never reads
+`sharedCloudOperationInProgress`.
+
+**Verification**: A new regression test asserts the gate is not held while the
+publish waits for a settling connection. It fails on the previous code in 25 of
+25 runs under CPU load and passes here. 242 tests in 25 suites pass via
+`script/run_tests.sh`. Forty consecutive full-suite runs finished with 0
+failures and 0 hangs. Both releases are Developer ID signed as Oliver Ames
+(`PV3W52NDZ3`), notarized and stapled, and report "Notarized Developer ID" to
+Gatekeeper. 1.6.3 DMG SHA-256
+`50f90f628dc3d04c8a047d35579e1f893769b40c0ce90f8424ea2ee54c13e153` matches its
+published checksum file, the release asset returns HTTP 200 at 6767331 bytes,
+and the signed appcast on gh-pages serves 1.6.3 build 28 and diffs clean
+against the repo copy. The notary key fetched from 1Password was deleted from
+the scratch directory and confirmed gone.
+
+**Left off at**: Released and clean. `main` is 1.6.3 build 28 with nothing
+unpushed.
+
+**Known follow-ups**: The intermittent full-suite hang that prompted this work
+was never reproduced on demand; 25 loaded runs of the previous code did not
+trigger it. This fixes a proven defect whose mechanism explains that hang
+rather than a directly reproduced one, so an unexplained hang recurring on
+1.6.3 would mean a second cause. The login keychain's `notarytool-profile`
+was locked during this session, so both releases used the 1Password notary key
+path (`NOTARY_KEY_FILE`/`NOTARY_KEY_ID`/`NOTARY_ISSUER_ID`) instead. The
+previous entry's known follow-ups all remain open and unaddressed.
+
+---
+
 ## 2026-08-27 - Adversarial bug-fix rounds: recovery, reconciliation, and Cloud race hardening
 
 **What changed**: Four commits on `main` (`e7461c9`, `dc3c93b`, `7e311bf`, `46adc62`) fix the confirmed defects found across repeated full-repository reviews. Account recovery now keeps unreadable configuration and activity files read-only, retries transient connection failures, serializes sign-in and sign-out ownership, and preserves replacement-frame state when later resource loading fails. Frame changes now hydrate destinations as one persisted transaction and restore the prior frame and resource lists after failure. Chore dates use the selected frame's wall clock, unsupported recurrence rules fail closed, selected recurring reminders keep their occurrence anchor, and parser handling rejects duplicate or lossy recurrence properties.
