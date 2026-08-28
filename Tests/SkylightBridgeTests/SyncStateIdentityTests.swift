@@ -68,6 +68,55 @@ struct SyncStateIdentityTests {
         #expect(pending.isEmpty)
     }
 
+    @Test("A settling connection does not strand the shared Cloud operation gate")
+    @MainActor
+    func settlingConnectionDoesNotStrandCloudGate() async throws {
+        let defaults = UserDefaults.standard
+        let preferencesKey = "shared-preferences-v1"
+        let installationKey = "cloud-installation-id"
+        let previousPreferences = defaults.data(forKey: preferencesKey)
+        let previousInstallationID = defaults.string(forKey: installationKey)
+        defer {
+            if let previousPreferences {
+                defaults.set(previousPreferences, forKey: preferencesKey)
+            } else {
+                defaults.removeObject(forKey: preferencesKey)
+            }
+            if let previousInstallationID {
+                defaults.set(previousInstallationID, forKey: installationKey)
+            } else {
+                defaults.removeObject(forKey: installationKey)
+            }
+        }
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = testConfigurationStore(rootURL: directory)
+        try persistence.saveConfiguration(.empty)
+        let preferences = CountingPreferencesStore()
+        let store = AppStore(
+            persistence: persistence,
+            sharedPreferencesStore: preferences
+        )
+
+        // A connection is settling, so the publish must wait before it applies
+        // anything. It must not take the Cloud operation gate to do that
+        // waiting: holding the gate while blocked on isConnecting strands every
+        // other Cloud operation, and a teardown that sets isSyncing and then
+        // wants the gate can never make progress.
+        store.isConnecting = true
+
+        let publish = Task { await store.publishSharediCloudState() }
+        try await ContinuousClock().sleep(for: .milliseconds(300))
+
+        #expect(store.sharedCloudOperationInProgress == false)
+        #expect(await preferences.saveCount == 0)
+
+        store.isConnecting = false
+        #expect(await publish.value)
+        #expect(await preferences.saveCount == 1)
+    }
+
     @Test("Shared-state publishes wait for the full Cloud operation gate")
     @MainActor
     func sharedStatePublishWaitsForCloudOperationGate() async throws {

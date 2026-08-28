@@ -43,10 +43,9 @@ extension AppStore {
         guard configurationLoadError == nil else { return }
 
         do {
-            try await acquireSharedCloudOperation()
+            try await acquireSharedCloudOperationInApplyWindow()
             defer { sharedCloudOperationInProgress = false }
             hasLoadedSharediCloudState = false
-            try await waitForSharedPreferencesApplyWindow()
             await retryPendingPhotoMappingRetirements()
             _ = try await refreshSharedPreferences(
                 using: sharedPreferencesStore
@@ -85,9 +84,8 @@ extension AppStore {
     func publishSharediCloudState() async -> Bool {
         guard configurationLoadError == nil else { return false }
         do {
-            try await acquireSharedCloudOperation()
+            try await acquireSharedCloudOperationInApplyWindow()
             defer { sharedCloudOperationInProgress = false }
-            try await waitForSharedPreferencesApplyWindow()
             await retryPendingPhotoMappingRetirements()
             _ = try await publishSharedPreferences(
                 using: sharedPreferencesStore
@@ -581,6 +579,30 @@ extension AppStore {
             try await ContinuousClock().sleep(for: .milliseconds(100))
         }
         sharedCloudOperationInProgress = true
+    }
+
+    /// Takes the shared Cloud operation gate, but only while the apply window
+    /// is open.
+    ///
+    /// Waiting for the window from inside the gate inverts the two locks. A
+    /// teardown takes them the other way round: it sets `isSyncing` first and
+    /// then wants the gate, so a publish holding the gate and waiting on
+    /// `isSyncing` can never be satisfied. Holding the gate through that wait
+    /// also strands every unrelated Cloud operation, including a mapping
+    /// retirement that never touches the window at all.
+    ///
+    /// Waiting first and taking the gate second removes the cycle. The window
+    /// can still close between the two steps, so release the gate and start
+    /// over rather than proceeding across a sync.
+    private func acquireSharedCloudOperationInApplyWindow() async throws {
+        while true {
+            try await waitForSharedPreferencesApplyWindow()
+            try await acquireSharedCloudOperation()
+            if !isConnecting, !isSyncing { return }
+            sharedCloudOperationInProgress = false
+            try Task.checkCancellation()
+            try await ContinuousClock().sleep(for: .milliseconds(100))
+        }
     }
 
     func applySharedPreferences(_ preferences: SharedPreferences) async throws {
