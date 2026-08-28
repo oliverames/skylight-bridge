@@ -6,16 +6,16 @@
     <description>Signed updates for Skylight Bridge.</description>
     <language>en</language>
     <item>
-      <title>Version 1.6.1</title>
-      <sparkle:version>26</sparkle:version>
-      <sparkle:shortVersionString>1.6.1</sparkle:shortVersionString>
-      <description><![CDATA[<p>A correctness release from a full-repo review. Deleted recurring reminders stay deleted, a failed teardown no longer strands Skylight copies, token refresh is single-flight so overlapping retries cannot end your session, and recipe quantities such as 0.5 cup parse correctly.</p>]]></description>
-      <pubDate>Wed, 26 Aug 2026 18:20:53 +0000</pubDate>
-      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.6.1/Skylight.Bridge-1.6.1.dmg" sparkle:edSignature="wyj6PVPbXQTgSvcs2NUI6U0hj70Tcdu5aR+AGd5anJNvN5YTRGK85XRJApYLBRfGDuqXplQ2yePC/xWvw3sDBw==" length="6408932" type="application/octet-stream" />
+      <title>Version 1.6.2</title>
+      <sparkle:version>27</sparkle:version>
+      <sparkle:shortVersionString>1.6.2</sparkle:shortVersionString>
+      <description><![CDATA[<p>This release includes improvements and fixes.</p>]]></description>
+      <pubDate>Fri, 28 Aug 2026 00:36:17 +0000</pubDate>
+      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.6.2/Skylight.Bridge-1.6.2.dmg" sparkle:edSignature="L0r2RAGvN1hDn3g2ynIlfLCW3fVbpvCGtHhAVrCXPNMsGDai/vobdT3cINMpzOJ0etwVu+t7jpnjuJA7pGeMBA==" length="6761187" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: RGTVy5XznFaEXvv5fqnXOVELsQvBuiVPRZ7M1+wHkMzvT1DV987Roxhfh6EzOkbL5iwKkmRxWs9+0nLLaQlgAg==
-length: 1235
+edSignature: 6K8DXUWl1ma4uBZ4iCWm9XPC1mhpMtmxjtFyK3sN1fwL1b9thrkVJkBGUvT9PUyF2YL13XzksBcFN1kpOcS+CQ==
+length: 1005
 -->
