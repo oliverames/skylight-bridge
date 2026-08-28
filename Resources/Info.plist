@@ -2,51 +2,51 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleDevelopmentRegion</key>
-    <string>en</string>
-    <key>CFBundleDisplayName</key>
-    <string>Skylight Bridge</string>
-    <key>CFBundleExecutable</key>
-    <string>SkylightBridge</string>
-    <key>CFBundleIconFile</key>
-    <string>AppIcon</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.oliverames.SkylightBridge</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>Skylight Bridge</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.6.1</string>
-    <key>CFBundleVersion</key>
-    <string>26</string>
-    <key>SUFeedURL</key>
-    <string>https://raw.githubusercontent.com/oliverames/skylight-bridge/gh-pages/appcast.xml</string>
-    <key>SUPublicEDKey</key>
-    <string>dHpRax28kl47J+NOJLYyLwZ/Xtqg64gC1Zl/PRPzB3U=</string>
-    <key>SURequireSignedFeed</key>
-    <true/>
-    <key>SUVerifyUpdateBeforeExtraction</key>
-    <true/>
-    <key>LSApplicationCategoryType</key>
-    <string>public.app-category.utilities</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>26.0</string>
-    <key>LSMultipleInstancesProhibited</key>
-    <true/>
-    <key>NSAppleEventsUsageDescription</key>
-    <string>Skylight Bridge reads only the Apple Notes folders and notes you select for recipes and meals.</string>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-    <key>NSHumanReadableCopyright</key>
-    <string>Copyright © 2026 Oliver Ames</string>
-    <key>NSPhotoLibraryUsageDescription</key>
-    <string>Skylight Bridge reads only the albums and photos you select for synchronization.</string>
-    <key>NSPrincipalClass</key>
-    <string>NSApplication</string>
-    <key>NSRemindersFullAccessUsageDescription</key>
-    <string>Skylight Bridge synchronizes only the Reminders lists and items you select.</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Skylight Bridge</string>
+	<key>CFBundleExecutable</key>
+	<string>SkylightBridge</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.oliverames.SkylightBridge</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Skylight Bridge</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.6.2</string>
+	<key>CFBundleVersion</key>
+	<string>27</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>26.0</string>
+	<key>LSMultipleInstancesProhibited</key>
+	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Skylight Bridge reads only the Apple Notes folders and notes you select for recipes and meals.</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2026 Oliver Ames</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Skylight Bridge reads only the albums and photos you select for synchronization.</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Skylight Bridge synchronizes only the Reminders lists and items you select.</string>
+	<key>SUFeedURL</key>
+	<string>https://raw.githubusercontent.com/oliverames/skylight-bridge/gh-pages/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>dHpRax28kl47J+NOJLYyLwZ/Xtqg64gC1Zl/PRPzB3U=</string>
+	<key>SURequireSignedFeed</key>
+	<true/>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
 </dict>
 </plist>
