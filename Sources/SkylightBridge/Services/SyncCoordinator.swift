@@ -823,7 +823,7 @@ actor SyncCoordinator {
     /// which means the cleanup goal is already met. Any other error (transport,
     /// auth, server) must surface to the caller so the record survives.
     private static func isAlreadyAbsent(_ error: any Error) -> Bool {
-        if case let .httpStatus(code, _, _) = error as? SkylightAPIError {
+        if case let .httpStatus(code, _, _, _) = error as? SkylightAPIError {
             return code == 404 || code == 410
         }
         if let appleError = error as? AppleRemindersStoreError,

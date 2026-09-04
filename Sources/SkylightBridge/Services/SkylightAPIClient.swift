@@ -245,7 +245,8 @@ extension SkylightAPIClient {
             throw SkylightAPIError.httpStatus(
                 code: response.statusCode,
                 endpoint: request.url?.path ?? "unknown endpoint",
-                body: String(data: data, encoding: .utf8) ?? ""
+                body: String(data: data, encoding: .utf8) ?? "",
+                method: request.httpMethod
             )
         }
     }

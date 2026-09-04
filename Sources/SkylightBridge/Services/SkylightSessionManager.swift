@@ -254,7 +254,7 @@ actor SkylightSessionManager {
     /// True when a probe failed because the session itself was rejected. Only
     /// these errors route into the credential-login fallback.
     nonisolated static func isAuthenticationFailure(_ error: any Error) -> Bool {
-        if case let .httpStatus(code, _, _) = error as? SkylightAPIError {
+        if case let .httpStatus(code, _, _, _) = error as? SkylightAPIError {
             return code == 401 || code == 403
         }
         if case let .invalidFormResponse(statusCode, body) = error as? SkylightOAuthError {

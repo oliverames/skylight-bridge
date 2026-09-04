@@ -3,6 +3,38 @@ import Testing
 @testable import SkylightBridge
 
 struct SkylightAPIClientTests {
+    @Test("HTTP failures distinguish reads from writes without exposing request values", arguments: ["GET", "POST"])
+    func describesFailedRequestMethod(method: String) async throws {
+        let transport = SkylightTestTransport { request in
+            SkylightTestTransport.response(
+                for: request,
+                statusCode: 422,
+                json: #"{"errors":{"date":["is invalid"]}}"#
+            )
+        }
+        let client = SkylightAPIClient(accessToken: "private-token", transport: transport)
+        let path = ["frames", "frame-1", "chores"]
+        let query = [URLQueryItem(name: "filter", value: "private-filter")]
+
+        do {
+            if method == "GET" {
+                try await client.sendWithoutResponse(method: method, path: path, query: query)
+            } else {
+                try await client.sendJSONWithoutResponse(
+                    method: method,
+                    path: path,
+                    query: query,
+                    body: ["title": "private-title", "notes": "private-notes"]
+                )
+            }
+            Issue.record("Expected the failed request to throw")
+        } catch let error as SkylightAPIError {
+            #expect(error.localizedDescription ==
+                "Skylight request to \(method) /api/frames/frame-1/chores returned HTTP 422: date: is invalid")
+            #expect(!error.localizedDescription.contains("private-"))
+        }
+    }
+
     @Test("List creation uses current headers, kind, and visibility field")
     func createsListWithCurrentContract() async throws {
         let transport = SkylightTestTransport { request in

@@ -80,7 +80,7 @@ struct SkylightOAuthToken: Codable, Equatable, Sendable {
 enum SkylightAPIError: Error, Equatable, Sendable {
     case invalidResponse
     case invalidUploadDestination
-    case httpStatus(code: Int, endpoint: String, body: String)
+    case httpStatus(code: Int, endpoint: String, body: String, method: String? = nil)
     case missingResponseBody
     case decodingFailed(endpoint: String, detail: String)
 }
@@ -100,11 +100,11 @@ extension SkylightAPIError: LocalizedError {
             "Skylight returned an invalid response."
         case .invalidUploadDestination:
             "Skylight returned an untrusted photo upload destination."
-        case let .httpStatus(code, endpoint, body):
+        case let .httpStatus(code, endpoint, body, method):
             // Surface the structured validation detail (e.g. which field a 422
             // rejected) so failures are diagnosable, while never echoing a raw
             // body — auth endpoints reflect request secrets back in the body.
-            SkylightAPIError.describeHTTPStatus(code: code, endpoint: endpoint, body: body)
+            SkylightAPIError.describeHTTPStatus(code: code, endpoint: endpoint, body: body, method: method)
         case .missingResponseBody:
             "Skylight returned an empty response where data was expected."
         case let .decodingFailed(endpoint, detail):
@@ -119,9 +119,11 @@ extension SkylightAPIError: LocalizedError {
         code: Int,
         endpoint: String,
         body: String,
+        method: String? = nil,
         limit: Int = 300
     ) -> String {
-        let prefix = "Skylight request to \(endpoint) returned HTTP \(code)"
+        let destination = method.map { "\($0) \(endpoint)" } ?? endpoint
+        let prefix = "Skylight request to \(destination) returned HTTP \(code)"
         guard let detail = validationDetail(from: body) else {
             return "\(prefix)."
         }
