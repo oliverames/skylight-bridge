@@ -20,7 +20,7 @@ Author: Oliver Ames
 
 ## Confirmed findings
 
-Fifteen findings survived source review and an independent skeptic pass. Fixes are implemented. All 256 tests in 26 suites pass, and the release build is notarized. Public download and update-feed verification are in progress.
+Sixteen findings survived source review and independent review, including the startup defect exposed by the notarized release. All fixes are implemented. All 256 tests in 26 suites pass. Verification of the corrective 1.6.5 release is in progress.
 
 | # | Severity | Failure | Fix and regression evidence |
 | --- | --- | --- | --- |
@@ -39,6 +39,8 @@ Fifteen findings survived source review and an independent skeptic pass. Fixes a
 | 13 | P2 | A failed meal replacement deletion lost the original meal identity. | Persist pending cleanup alongside the replacement and drain it before unchanged-slot checks. The regression reloads saved state before retry. |
 | 14 | P2 | Cleanup retries stalled when the target was already gone. | Use the existing typed absence policy for ordinary photo, recipe, meal, and Apple chore cleanup. Preserve photo ownership until remote cleanup finishes. |
 | 15 | P1 | Two chore members could share a list and crash on duplicate reminder IDs. | Assign separate lists, reserve existing ownership before title matching, and reject ambiguous existing mappings with a recoverable error. A same-name setup regression protects ownership. |
+
+| 16 | P1 | The release app could start a different store from the one its window used, leaving the window disconnected. | Replace uninstalled SwiftUI State access with one explicit process-lifetime store shared by startup and all scenes. The pre-fix release reproduced the fault in the unified log. The optimized compiler check and full suite pass after the fix. Release-mode connection verification follows. |
 
 ## Review coverage and exclusions
 

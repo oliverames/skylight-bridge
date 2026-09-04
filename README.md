@@ -13,8 +13,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/oliverames/skylight-bridge/releases/tag/v1.6.4">
-    <img src="https://img.shields.io/badge/macOS-v1.6.4-f5a542?style=flat-square&logo=apple&logoColor=white" alt="macOS release 1.6.4">
+  <a href="https://github.com/oliverames/skylight-bridge/releases/tag/v1.6.5">
+    <img src="https://img.shields.io/badge/macOS-v1.6.5-f5a542?style=flat-square&logo=apple&logoColor=white" alt="macOS release 1.6.5">
   </a>
   <a href="#license">
     <img src="https://img.shields.io/badge/license-all%20rights%20reserved-f5a542?style=flat-square" alt="All rights reserved">
@@ -48,10 +48,10 @@ This is a practical Mac utility, not a second household database. Every mapping 
 3. Open Skylight Bridge from Applications. The app is Developer ID-signed, notarized, and stapled for Gatekeeper.
 4. The app checks for signed updates, and **Skylight Bridge > Check for Updates…** is always available when you want to check manually.
 
-Version 1.6.4 adds photo previews to the selected-photo editor, fixes authentication with plus signs, preserves selected-photo edits across restarts, and keeps completed recurring chores stable through later syncs and edits. It also improves reminder adoption, Notes save failures, and cleanup retries. The [September 4 bug review](docs/BUG_REVIEW_2026-09-04.md) records the findings and verification. If you want to verify the download, compare the output below with the checksum file beside the DMG on the release page.
+Version 1.6.5 fixes automatic account restoration at startup. It also adds photo previews to the selected-photo editor, fixes authentication with plus signs, preserves selected-photo edits across restarts, and keeps completed recurring chores stable through later syncs and edits. It also improves reminder adoption, Notes save failures, and cleanup retries. The [September 4 bug review](docs/BUG_REVIEW_2026-09-04.md) records the findings and verification. If you want to verify the download, compare the output below with the checksum file beside the DMG on the release page.
 
 ```bash
-shasum -a 256 ~/Downloads/Skylight.Bridge-1.6.4.dmg
+shasum -a 256 ~/Downloads/Skylight.Bridge-1.6.5.dmg
 ```
 
 <p align="center">
