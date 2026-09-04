@@ -1,10 +1,22 @@
+## 2026-09-04 - Startup correction and 1.6.5 released
+
+Version 1.6.5 (build 30) supersedes 1.6.4 and completes the review with sixteen fixes plus selected-photo previews. Startup and all scenes now use one process-lifetime AppStore. This removes the uninstalled SwiftUI State access that left the optimized app disconnected.
+
+All 256 tests in 26 suites pass after the fix, and the optimized compiler check passes with warnings treated as errors. Two fresh launches of the notarized release restored the saved account automatically. The second process emitted no uninstalled-State fault, and the final photo editor showed actual thumbnails.
+
+The release was built from clean, pushed commit `3e56c5a2ab305858a67e06ed36d43d0b2c6f7e58`. Its universal app and DMG passed notarization, stapling, and Gatekeeper. The downloaded DMG is 6,857,444 bytes with SHA-256 `56c0c72069131ac59fb961bc2a37622bcca2dff79987a00119e57cd8149d8ea2`, matching the local artifact and published checksum. The live signed appcast advertises 1.6.5 build 30, and both the feed and downloaded archive signatures verify. GitHub reports 1.6.5 as the latest release. No private key file was exported.
+
+GitHub CI for the final release commit remains queued as observed on September 4, 2026. Local verification completed. The existing missing Reminders list remains a mapping follow-up. See the [full review](docs/BUG_REVIEW_2026-09-04.md).
+
+---
+
 ## 2026-09-04 - Bug review, photo previews, and 1.6.4 release
 
 Implemented fifteen confirmed fixes across authentication, persistence, reminder and chore reconciliation, Notes saves, and retry cleanup. Added selected-photo thumbnails at Oliver's request. The [dated review](docs/BUG_REVIEW_2026-09-04.md) records each finding and its evidence.
 
 All 256 tests in 26 suites pass, the compiler passes with warnings treated as errors, and the affected editors were visually inspected. Version 1.6.4 (build 29) was built from clean, pushed commit `5e3a04da927d10985e8c6e8e6e2a2b9cf174d300`. Its universal app and DMG passed notarization, stapling, and Gatekeeper verification. The published DMG SHA-256 is `32081e9a5c846074026532f3894ae4f4904b8903909a7b8024bddd9a6eb2c194`. The public download, signed appcast, and enclosure signature were verified. Credentials came from the existing Keychain profile, so no private key file was written.
 
-The final release launch exposed a preexisting SwiftUI startup defect: startup reads an uninstalled State value, which can differ from the store used by the window. A corrective release is in progress. Existing activity also reports an unavailable Apple Reminders list, including entries from the previous week. That mapping needs relinking and was not changed during UI verification.
+The final release launch exposed a preexisting SwiftUI startup defect: startup reads an uninstalled State value, which can differ from the store used by the window. The next entry records the corrective 1.6.5 release. Existing activity also reports an unavailable Apple Reminders list, including entries from the previous week. That mapping needs relinking and was not changed during UI verification.
 
 ---
 
