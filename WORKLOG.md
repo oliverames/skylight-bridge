@@ -1,3 +1,13 @@
+## 2026-09-04 - Bug review, photo previews, and 1.6.4 release
+
+Implemented fifteen confirmed fixes across authentication, persistence, reminder and chore reconciliation, Notes saves, and retry cleanup. Added selected-photo thumbnails at Oliver's request. The [dated review](docs/BUG_REVIEW_2026-09-04.md) records each finding and its evidence.
+
+All 256 tests in 26 suites pass, the compiler passes with warnings treated as errors, and the affected editors were visually inspected. Version 1.6.4 (build 29) was built from clean, pushed commit `5e3a04da927d10985e8c6e8e6e2a2b9cf174d300`. Its universal app and DMG passed notarization, stapling, and Gatekeeper verification. The published DMG SHA-256 is `32081e9a5c846074026532f3894ae4f4904b8903909a7b8024bddd9a6eb2c194`. The public download, signed appcast, and enclosure signature were verified. Credentials came from the existing Keychain profile, so no private key file was written.
+
+The final release launch exposed a preexisting SwiftUI startup defect: startup reads an uninstalled State value, which can differ from the store used by the window. A corrective release is in progress. Existing activity also reports an unavailable Apple Reminders list, including entries from the previous week. That mapping needs relinking and was not changed during UI verification.
+
+---
+
 ## 2026-08-27 - Shared Cloud gate deadlock fixed; 1.6.2 and 1.6.3 released
 
 **What changed**: Released 1.6.2 (build 27), which shipped the reconciliation

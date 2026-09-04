@@ -6,8 +6,8 @@ Author: Oliver Ames
 
 - [x] Review current code, release process, and baseline tests.
 - [x] Reproduce and fix confirmed defects, with regression coverage.
-- [ ] In progress: run the complete test suite and verify the release build.
-- [ ] Commit, push, publish the release, and verify the public update feed.
+- [x] Run the complete test suite and verify the release build.
+- [ ] In progress: publish the release and verify the public download and update feed.
 
 ## Baseline
 
@@ -20,7 +20,7 @@ Author: Oliver Ames
 
 ## Confirmed findings
 
-Fifteen findings survived source review and an independent skeptic pass. Fixes are implemented. All 256 tests in 26 suites pass, and release verification is in progress.
+Fifteen findings survived source review and an independent skeptic pass. Fixes are implemented. All 256 tests in 26 suites pass, and the release build is notarized. Public download and update-feed verification are in progress.
 
 | # | Severity | Failure | Fix and regression evidence |
 | --- | --- | --- | --- |
@@ -58,4 +58,9 @@ User-requested addition during visual verification: selected-photo rows now show
 - A separate build with warnings treated as errors passed.
 - After the thumbnail addition, all 256 tests in 26 suites passed again. A build with warnings treated as errors also passed.
 - The app was built and launched with `script/build_and_run.sh --verify`. Visual checks confirmed version 1.6.4 (29), Account controls, and real thumbnails in the existing photo selection, including after scrolling. No mapping was saved or removed during these checks.
-- Universal release build, notarization, and public download/feed verification are pending.
+- Visual checks also confirmed the Recipes screen and selection editor. The editors were canceled without saving.
+- Universal release build completed from clean, pushed commit `5e3a04da927d10985e8c6e8e6e2a2b9cf174d300`. The executable contains both arm64 and x86_64. [GitHub CI for that commit passed](https://github.com/oliverames/skylight-bridge/actions/runs/33918202820).
+- Apple accepted notarization for the app (`6206be52-82df-4a15-acd1-c1233a83c323`) and DMG (`89f2c1df-db44-47f6-a11d-be72c913fe71`). Both were stapled and validated. The app, DMG, and app mounted from the DMG passed Gatekeeper as Notarized Developer ID, signed by Oliver Ames, team `PV3W52NDZ3`.
+- DMG SHA-256: `32081e9a5c846074026532f3894ae4f4904b8903909a7b8024bddd9a6eb2c194`.
+- [Version 1.6.4 was published](https://github.com/oliverames/skylight-bridge/releases/tag/v1.6.4). The downloaded DMG is 6,859,492 bytes and matches the local and published SHA-256. The live appcast matches the local copy. Both its signature and the downloaded DMG's enclosure signature verify successfully, with version 1.6.4 and build 29.
+- Final launch of the notarized build exposed a preexisting startup defect. The window retained an unstarted store, while startup used the value of an uninstalled SwiftUI State. The release stayed disconnected, and the unified log recorded SwiftUI's warning that this creates a new instance each time. The pattern predates this review. A follow-up fix and superseding release are in progress.
