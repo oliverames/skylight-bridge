@@ -6,6 +6,105 @@ import Testing
 
 @MainActor
 struct SyncCoordinatorTests {
+    @Test("Adopted reminder completion follows direction and policy across retries",
+          arguments: [ReminderSyncDirection.appleToSkylight, .skylightToApple, .twoWay],
+          [SyncConflictPolicy.appleWins, .skylightWins])
+    func adoptedReminderCompletionIsReconciled(direction: ReminderSyncDirection, policy: SyncConflictPolicy) async throws {
+        let api = CoordinatorAPIStub()
+        await api.allowListItemUpdates()
+        await api.configureLists([remoteReminderList()], items: [SkylightResource(
+            id: "remote-item", attributes: SkylightListItemAttributes(
+                label: "Milk", status: .completed, section: nil, position: nil
+            )
+        )])
+        let source = CoordinatorReminderSource(reminders: [reminder(id: "apple-item", title: "Milk")], allowsUpdate: true)
+        let state = CoordinatorStateStore()
+        let coordinator = makeCoordinator(api: api, reminders: [], state: state, reminderSource: source)
+        var configuration = configuredReminders(dryRun: false)
+        configuration.reminderMappings[0].destinationListID = "remote-list"
+        configuration.reminderMappings[0].direction = direction
+        configuration.reminderMappings[0].conflictPolicy = policy
+        let first = try await coordinator.sync(configuration: configuration)
+        let second = try await coordinator.sync(configuration: configuration)
+        let appleWins = direction == .appleToSkylight || (direction == .twoWay && policy == .appleWins)
+        let remote = try await api.listListItems(frameID: "frame-1", listID: "remote-list")
+        #expect(remote.first?.attributes.status == (appleWins ? .pending : .completed))
+        #expect(source.updatedReminders.count == (appleWins ? 0 : 1))
+        #expect(first.reminders.applied == 1)
+        #expect(second.reminders.applied == 0)
+        #expect(try await state.loadSyncState().reminders.count == 1)
+        #expect(await api.snapshot().createdItems == 0)
+    }
+
+    @Test("Recipe cleanup accepts confirmed absence", arguments: [404, 410])
+    func recipeCleanupAcceptsAbsence(status: Int) async throws {
+        let api = CoordinatorAPIStub()
+        await api.configureCleanupError(SkylightAPIError.httpStatus(code: status, endpoint: "/recipes/old", body: ""))
+        var original = SyncState()
+        original.notes = [recipeSyncRecord(noteID: "gone", contentHash: "old", skylightID: "old", remoteRevision: "old")]
+        let state = CoordinatorStateStore(state: original)
+        var configuration = configuredRecipes()
+        configuration.recipeSelection.direction = .appleToSkylight
+        let coordinator = makeCoordinator(api: api, reminders: [], state: state)
+        _ = try await coordinator.sync(configuration: configuration)
+        #expect(try await state.loadSyncState().notes.isEmpty)
+    }
+
+    @Test("Meal replacement retries deletion without recreating its replacement")
+    func mealReplacementKeepsCleanupIdentity() async throws {
+        let api = CoordinatorAPIStub()
+        await api.configureMealCategories(mealCategories)
+        let source = CoordinatorNotesSource(notes: [recipeNote(id: "plan", plaintext: "Wednesday Dinner: Soup")])
+        let state = CoordinatorStateStore()
+        let coordinator = makeCoordinator(api: api, reminders: [], state: state, notesSource: source,
+                                          now: { Date(timeIntervalSince1970: 1_784_131_200) })
+        var configuration = AppConfiguration()
+        configuration.account.frameID = "frame-1"
+        configuration.dryRun = false
+        configuration.mealSelection.folderID = "folder-1"
+        configuration.mealSelection.enabled = true
+        _ = try await coordinator.sync(configuration: configuration)
+        let nextCoordinator = makeCoordinator(api: api, reminders: [], state: state, notesSource: source,
+                                              now: { Date(timeIntervalSince1970: 1_784_736_000) })
+        await api.configureCleanupError(URLError(.timedOut))
+        do {
+            _ = try await nextCoordinator.sync(configuration: configuration)
+            Issue.record("Expected failed old-meal cleanup")
+        } catch {}
+        let failedState = try await state.loadSyncState()
+        #expect(failedState.pendingMealCleanups.count == 1)
+        #expect(await api.createdMealCount == 2)
+        try await state.saveSyncState(JSONDecoder().decode(SyncState.self, from: JSONEncoder().encode(failedState)))
+        await api.configureCleanupError(nil)
+        _ = try await nextCoordinator.sync(configuration: configuration)
+        #expect(await api.createdMealCount == 2)
+        #expect(await api.deletedMealIDs == ["meal-1"])
+        #expect(try await state.loadSyncState().pendingMealCleanups.isEmpty)
+    }
+
+    @Test("An oversized remote recipe cannot overwrite the original Apple note")
+    func oversizedRecipeLeavesNoteIntact() async throws {
+        let api = CoordinatorAPIStub()
+        await api.configureMealCategories(mealCategories)
+        let source = CoordinatorNotesSource(notes: [recipeNote(id: "note-1", plaintext: "Soup\nKeep this instruction.")])
+        await api.configureRecipes([SkylightResource(id: "remote-1", attributes: SkylightRecipeAttributes(
+            summary: "Soup", description: String(repeating: "x", count: 4_097),
+            ingredients: ["Stock"], url: nil, imageURL: nil, createdAt: nil, updatedAt: "rev-2"
+        ))])
+        var configuration = configuredRecipes()
+        configuration.recipeSelection.conflictPolicy = .skylightWins
+        let coordinator = makeCoordinator(api: api, reminders: [], notesSource: source)
+        do {
+            _ = try await coordinator.sync(configuration: configuration)
+            Issue.record("Expected remote recipe parsing to fail")
+        } catch RecipeParserError.fieldTooLong {
+            // Expected: no Notes write may follow the parser limit.
+        }
+        #expect(await source.updatedBodiesByNoteID.isEmpty)
+        #expect(await source.createdBodies.isEmpty)
+        #expect(try await source.syncNote(withID: "note-1", inFolderID: "folder-1").plaintext == "Soup\nKeep this instruction.")
+    }
+
     @Test("A fresh configuration is safely opt-in")
     func freshConfigurationDoesNothing() async throws {
         let api = CoordinatorAPIStub()
@@ -1968,6 +2067,78 @@ struct SyncCoordinatorTests {
         #expect(persisted.chores.first?.skylightSeriesID == "chore-1")
     }
 
+    @Test("Completed chores stay complete after creation or adoption", arguments: [false, true])
+    func completedChoresRemainComplete(adoptExisting: Bool) async throws {
+        let api = CoordinatorAPIStub()
+        await api.configureChores([
+            SkylightResource(
+                id: "chore-1",
+                attributes: SkylightChoreAttributes(
+                    summary: "Water plants",
+                    description: "Kitchen herbs",
+                    group: nil,
+                    status: .complete,
+                    start: "2026-07-15",
+                    startTime: nil,
+                    completedOn: nil,
+                    rewardPoints: nil,
+                    recurring: true,
+                    recurringUntil: nil,
+                    recurrenceSet: ["FREQ=DAILY;INTERVAL=1"],
+                    upForGrabs: false,
+                    emojiIcon: nil,
+                    routine: true,
+                    position: nil
+                ),
+                relationships: [
+                    "categories": SkylightRelationship(
+                        data: .many([SkylightIdentifier(id: "person-1", type: "category")])
+                    )
+                ]
+            )
+        ])
+        let choreSource = CoordinatorChoreReminderSource(reminders: adoptExisting ? [
+            ChoreReminderSnapshot(
+                id: "existing-apple", listID: "list-1", memberKey: "person-1",
+                title: "Water plants", notes: "Kitchen herbs", isCompleted: false,
+                dueDate: Date(timeIntervalSince1970: 1_784_131_200),
+                recurrence: ParsedRecurrenceRule(frequency: .daily), recurrenceUnsupported: false,
+                modifiedAt: Date(timeIntervalSince1970: 1_784_131_200)
+            )
+        ] : [])
+        let state = CoordinatorStateStore()
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            state: state,
+            choreReminderSource: choreSource,
+            now: { Date(timeIntervalSince1970: 1_784_131_200) }
+        )
+        var mapping = ChoreMapping()
+        mapping.frameID = "frame-1"
+        mapping.frameName = "Kitchen"
+        mapping.direction = .appleToSkylight
+        mapping.memberLinks = [ChoreMemberLink(
+            memberKey: "person-1",
+            memberLabel: "Oliver",
+            appleListID: "list-1",
+            appleListTitle: "Oliver Chores"
+        )]
+        var configuration = AppConfiguration()
+        configuration.account.frameID = "frame-1"
+        configuration.dryRun = false
+        configuration.choreMappings = [mapping]
+
+        _ = try await coordinator.sync(configuration: configuration)
+        _ = try await coordinator.sync(configuration: configuration)
+        _ = try await coordinator.sync(configuration: configuration)
+        #expect(choreSource.createdReminders.count == (adoptExisting ? 0 : 1))
+        #expect(await api.choreCompletionRequests.isEmpty)
+        let stored = try await state.loadSyncState()
+        #expect(stored.chores.count == 1)
+        #expect(stored.chores.first?.baselineCompletedInstanceDate == "2026-07-15")
+    }
+
     @Test("A repeating Apple chore creates a recurring Skylight routine")
     func syncsRecurringAppleChoreToSkylightFromLegacyOneWayMapping() async throws {
         let today = Date(timeIntervalSince1970: 1_784_073_600)
@@ -2116,8 +2287,8 @@ struct SyncCoordinatorTests {
         #expect(resolved == "2026-09-03")
     }
 
-    @Test("A rolled EventKit occurrence rebinds before completion is propagated")
-    func rebindsRolledRecurringReminderIdentifier() async throws {
+    @Test("A rolled occurrence stays complete through repeated sync and content edits", arguments: [false, true])
+    func rebindsRolledRecurringReminderIdentifier(editOnApple: Bool) async throws {
         let today = Date(timeIntervalSince1970: 1_784_131_200)
         let nextDay = Date(timeIntervalSince1970: 1_784_217_600)
         let api = CoordinatorAPIStub()
@@ -2207,6 +2378,28 @@ struct SyncCoordinatorTests {
         #expect(persisted.chores.first?.appleReminderID == "apple-new-occurrence")
         #expect(persisted.chores.first?.baselineCompletedInstanceDate == "2026-07-15")
         #expect(persisted.chores.first?.baselineDueDate == nextDay)
+        let reloadedState = try JSONDecoder().decode(SyncState.self, from: JSONEncoder().encode(persisted))
+        try await state.saveSyncState(reloadedState)
+        _ = try await coordinator.sync(configuration: configuration)
+        _ = try await coordinator.sync(configuration: configuration)
+        #expect(await api.choreCompletionRequests.map(\.status) == [.complete])
+        await api.configureChoreUpdatesAllowed(true)
+        if editOnApple {
+            _ = try choreSource.syncUpdateChoreReminder(withID: "apple-new-occurrence", patch: ChoreReminderPatch(
+                title: "Updated plants", notes: nil, dueDate: nextDay,
+                recurrence: rolledReminder.recurrence, replaceRecurrence: false
+            ), memberKey: "person-1")
+        } else {
+            _ = try await api.updateChore(frameID: "frame-1", choreID: "chore-1",
+                                         request: SkylightChoreRequest(summary: "Updated plants"))
+        }
+        _ = try await coordinator.sync(configuration: configuration)
+        _ = try await coordinator.sync(configuration: configuration)
+        #expect(await api.choreCompletionRequests.map(\.status) == [.complete])
+        #expect(await api.choreRequests.allSatisfy { $0.status != .pending })
+        let finalApple = try await choreSource.syncChoreReminders(in: "list-1", memberKey: "person-1")
+        #expect(finalApple.first?.dueDate == nextDay)
+        #expect(finalApple.first?.title == "Updated plants")
     }
 
     @Test("An unsupported recurring reminder rebinds to a new occurrence without duplicating")
@@ -4007,6 +4200,10 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
     private var mealCategories: [SkylightResource<SkylightMealCategoryAttributes>] = []
     private var chores: [SkylightResource<SkylightChoreAttributes>] = []
     private var choreUpdatesAllowed = false
+    private var listItemUpdatesAllowed = false
+    private var cleanupError: (any Error)?
+    private(set) var createdMealCount = 0
+    private(set) var deletedMealIDs: [String] = []
     private var albums: [SkylightResource<SkylightAlbumAttributes>] = []
     private var albumCreationAllowed = false
     private(set) var createdAlbumTitles: [String] = []
@@ -4022,6 +4219,9 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
     private(set) var messageCaptionUpdates: [String] = []
 
     func snapshot() -> CoordinatorAPICalls { calls }
+    func allowListItemUpdates() { listItemUpdatesAllowed = true }
+    func configureCleanupError(_ error: (any Error)?) { cleanupError = error }
+
 
     func configureLists(
         _ lists: [SkylightResource<SkylightListAttributes>],
@@ -4102,32 +4302,21 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
         return created
     }
 
-    func updateChore(
-        frameID: String,
-        choreID: String,
-        request: SkylightChoreRequest
-    ) async throws -> SkylightResource<SkylightChoreAttributes> {
-        guard choreUpdatesAllowed else { throw CoordinatorStubError.unexpectedCall }
+    func updateChore(frameID: String, choreID: String, request: SkylightChoreRequest) async throws -> SkylightResource<SkylightChoreAttributes> {
+        guard choreUpdatesAllowed,
+              let index = chores.firstIndex(where: { $0.id == choreID }) else {
+            throw CoordinatorStubError.unexpectedCall
+        }
         choreRequests.append(request)
-        return SkylightResource(
-            id: choreID,
-            attributes: SkylightChoreAttributes(
-                summary: request.summary,
-                description: request.description,
-                status: request.status,
-                start: request.start,
-                startTime: request.startTime,
-                rewardPoints: request.rewardPoints,
-                recurring: request.recurring,
-                recurringUntil: request.recurringUntil,
-                recurrenceSet: request.recurrenceSet,
-                upForGrabs: request.upForGrabs,
-                emojiIcon: request.emojiIcon,
-                routine: request.routine,
-                position: request.position,
-                series: choreID
-            )
-        )
+        var encoded = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(chores[index])) as? [String: Any])
+        var attributes = try #require(encoded["attributes"] as? [String: Any])
+        let changes = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
+        attributes.merge(changes) { _, new in new }
+        encoded["attributes"] = attributes
+        let updated = try JSONDecoder().decode(SkylightResource<SkylightChoreAttributes>.self,
+                                               from: JSONSerialization.data(withJSONObject: encoded))
+        chores[index] = updated
+        return updated
     }
 
     func deleteChore(frameID: String, choreID: String, applyToAll: Bool) async throws {
@@ -4141,6 +4330,16 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
         request: SkylightChoreCompletionRequest
     ) async throws {
         choreCompletionRequests.append(request)
+        if let index = chores.firstIndex(where: { $0.id == seriesID }) {
+            var encoded = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(chores[index])) as? [String: Any])
+            var attributes = try #require(encoded["attributes"] as? [String: Any])
+            attributes["status"] = request.status.rawValue
+            encoded["attributes"] = attributes
+            chores[index] = try JSONDecoder().decode(
+                SkylightResource<SkylightChoreAttributes>.self,
+                from: JSONSerialization.data(withJSONObject: encoded)
+            )
+        }
         if request.status == .complete {
             completedChoreSeriesIDs.append(seriesID)
         }
@@ -4223,7 +4422,16 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
     private(set) var deletedListItemRequests: [(frameID: String, listID: String, itemID: String)] = []
     private(set) var deletedMessageRequests: [(frameID: String, messageID: String)] = []
 
-    func updateListItem(frameID: String, listID: String, itemID: String, request: SkylightListItemRequest) async throws -> SkylightResource<SkylightListItemAttributes> { throw CoordinatorStubError.unexpectedCall }
+    func updateListItem(frameID: String, listID: String, itemID: String, request: SkylightListItemRequest) async throws -> SkylightResource<SkylightListItemAttributes> {
+        guard listItemUpdatesAllowed, let index = listItems.firstIndex(where: { $0.id == itemID }) else {
+            throw CoordinatorStubError.unexpectedCall
+        }
+        let updated = SkylightResource(id: itemID, attributes: SkylightListItemAttributes(
+            label: request.label, status: request.status, section: request.section, position: request.position
+        ))
+        listItems[index] = updated
+        return updated
+    }
     func deleteListItem(frameID: String, listID: String, itemID: String) async throws {
         deletedListItemIDs.append(itemID)
         deletedListItemRequests.append((frameID, listID, itemID))
@@ -4406,6 +4614,7 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
         return recipes
     }
     func deleteRecipe(frameID: String, recipeID: String, applyToSittings: Bool) async throws {
+        if let cleanupError { throw cleanupError }
         calls.deletedRecipes += 1
         deletedRecipeIDs.append(recipeID)
         recipes.removeAll { $0.id == recipeID }
@@ -4430,9 +4639,18 @@ private actor CoordinatorAPIStub: SkylightSyncAPI {
             )
         )
     }
-    func createMealSitting(frameID: String, request: SkylightMealSittingRequest) async throws -> SkylightResource<SkylightMealSittingAttributes> { throw CoordinatorStubError.unexpectedCall }
+    func createMealSitting(frameID: String, request: SkylightMealSittingRequest) async throws -> SkylightResource<SkylightMealSittingAttributes> {
+        createdMealCount += 1
+        return SkylightResource(id: "meal-\(createdMealCount)", attributes: SkylightMealSittingAttributes(
+            summary: request.summary, description: request.description, note: request.note,
+            date: request.date, addToGroceryList: request.addToGroceryList, rrule: nil
+        ))
+    }
     func updateMealInstance(frameID: String, mealID: String, instanceISO: String, request: SkylightMealInstanceUpdateRequest) async throws -> SkylightResource<SkylightMealSittingAttributes> { throw CoordinatorStubError.unexpectedCall }
-    func deleteMealInstance(frameID: String, mealID: String, instanceISO: String, applyTo: String?) async throws { throw CoordinatorStubError.unexpectedCall }
+    func deleteMealInstance(frameID: String, mealID: String, instanceISO: String, applyTo: String?) async throws {
+        if let cleanupError { throw cleanupError }
+        deletedMealIDs.append(mealID)
+    }
 }
 
 private struct StubRecipeClassifier: RecipeClassifying {

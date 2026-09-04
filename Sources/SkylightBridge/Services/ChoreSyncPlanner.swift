@@ -157,21 +157,9 @@ enum ChoreSyncPlanner {
             return result
         }
         let remoteCompleted = todayStatus == .complete || todayStatus == .skipped
-        let tomorrow = calendar.date(byAdding: .day, value: 1, to: todayDate)
-            ?? .distantFuture
-        // A rolled-forward due date signals completion only for a genuinely
-        // recurring chore (EventKit spawns the next occurrence), including a
-        // degraded rule it still advances. Postponing a one-off chore is a
-        // reschedule, not a completion.
-        let rollsOccurrenceForward = apple.recurrence != nil || apple.recurrenceUnsupported
-        let appleRolledForward = if rollsOccurrenceForward,
-                                     let baseline = link.baselineDueDate,
-                                     let due = apple.dueDate {
-            due > baseline && baseline < tomorrow
-        } else {
-            false
-        }
-        let appleCompleted = apple.isCompleted || appleRolledForward
+        let appleCompleted = appleHasCompletedOccurrence(
+            apple, link: link, today: today, todayDate: todayDate, calendar: calendar
+        )
         let alreadyCompleted = link.baselineCompletedInstanceDate == today
 
         if remoteCompleted == appleCompleted {
@@ -189,6 +177,25 @@ enum ChoreSyncPlanner {
             result.append(.completeRemote(seriesID: remote.id, status: .complete))
         }
         return result
+    }
+
+    static func appleHasCompletedOccurrence(
+        _ apple: ChoreReminderSnapshot,
+        link: ChoreSyncLink,
+        today: String,
+        todayDate: Date,
+        calendar: Calendar
+    ) -> Bool {
+        if apple.isCompleted { return true }
+        guard apple.recurrence != nil || apple.recurrenceUnsupported,
+              let due = apple.dueDate else { return false }
+        // Keep evidence after baselineDueDate advances to the next occurrence.
+        // A title edit does not reopen it; a due-date rewind or new day does.
+        if link.baselineCompletedInstanceDate == today,
+           link.acknowledgedAdvanceDueDate == due { return true }
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: todayDate) ?? .distantFuture
+        guard let baseline = link.baselineDueDate else { return false }
+        return due > baseline && baseline < tomorrow
     }
 
     private static func key(_ title: String, _ memberKey: String) -> String {

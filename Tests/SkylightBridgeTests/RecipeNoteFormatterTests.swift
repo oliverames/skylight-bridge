@@ -33,7 +33,7 @@ struct RecipeNoteFormatterTests {
             updatedAt: nil
         )
 
-        let draft = RecipeNoteFormatter.draft(from: attributes)
+        let draft = try RecipeNoteFormatter.draft(from: attributes)
 
         #expect(draft.title == "Chocolate Cake Servings: 999")
         #expect(draft.servings == nil)
@@ -52,7 +52,7 @@ struct RecipeNoteFormatterTests {
             updatedAt: "2026-07-01T00:00:00Z"
         )
 
-        let draft = RecipeNoteFormatter.draft(from: attributes)
+        let draft = try RecipeNoteFormatter.draft(from: attributes)
 
         #expect(draft.title == "Grandma's Soup")
         #expect(draft.description == "A cozy classic from the Skylight app.")
@@ -87,7 +87,18 @@ struct RecipeNoteFormatterTests {
             updatedAt: "rev-1"
         )
 
-        #expect(RecipeNoteFormatter.draft(from: attributes) == original)
+        #expect(try RecipeNoteFormatter.draft(from: attributes) == original)
+    }
+
+    @Test("An oversized remote description fails without producing a stripped draft")
+    func rejectsOversizedRemoteDescription() {
+        let attributes = SkylightRecipeAttributes(
+            summary: "Soup", description: String(repeating: "x", count: 4_097),
+            ingredients: ["Stock"], url: nil, imageURL: nil, createdAt: nil, updatedAt: nil
+        )
+        #expect(throws: (any Error).self) {
+            try RecipeNoteFormatter.draft(from: attributes)
+        }
     }
 
     @Test("Plain note bodies escape HTML and keep one line per div")

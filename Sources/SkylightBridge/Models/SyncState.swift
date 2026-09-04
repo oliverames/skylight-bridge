@@ -232,6 +232,7 @@ struct ChoreSyncRecord: Identifiable, Codable, Sendable, Hashable {
     var lastSyncedRecurrence: String?
     var baselineDueDate: Date?
     var baselineCompletedInstanceDate: String?
+    var acknowledgedAdvanceDueDate: Date?
     var recurrenceDegraded: Bool
 
     init(
@@ -248,7 +249,8 @@ struct ChoreSyncRecord: Identifiable, Codable, Sendable, Hashable {
         lastSyncedRecurrence: String? = nil,
         baselineDueDate: Date? = nil,
         baselineCompletedInstanceDate: String? = nil,
-        recurrenceDegraded: Bool = false
+        recurrenceDegraded: Bool = false,
+        acknowledgedAdvanceDueDate: Date? = nil
     ) {
         self.mappingID = mappingID
         self.frameID = frameID
@@ -264,6 +266,7 @@ struct ChoreSyncRecord: Identifiable, Codable, Sendable, Hashable {
         self.baselineDueDate = baselineDueDate
         self.baselineCompletedInstanceDate = baselineCompletedInstanceDate
         self.recurrenceDegraded = recurrenceDegraded
+        self.acknowledgedAdvanceDueDate = acknowledgedAdvanceDueDate
     }
 
     init(from decoder: Decoder) throws {
@@ -281,6 +284,7 @@ struct ChoreSyncRecord: Identifiable, Codable, Sendable, Hashable {
         lastSyncedRecurrence = try container.decodeIfPresent(String.self, forKey: .lastSyncedRecurrence)
         baselineDueDate = try container.decodeIfPresent(Date.self, forKey: .baselineDueDate)
         baselineCompletedInstanceDate = try container.decodeIfPresent(String.self, forKey: .baselineCompletedInstanceDate)
+        acknowledgedAdvanceDueDate = try container.decodeIfPresent(Date.self, forKey: .acknowledgedAdvanceDueDate)
         recurrenceDegraded = try container.decodeIfPresent(Bool.self, forKey: .recurrenceDegraded) ?? false
     }
 }
@@ -394,9 +398,16 @@ struct PhotoDestinationSyncRecord: Identifiable, Codable, Sendable, Hashable {
     }
 }
 
+struct PendingMealCleanup: Codable, Hashable, Sendable {
+    let frameID: String
+    let mealID: String
+    let instanceISO: String
+}
+
 struct SyncState: Codable, Sendable {
     var photos: [PhotoSyncRecord] = []
     var pendingPhotoCleanups: [PendingPhotoCleanup] = []
+    var pendingMealCleanups: [PendingMealCleanup] = []
     var reminders: [ReminderSyncRecord] = []
     var reminderLists: [ReminderListSyncRecord] = []
     var chores: [ChoreSyncRecord] = []
@@ -419,6 +430,9 @@ struct SyncState: Codable, Sendable {
         pendingPhotoCleanups = try container.decodeIfPresent(
             [PendingPhotoCleanup].self,
             forKey: .pendingPhotoCleanups
+        ) ?? []
+        pendingMealCleanups = try container.decodeIfPresent(
+            [PendingMealCleanup].self, forKey: .pendingMealCleanups
         ) ?? []
         reminders = try container.decodeIfPresent([ReminderSyncRecord].self, forKey: .reminders) ?? []
         reminderLists = try container.decodeIfPresent([ReminderListSyncRecord].self, forKey: .reminderLists) ?? []

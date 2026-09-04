@@ -5,6 +5,24 @@ import Testing
 struct ChoreSyncPlannerTests {
     private let today = Date(timeIntervalSince1970: 1_784_073_600)
 
+    @Test("Acknowledged recurring completion survives content edits but expires on a new day")
+    func acknowledgedAdvancePreservesCompletion() {
+        let advanced = today.addingTimeInterval(3_600)
+        var stored = link(baselineDue: advanced, completedDay: "2026-07-15")
+        stored.acknowledgedAdvanceDueDate = advanced
+        let edited = appleSnapshot(id: "a", member: "oliver", title: "Water plants carefully", due: advanced)
+        #expect(ChoreSyncPlanner.appleHasCompletedOccurrence(
+            edited, link: stored, today: "2026-07-15", todayDate: today, calendar: .current
+        ))
+        #expect(!ChoreSyncPlanner.appleHasCompletedOccurrence(
+            edited, link: stored, today: "2026-07-16", todayDate: today.addingTimeInterval(86_400), calendar: .current
+        ))
+        #expect(!ChoreSyncPlanner.appleHasCompletedOccurrence(
+            appleSnapshot(id: "a", member: "oliver", due: today), link: stored,
+            today: "2026-07-15", todayDate: today, calendar: .current
+        ))
+    }
+
     @Test("Adoption matches title and assignee without considering completion")
     func adoptsByTitleAndMember() {
         let apple = appleSnapshot(id: "a", member: "oliver", title: " Water plants ")

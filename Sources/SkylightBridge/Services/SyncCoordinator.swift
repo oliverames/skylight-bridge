@@ -47,6 +47,7 @@ enum SyncCoordinatorError: Error, LocalizedError, Sendable {
     case invalidMealCategory(NotesContentKind)
     case missingChoreReminderSource
     case missingChoreList(String)
+    case sharedChoreList(String)
 
     var errorDescription: String? {
         switch self {
@@ -92,6 +93,8 @@ enum SyncCoordinatorError: Error, LocalizedError, Sendable {
             "The selected Skylight meal category is not available for \(kind.rawValue)."
         case .missingChoreReminderSource:
             "Apple Reminders is not available for chore synchronization."
+        case let .sharedChoreList(title):
+            "The Reminders list ‘\(title)’ is assigned to more than one chore member. Run chore setup to give each member a separate list."
         case let .missingChoreList(title):
             "The Apple Reminders list ‘\(title)’ could not be resolved."
         }
@@ -914,9 +917,11 @@ actor SyncCoordinator {
                 result.skylightItemsRemoved += 1
             }
             if mode.removesAppleReminders {
-                try await choreReminderSource?.syncRemoveChoreReminder(
-                    withID: record.appleReminderID
-                )
+                do {
+                    try await choreReminderSource?.syncRemoveChoreReminder(
+                        withID: record.appleReminderID
+                    )
+                } catch where Self.isAlreadyAbsent(error) {}
                 result.appleItemsRemoved += 1
             }
             state.chores.removeAll { $0.id == record.id }
@@ -1266,11 +1271,13 @@ actor SyncCoordinator {
                 )
                 let removableAlbumIDs = record.skylightAlbumIDs.subtracting(otherOwnerAlbumIDs)
                 if !removableAlbumIDs.isEmpty {
-                    try await api.removeMessages(
-                        frameID: frameID,
-                        albumIDs: removableAlbumIDs.sorted(),
-                        messageIDs: [record.skylightMessageID]
-                    )
+                    do {
+                        try await api.removeMessages(
+                            frameID: frameID,
+                            albumIDs: removableAlbumIDs.sorted(),
+                            messageIDs: [record.skylightMessageID]
+                        )
+                    } catch where Self.isAlreadyAbsent(error) {}
                     removePhotoMessageFromAlbumCache(
                         frameID: frameID,
                         albumIDs: removableAlbumIDs,
@@ -1282,7 +1289,6 @@ actor SyncCoordinator {
                         $0.frameID == frameID &&
                         $0.skylightMessageID == record.skylightMessageID
                 }
-                state.photos.removeAll { $0.id == record.id }
                 if hasOtherOwner {
                     let sharedCaption = photoCaptionOwnedByOtherRecord(
                         messageID: record.skylightMessageID,
@@ -1301,15 +1307,18 @@ actor SyncCoordinator {
                             ?? PhotoDeduplication.tag(forRenderedHash: record.renderedHash)
                     )
                 } else {
-                    try await api.deleteMessage(
-                        frameID: frameID,
-                        messageID: record.skylightMessageID
-                    )
+                    do {
+                        try await api.deleteMessage(
+                            frameID: frameID,
+                            messageID: record.skylightMessageID
+                        )
+                    } catch where Self.isAlreadyAbsent(error) {}
                     removePhotoMessageFromAllAlbumCaches(
                         frameID: frameID,
                         messageID: record.skylightMessageID
                     )
                 }
+                state.photos.removeAll { $0.id == record.id }
                 try await checkpoint(state, dryRun: dryRun)
                 summary.applied += 1
             }
@@ -1892,14 +1901,10 @@ actor SyncCoordinator {
                         appleReminderID: apple.id,
                         appleExternalID: apple.externalID,
                         skylightItemID: remote.id,
-                        lastAppleModifiedAt: apple.modificationDate ?? apple.creationDate ?? .distantPast,
-                        lastSkylightModifiedAt: remote.modifiedAt,
-                        contentFingerprint: reminderFingerprint(
-                            title: apple.title,
-                            isCompleted: apple.isCompleted
-                        ),
-                        lastSyncedTitle: apple.title,
-                        lastSyncedCompleted: apple.isCompleted
+                        lastAppleModifiedAt: (apple.modificationDate ?? apple.creationDate ?? .distantPast)
+                            .addingTimeInterval(-1),
+                        lastSkylightModifiedAt: remote.modifiedAt.addingTimeInterval(-1),
+                        contentFingerprint: ""
                     )
                     upsertReminderRecord(adopted, in: &state)
                     activeRecords.removeAll {
@@ -2378,6 +2383,9 @@ actor SyncCoordinator {
                         $0.title.localizedCaseInsensitiveCompare(link.appleListTitle) == .orderedSame
                     })
                 if let resolved {
+                    guard !listIDByMember.values.contains(resolved.id) else {
+                        throw SyncCoordinatorError.sharedChoreList(resolved.title)
+                    }
                     listIDByMember[link.memberKey] = resolved.id
                     appleSnapshots += try await choreReminderSource.syncChoreReminders(
                         in: resolved.id,
@@ -2595,24 +2603,15 @@ actor SyncCoordinator {
                 guard let apple = appleForAdoption[record.appleReminderID],
                       let remote = remoteForAdoption[record.skylightSeriesID] else { continue }
                 let remoteCompleted = remote.todayStatus == .complete || remote.todayStatus == .skipped
-                let tomorrow = calendar.date(byAdding: .day, value: 1, to: todayDate)
-                    ?? .distantFuture
-                // Rolling forward signals completion only for a genuinely
-                // recurring chore (including a degraded rule EventKit still
-                // advances). A one-off chore the user merely rescheduled must
-                // not read as completed.
-                let rollsOccurrenceForward = apple.recurrence != nil || apple.recurrenceUnsupported
-                let appleRolledForward = if rollsOccurrenceForward,
-                                             let baseline = record.baselineDueDate,
-                                             let due = apple.dueDate {
-                    due > baseline && baseline < tomorrow
-                } else {
-                    false
-                }
-                let appleCompleted = apple.isCompleted || appleRolledForward
+                let appleCompleted = ChoreSyncPlanner.appleHasCompletedOccurrence(
+                    apple, link: Self.choreLink(record), today: today,
+                    todayDate: todayDate, calendar: calendar
+                )
                 guard appleCompleted == remoteCompleted,
                       let index = state.chores.firstIndex(where: { $0.id == record.id }) else { continue }
                 state.chores[index].baselineCompletedInstanceDate = remoteCompleted ? today : nil
+                state.chores[index].acknowledgedAdvanceDueDate = remoteCompleted && !apple.isCompleted
+                    ? apple.dueDate : nil
                 state.chores[index].baselineDueDate = apple.dueDate
                 state.chores[index].lastAppleModifiedAt = apple.modifiedAt
                 state.chores[index].lastSkylightModifiedAt = remote.modifiedAt
@@ -2671,9 +2670,33 @@ actor SyncCoordinator {
                         remote: remote,
                         today: today
                     ), state: &state)
+                    if remote.todayStatus == .complete || remote.todayStatus == .skipped {
+                        try await checkpoint(state, dryRun: dryRun)
+                        let completedApple = try await choreReminderSource.syncSetChoreReminderCompletion(
+                            withID: apple.id, completed: true, dueDate: nil, memberKey: remote.memberKey
+                        )
+                        if let index = state.chores.firstIndex(where: {
+                            $0.mappingID == mapping.id && $0.skylightSeriesID == seriesID
+                        }) {
+                            state.chores[index].baselineCompletedInstanceDate = today
+                            state.chores[index].acknowledgedAdvanceDueDate = completedApple.isCompleted
+                                ? nil : completedApple.dueDate
+                            state.chores[index].baselineDueDate = completedApple.dueDate
+                            state.chores[index].lastAppleModifiedAt = completedApple.modifiedAt
+                        }
+                        summary.planned += 1
+                        summary.applied += 1
+                    }
 
                 case let .updateRemote(appleID, seriesID):
                     guard let apple = appleByID[appleID], let remote = remoteByID[seriesID] else { continue }
+                    let occurrenceStart = state.chores.first(where: {
+                        $0.mappingID == mapping.id && $0.skylightSeriesID == seriesID
+                    }).flatMap { record in
+                        record.baselineCompletedInstanceDate == today &&
+                            record.acknowledgedAdvanceDueDate == apple.dueDate
+                            ? remote.startDate : nil
+                    }
                     _ = try await api.updateChore(
                         frameID: frameID,
                         choreID: seriesID,
@@ -2684,7 +2707,9 @@ actor SyncCoordinator {
                             preserveRecurrence: apple.recurrenceUnsupported ||
                                 (state.chores.first {
                                     $0.mappingID == mapping.id && $0.skylightSeriesID == seriesID
-                                }?.recurrenceDegraded == true)
+                                }?.recurrenceDegraded == true),
+                            includeCompletion: false,
+                            occurrenceStart: occurrenceStart
                         )
                     )
                     let updatedRemote = SkylightChoreSnapshot(
@@ -2697,7 +2722,7 @@ actor SyncCoordinator {
                         recurrence: apple.recurrence ?? remote.recurrence,
                         recurrenceUnsupported: apple.recurrenceUnsupported,
                         todayStatus: remote.todayStatus,
-                        startDate: apple.dueDate,
+                        startDate: occurrenceStart ?? apple.dueDate,
                         modifiedAt: now()
                     )
                     Self.upsertChoreRecord(Self.choreRecord(
@@ -2713,12 +2738,19 @@ actor SyncCoordinator {
                             withID: appleID, toListID: listID, memberKey: remote.memberKey
                         )
                     }
+                    let preserveAdvancedDueDate = state.chores.contains {
+                        $0.mappingID == mapping.id && $0.skylightSeriesID == seriesID &&
+                            $0.baselineCompletedInstanceDate == today &&
+                            $0.acknowledgedAdvanceDueDate != nil &&
+                            $0.acknowledgedAdvanceDueDate == apple.dueDate &&
+                            (remote.todayStatus == .complete || remote.todayStatus == .skipped)
+                    }
                     apple = try await choreReminderSource.syncUpdateChoreReminder(
                         withID: appleID,
                         patch: ChoreReminderPatch(
                             title: remote.title,
                             notes: remote.notes,
-                            dueDate: remote.startDate ?? apple.dueDate,
+                            dueDate: preserveAdvancedDueDate ? apple.dueDate : (remote.startDate ?? apple.dueDate),
                             recurrence: remote.recurrence,
                             replaceRecurrence: !remote.recurrenceUnsupported
                         ),
@@ -2754,6 +2786,8 @@ actor SyncCoordinator {
                         state.chores[index].baselineCompletedInstanceDate = status == .pending ? nil : today
                         state.chores[index].lastSkylightModifiedAt = now()
                         if let apple = appleByID[state.chores[index].appleReminderID] {
+                            state.chores[index].acknowledgedAdvanceDueDate = status != .pending && !apple.isCompleted
+                                ? apple.dueDate : nil
                             state.chores[index].baselineDueDate = apple.dueDate
                             state.chores[index].lastAppleModifiedAt = apple.modifiedAt
                         }
@@ -2777,6 +2811,8 @@ actor SyncCoordinator {
                     )
                     if let index = state.chores.firstIndex(where: { $0.id == remoteRecord.id }) {
                         state.chores[index].baselineCompletedInstanceDate = completed ? today : nil
+                        state.chores[index].acknowledgedAdvanceDueDate = completed && !apple.isCompleted
+                            ? apple.dueDate : nil
                         state.chores[index].baselineDueDate = apple.dueDate
                         state.chores[index].lastAppleModifiedAt = apple.modifiedAt
                         if let remote = remoteByID[remoteRecord.skylightSeriesID] {
@@ -2984,11 +3020,13 @@ actor SyncCoordinator {
         summary.planned += removedRecords.count
         if !dryRun {
             for record in removedRecords {
-                try await api.deleteRecipe(
-                    frameID: frameID,
-                    recipeID: record.skylightID,
-                    applyToSittings: false
-                )
+                do {
+                    try await api.deleteRecipe(
+                        frameID: frameID,
+                        recipeID: record.skylightID,
+                        applyToSittings: false
+                    )
+                } catch where Self.isAlreadyAbsent(error) {}
                 state.notes.removeAll { $0.id == record.id }
                 try await checkpoint(state, dryRun: dryRun)
                 summary.applied += 1
@@ -3034,7 +3072,7 @@ actor SyncCoordinator {
             adoptedNoteIDs.insert(parsed.note.id)
             adoptedRemoteIDs.insert(remote.id)
 
-            let remoteDraft = RecipeNoteFormatter.draft(from: remote.attributes)
+            let remoteDraft = try RecipeNoteFormatter.draft(from: remote.attributes)
             if remoteDraft == parsed.draft {
                 upsertNoteRecord(
                     makeRecipeRecord(
@@ -3245,7 +3283,7 @@ actor SyncCoordinator {
         where !linkedRemoteIDs.contains(remote.id) && !adoptedRemoteIDs.contains(remote.id) {
             summary.planned += 1
             guard !dryRun else { continue }
-            let draft = RecipeNoteFormatter.draft(from: remote.attributes)
+            let draft = try RecipeNoteFormatter.draft(from: remote.attributes)
             let noteID = try await notesSource.syncCreateNote(
                 inFolderID: folderID,
                 bodyHTML: RecipeNoteFormatter.bodyHTML(for: draft, formatted: formattedNotes)
@@ -3315,7 +3353,7 @@ actor SyncCoordinator {
         formattedNotes: Bool,
         state: inout SyncState
     ) async throws {
-        let draft = RecipeNoteFormatter.draft(from: remote.attributes)
+        let draft = try RecipeNoteFormatter.draft(from: remote.attributes)
         try await notesSource.syncUpdateNote(
             withID: noteID,
             inFolderID: folderID,
@@ -3400,6 +3438,17 @@ actor SyncCoordinator {
         return plain.date(from: value)
     }
 
+    private func drainPendingMealCleanup(_ cleanup: PendingMealCleanup, state: inout SyncState) async throws {
+        do {
+            try await api.deleteMealInstance(
+                frameID: cleanup.frameID, mealID: cleanup.mealID,
+                instanceISO: cleanup.instanceISO, applyTo: nil
+            )
+        } catch where Self.isAlreadyAbsent(error) {}
+        state.pendingMealCleanups.removeAll { $0 == cleanup }
+        try await checkpoint(state, dryRun: false)
+    }
+
     private func syncMeals(
         selection: NotesSelection,
         frameID: String,
@@ -3407,6 +3456,12 @@ actor SyncCoordinator {
         state: inout SyncState
     ) async throws -> SyncDomainSummary {
         guard selection.enabled else { return SyncDomainSummary() }
+        let cleanups = state.pendingMealCleanups.filter { $0.frameID == frameID }
+        if !dryRun {
+            for cleanup in cleanups {
+                try await drainPendingMealCleanup(cleanup, state: &state)
+            }
+        }
         let notes = try await selectedNotes(for: selection)
         let mealCategoryID = try await resolveMealCategoryID(
             selection: selection,
@@ -3422,6 +3477,8 @@ actor SyncCoordinator {
             result[key] = recipe.id
         }
         var summary = SyncDomainSummary()
+        summary.planned += cleanups.count
+        if !dryRun { summary.applied += cleanups.count }
 
         for note in notes {
             var occurrences: [String: Int] = [:]
@@ -3489,6 +3546,12 @@ actor SyncCoordinator {
                             mealID: remote.id,
                             instanceISO: remote.attributes.date ?? date
                         )
+                        let cleanup = PendingMealCleanup(
+                            frameID: frameID, mealID: reference.mealID, instanceISO: reference.instanceISO
+                        )
+                        if !state.pendingMealCleanups.contains(cleanup) {
+                            state.pendingMealCleanups.append(cleanup)
+                        }
                         upsertNoteRecord(
                             NoteSyncRecord(
                                 kind: .meals,
@@ -3501,12 +3564,7 @@ actor SyncCoordinator {
                             in: &state
                         )
                         try await checkpoint(state, dryRun: dryRun)
-                        try await api.deleteMealInstance(
-                            frameID: frameID,
-                            mealID: reference.mealID,
-                            instanceISO: reference.instanceISO,
-                            applyTo: nil
-                        )
+                        try await drainPendingMealCleanup(cleanup, state: &state)
                         summary.applied += 2
                     }
                 } else {
@@ -3554,12 +3612,14 @@ actor SyncCoordinator {
         if !dryRun {
             for record in removedRecords {
                 let reference = try MealRemoteReference.decode(record.skylightID)
-                try await api.deleteMealInstance(
-                    frameID: frameID,
-                    mealID: reference.mealID,
-                    instanceISO: reference.instanceISO,
-                    applyTo: nil
-                )
+                do {
+                    try await api.deleteMealInstance(
+                        frameID: frameID,
+                        mealID: reference.mealID,
+                        instanceISO: reference.instanceISO,
+                        applyTo: nil
+                    )
+                } catch where Self.isAlreadyAbsent(error) {}
                 state.notes.removeAll { $0.id == record.id }
                 try await checkpoint(state, dryRun: dryRun)
                 summary.applied += 1
@@ -3815,7 +3875,8 @@ actor SyncCoordinator {
             baselineRecurrence: record.lastSyncedRecurrence,
             baselineDueDate: record.baselineDueDate,
             baselineCompletedInstanceDate: record.baselineCompletedInstanceDate,
-            recurrenceDegraded: record.recurrenceDegraded
+            recurrenceDegraded: record.recurrenceDegraded,
+            acknowledgedAdvanceDueDate: record.acknowledgedAdvanceDueDate
         )
     }
 
@@ -3839,7 +3900,7 @@ actor SyncCoordinator {
             lastSyncedNotes: remote.notes,
             lastSyncedRecurrence: remote.recurrence.map(RecurrenceRuleConverter.format),
             baselineDueDate: apple.dueDate,
-            baselineCompletedInstanceDate: remote.todayStatus == .complete || remote.todayStatus == .skipped
+            baselineCompletedInstanceDate: apple.isCompleted && (remote.todayStatus == .complete || remote.todayStatus == .skipped)
                 ? today
                 : nil,
             recurrenceDegraded: remote.recurrenceUnsupported || apple.recurrenceUnsupported
@@ -3847,6 +3908,15 @@ actor SyncCoordinator {
     }
 
     private static func upsertChoreRecord(_ record: ChoreSyncRecord, state: inout SyncState) {
+        var record = record
+        if let previous = state.chores.first(where: {
+            $0.mappingID == record.mappingID && $0.frameID == record.frameID &&
+                $0.skylightSeriesID == record.skylightSeriesID
+        }), let acknowledged = previous.acknowledgedAdvanceDueDate,
+           acknowledged == record.baselineDueDate {
+            record.acknowledgedAdvanceDueDate = acknowledged
+            record.baselineCompletedInstanceDate = previous.baselineCompletedInstanceDate
+        }
         state.chores.removeAll {
             $0.mappingID == record.mappingID &&
                 ($0.appleReminderID == record.appleReminderID ||
@@ -3859,17 +3929,19 @@ actor SyncCoordinator {
         apple: ChoreReminderSnapshot,
         today: String,
         calendar: Calendar,
-        preserveRecurrence: Bool = false
+        preserveRecurrence: Bool = false,
+        includeCompletion: Bool = true,
+        occurrenceStart: Date? = nil
     ) -> SkylightChoreRequest {
         let upForGrabs = apple.memberKey == ChoreMemberLink.upForGrabsKey
         return SkylightChoreRequest(
             summary: apple.title,
             description: apple.notes,
-            start: apple.dueDate.map { isoDay($0, calendar: calendar) } ?? today,
+            start: (occurrenceStart ?? apple.dueDate).map { isoDay($0, calendar: calendar) } ?? today,
             startTime: apple.recurrence == nil
                 ? apple.dueDate.map { choreTime($0, calendar: calendar) }
                 : nil,
-            status: apple.isCompleted ? .complete : .pending,
+            status: includeCompletion ? (apple.isCompleted ? .complete : .pending) : nil,
             categoryID: upForGrabs ? nil : apple.memberKey,
             categoryIDs: upForGrabs ? [] : [apple.memberKey],
             recurring: preserveRecurrence ? nil : apple.recurrence != nil,

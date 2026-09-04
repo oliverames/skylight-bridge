@@ -53,6 +53,7 @@ struct ChoreSyncLink: Equatable, Sendable {
     let baselineDueDate: Date?
     let baselineCompletedInstanceDate: String?
     let recurrenceDegraded: Bool
+    var acknowledgedAdvanceDueDate: Date? = nil
 }
 
 struct ChoreAdoptionPair: Equatable, Sendable {

@@ -3,6 +3,7 @@ import Foundation
 
 enum AppleRemindersStoreError: Error, LocalizedError, Sendable {
     case accessDenied
+    case fetchFailed
     case listNotFound(String)
     case reminderNotFound(String)
     case readOnlyList(String)
@@ -15,6 +16,8 @@ enum AppleRemindersStoreError: Error, LocalizedError, Sendable {
 
     var errorDescription: String? {
         switch self {
+        case .fetchFailed:
+            "Apple Reminders did not return a complete result. Try again before synchronizing or removing a list."
         case .accessDenied:
             "Full Apple Reminders access is not authorized."
         case let .listNotFound(identifier):
@@ -219,9 +222,9 @@ final class AppleRemindersStore {
             return false
         }
         let predicate = eventStore.predicateForReminders(in: [calendar])
-        let isEmpty: Bool = await withCheckedContinuation { continuation in
+        let isEmpty: Bool = try await withCheckedThrowingContinuation { continuation in
             eventStore.fetchReminders(matching: predicate) { reminders in
-                continuation.resume(returning: (reminders ?? []).isEmpty)
+                continuation.resume(with: Result { try Self.requiredFetchResult(reminders).isEmpty })
             }
         }
         guard isEmpty else { return false }
@@ -231,6 +234,11 @@ final class AppleRemindersStore {
             throw AppleRemindersStoreError.eventKit(error.localizedDescription)
         }
         return true
+    }
+
+    nonisolated static func requiredFetchResult(_ reminders: [EKReminder]?) throws -> [EKReminder] {
+        guard let reminders else { throw AppleRemindersStoreError.fetchFailed }
+        return reminders
     }
 
     private func preferredListSource() -> EKSource? {
@@ -250,10 +258,12 @@ final class AppleRemindersStore {
         }
 
         let predicate = eventStore.predicateForReminders(in: [calendar])
-        return await withCheckedContinuation { continuation in
+        return try await withCheckedThrowingContinuation { continuation in
             eventStore.fetchReminders(matching: predicate) { reminders in
                 Task { @MainActor in
-                    continuation.resume(returning: Self.snapshots(for: reminders ?? []))
+                    continuation.resume(with: Result {
+                        Self.snapshots(for: try Self.requiredFetchResult(reminders))
+                    })
                 }
             }
         }
@@ -266,16 +276,16 @@ final class AppleRemindersStore {
             throw AppleRemindersStoreError.listNotFound(listID)
         }
         let predicate = eventStore.predicateForReminders(in: [calendar])
-        return await withCheckedContinuation { continuation in
+        return try await withCheckedThrowingContinuation { continuation in
             eventStore.fetchReminders(matching: predicate) { reminders in
                 Task { @MainActor in
-                    continuation.resume(returning: (reminders ?? []).map {
+                    continuation.resume(with: Result { try Self.requiredFetchResult(reminders).map {
                         Self.choreSnapshot(
                             for: $0,
                             memberKey: memberKey,
                             calendar: self.choreCalendar
                         )
-                    })
+                    } })
                 }
             }
         }

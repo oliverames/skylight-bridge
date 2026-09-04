@@ -99,7 +99,7 @@ enum RecipeNoteFormatter {
     /// descriptions parse back into their structured fields; freeform descriptions
     /// from the Skylight app stay as description text with the structured
     /// ingredient list merged in.
-    static func draft(from attributes: SkylightRecipeAttributes) -> RecipeDraft {
+    static func draft(from attributes: SkylightRecipeAttributes) throws -> RecipeDraft {
         // A Skylight-authored summary is a single line by convention; collapse
         // any embedded newline so it cannot masquerade as the note's title
         // line or push the real title into a metadata field during parsing.
@@ -116,14 +116,14 @@ enum RecipeNoteFormatter {
         let fallbackURL = (structuredURL?.isEmpty == false) ? structuredURL : nil
 
         guard let description = attributes.description?.trimmed,
-              !description.isEmpty,
-              let parsed = try? RecipeParser.parse("\(safeTitle)\n\(description)") else {
+              !description.isEmpty else {
             return RecipeDraft(
                 title: safeTitle,
                 ingredients: structuredIngredients,
                 sourceURL: fallbackURL
             )
         }
+        let parsed = try RecipeParser.parse("\(safeTitle)\n\(description)")
         return RecipeDraft(
             title: parsed.title,
             description: parsed.description,
