@@ -6,16 +6,16 @@
     <description>Signed updates for Skylight Bridge.</description>
     <language>en</language>
     <item>
-      <title>Version 1.6.3</title>
-      <sparkle:version>28</sparkle:version>
-      <sparkle:shortVersionString>1.6.3</sparkle:shortVersionString>
-      <description><![CDATA[<p>This release includes improvements and fixes.</p>]]></description>
-      <pubDate>Fri, 28 Aug 2026 01:25:10 +0000</pubDate>
-      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.6.3/Skylight.Bridge-1.6.3.dmg" sparkle:edSignature="oP6UFvov4+JYrMTImF0wynvvxiKWTCVbGh/V1oOVx5Yh80mD2+WbbghLqesip/GAHobvMf7eh8VmRmEFEculBg==" length="6767331" type="application/octet-stream" />
+      <title>Version 1.6.4</title>
+      <sparkle:version>29</sparkle:version>
+      <sparkle:shortVersionString>1.6.4</sparkle:shortVersionString>
+      <description><![CDATA[<p>Adds selected-photo previews and fixes authentication, saved photo edits, recurring chore completion, reminder adoption, Notes save failures, and cleanup retries.</p>]]></description>
+      <pubDate>Fri, 04 Sep 2026 20:54:38 +0000</pubDate>
+      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.6.4/Skylight.Bridge-1.6.4.dmg" sparkle:edSignature="xHyvX2RZLy9ns9zyrp4Fl4c29QpZg9ZfgS0LZY+Sr3B8R4eZJZZnsOcsvBVhntBdkuwEphub/g/0/ITJzVyIAQ==" length="6859492" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: Aafw21HoRtA9Tq1t7rLLsz3miNj+YrbqYpfeShn/DH5NN0su9v6ATc1Oq81N/lBEKHuZTIC26gMWmTeoHhvxDw==
-length: 1005
+edSignature: V30bXdZ4VzD00Y/W9fIpNb0cX+Woc+1U6K5WwHnGCC+YX+p+3L8owhebrXKsghxIjSlpjqAazAtOPLmIA1H+CA==
+length: 1122
 -->
