@@ -330,8 +330,9 @@ private struct PhotoMappingEditor: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 6) {
                         ForEach(displayOrder, id: \.self) { assetID in
-                            HStack {
-                                Label(photoTitle(for: assetID), systemImage: "photo")
+                            HStack(spacing: 10) {
+                                SelectedPhotoThumbnail(assetID: assetID)
+                                Text(photoTitle(for: assetID))
                                 if photoNameGenerationAssetIDs.contains(assetID) {
                                     ProgressView()
                                         .controlSize(.small)
