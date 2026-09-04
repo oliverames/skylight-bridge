@@ -37,16 +37,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @MainActor
 struct SkylightBridgeApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var store = AppStore()
-    // Startup must outlive the main window: closing it cancels a view-scoped
-    // .task, and this menu-bar-first app supports exactly that. Run start()
-    // once, unstructured, from the first App construction.
-    private static var hasLaunchedStartup = false
+    // SwiftUI may reconstruct App before installing dynamic properties.
+    // Reading an uninstalled @State creates a separate initial store, so
+    // startup and the scenes must share an explicit process-lifetime owner.
+    private static let sharedStore = AppStore()
+    private let store = Self.sharedStore
 
     init() {
-        guard !Self.hasLaunchedStartup else { return }
-        Self.hasLaunchedStartup = true
-        let store = _store.wrappedValue
+        let store = Self.sharedStore
+        // Startup outlives window closure. AppStore.start() is idempotent even
+        // when another App construction schedules it during a suspension.
         Task { await store.start() }
     }
 
