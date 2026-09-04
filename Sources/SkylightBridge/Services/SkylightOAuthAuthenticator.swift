@@ -211,11 +211,7 @@ actor SkylightOAuthAuthenticator: SkylightOAuthTokenProvider {
     }
 
     private func formData(_ values: [String: String]) -> Data {
-        var components = URLComponents()
-        components.queryItems = values
-            .sorted { $0.key < $1.key }
-            .map { URLQueryItem(name: $0.key, value: $0.value) }
-        return Data((components.percentEncodedQuery ?? "").utf8)
+        FormURLEncoder.encode(values)
     }
 
     private func recordCookies(from response: HTTPURLResponse) {

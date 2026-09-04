@@ -121,10 +121,10 @@ struct SkylightAPIClientTests {
 
             let data = try #require(request.httpBody)
             let body = try #require(String(data: data, encoding: .utf8))
-            let form = URLComponents(string: "?\(body)")
+            let form = URLComponents(string: "?\(body.replacingOccurrences(of: "+", with: "%20"))")
             let values = Dictionary(uniqueKeysWithValues: (form?.queryItems ?? []).map { ($0.name, $0.value) })
             #expect(values["grant_type"] == "refresh_token")
-            #expect(values["refresh_token"] == "old-refresh")
+            #expect(values["refresh_token"] == "old+refresh &=% café")
             #expect(values["client_id"] == "skylight-mobile")
             #expect(values["skylight_api_client_device_fingerprint"] == "fingerprint-1")
 
@@ -140,7 +140,7 @@ struct SkylightAPIClientTests {
         )
 
         let token = try await client.refreshOAuthToken(
-            refreshToken: "old-refresh",
+            refreshToken: "old+refresh &=% café",
             deviceFingerprint: "fingerprint-1"
         )
 

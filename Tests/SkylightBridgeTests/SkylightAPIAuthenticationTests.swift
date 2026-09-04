@@ -32,7 +32,7 @@ struct SkylightAPIAuthenticationTests {
             .init(
                 statusCode: 200,
                 headers: ["Set-Cookie": "session=first; Path=/"],
-                body: #"<input name="authenticity_token" value="csrf-token">"#
+                body: #"<input name="authenticity_token" value="csrf+token">"#
             ),
             .init(
                 statusCode: 302,
@@ -60,7 +60,7 @@ struct SkylightAPIAuthenticationTests {
             transport: transport
         )
 
-        let token = try await authenticator.login(email: "person@example.com", password: "secret")
+        let token = try await authenticator.login(email: "person+alias@example.com", password: "s+ecret &=% café")
 
         #expect(token.accessToken == "access")
         #expect(token.refreshToken == "refresh")
@@ -75,8 +75,10 @@ struct SkylightAPIAuthenticationTests {
         #expect(requests[2].value(forHTTPHeaderField: "Cookie") == "session=second")
 
         let loginForm = try formValues(from: requests[1])
-        #expect(loginForm["authenticity_token"] == "csrf-token")
-        #expect(loginForm["email"] == "person@example.com")
+        #expect(loginForm["authenticity_token"] == "csrf+token")
+        #expect(loginForm["email"] == "person+alias@example.com")
+
+        #expect(loginForm["password"] == "s+ecret &=% café")
 
         let tokenForm = try formValues(from: requests[3])
         #expect(tokenForm["grant_type"] == "authorization_code")
@@ -357,10 +359,30 @@ struct SkylightAPIAuthenticationTests {
         ))
     }
 
+    @Test("OAuth refresh rejection triggers login only for a rejected grant")
+    func classifiesOAuthRefreshFailures() {
+        for status in [401, 403] {
+            #expect(SkylightSessionManager.isAuthenticationFailure(
+                SkylightOAuthError.invalidFormResponse(statusCode: status, body: "")
+            ))
+        }
+        #expect(SkylightSessionManager.isAuthenticationFailure(
+            SkylightOAuthError.invalidFormResponse(statusCode: 400, body: #"{"error":"invalid_grant"}"#)
+        ))
+        for status in [400, 429, 500] {
+            #expect(!SkylightSessionManager.isAuthenticationFailure(
+                SkylightOAuthError.invalidFormResponse(statusCode: status, body: #"{"error":"invalid_request"}"#)
+            ))
+        }
+        #expect(!SkylightSessionManager.isAuthenticationFailure(
+            SkylightOAuthError.invalidFormResponse(statusCode: 400, body: "invalid_grant is not JSON")
+        ))
+    }
+
     private func formValues(from request: URLRequest) throws -> [String: String?] {
         let data = try #require(request.httpBody)
         let body = try #require(String(data: data, encoding: .utf8))
-        let items = URLComponents(string: "?\(body)")?.queryItems ?? []
+        let items = URLComponents(string: "?\(body.replacingOccurrences(of: "+", with: "%20"))")?.queryItems ?? []
         return Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0.value) })
     }
 }

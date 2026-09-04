@@ -257,7 +257,19 @@ actor SkylightSessionManager {
         if case let .httpStatus(code, _, _) = error as? SkylightAPIError {
             return code == 401 || code == 403
         }
+        if case let .invalidFormResponse(statusCode, body) = error as? SkylightOAuthError {
+            if statusCode == 401 || statusCode == 403 { return true }
+            guard statusCode == 400,
+                  let response = try? JSONDecoder().decode(
+                    OAuthFailure.self, from: Data(body.utf8)
+                  ) else { return false }
+            return response.error == "invalid_grant"
+        }
         return false
+    }
+
+    private struct OAuthFailure: Decodable {
+        let error: String
     }
 
     private nonisolated static func validateConfiguredFrame(

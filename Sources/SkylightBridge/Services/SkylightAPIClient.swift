@@ -170,11 +170,7 @@ extension SkylightAPIClient {
         url: URL,
         values: [String: String]
     ) async throws -> Response where Response: Decodable & Sendable {
-        var components = URLComponents()
-        components.queryItems = values
-            .sorted { $0.key < $1.key }
-            .map { URLQueryItem(name: $0.key, value: $0.value) }
-        let data = Data((components.percentEncodedQuery ?? "").utf8)
+        let data = FormURLEncoder.encode(values)
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
