@@ -340,6 +340,7 @@ struct SecurityHardeningTests {
 
         #expect(!saved)
         #expect(store.configuration.photoMappings.isEmpty)
+        #expect(store.pendingSharedPhotoChanges.isEmpty)
         #expect(try persistence.loadConfiguration().photoMappings.isEmpty)
         #expect(store.statusMessage.contains("Could not save configuration"))
     }

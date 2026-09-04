@@ -116,7 +116,7 @@ struct NotesSyncView: View {
             // row grammar as MappingRow.
             Toggle(
                 "Enabled",
-                isOn: savingBinding(enabledBinding) { store.saveConfiguration(triggerSync: true) }
+                isOn: enabledBinding
             )
             .labelsHidden()
             .toggleStyle(.switch)
@@ -149,11 +149,9 @@ struct NotesSyncView: View {
         Binding(
             get: { selection.enabled },
             set: { enabled in
-                if kind == .recipes {
-                    store.configuration.recipeSelection.enabled = enabled
-                } else {
-                    store.configuration.mealSelection.enabled = enabled
-                }
+                var updated = selection
+                updated.enabled = enabled
+                store.saveNotesSelection(updated)
             }
         )
     }
@@ -179,21 +177,19 @@ struct NotesSyncView: View {
         }
     }
 
-    private func save(_ value: NotesSelection) {
-        if kind == .recipes {
-            store.configuration.recipeSelection = value
-        } else {
-            store.configuration.mealSelection = value
-        }
-        store.saveConfiguration(triggerSync: true)
+    private func save(_ value: NotesSelection) -> Bool {
+        guard store.saveNotesSelection(value) else { return false }
         editedSelection = nil
+        return true
     }
+
 }
 
 private struct NotesSelectionEditor: View {
     @State private var draft: NotesSelection
     @State private var loadedNotes: [AppleNoteSummarySnapshot]
     @State private var filter = ""
+    @State private var saveError: String?
     let folders: [AppleNotesFolderSnapshot]
     let mealCategories: [SkylightResource<SkylightMealCategoryAttributes>]
     let loadNotes: (String) async -> Void
@@ -202,7 +198,7 @@ private struct NotesSelectionEditor: View {
     /// Present only when a folder is already linked, so the editor offers the
     /// same unlink action as the row menu.
     let onRemove: (() -> Void)?
-    let onSave: (NotesSelection) -> Void
+    let onSave: (NotesSelection) -> Bool
 
     init(
         selection: NotesSelection,
@@ -213,7 +209,7 @@ private struct NotesSelectionEditor: View {
         notesForFolder: @escaping (String) -> [AppleNoteSummarySnapshot],
         onCancel: @escaping () -> Void,
         onRemove: (() -> Void)?,
-        onSave: @escaping (NotesSelection) -> Void
+        onSave: @escaping (NotesSelection) -> Bool
     ) {
         _draft = State(initialValue: selection)
         _loadedNotes = State(initialValue: initialNotes)
@@ -237,6 +233,9 @@ private struct NotesSelectionEditor: View {
                 sourceSection
                 destinationSection
                 behaviorSection
+                if let saveError {
+                    Text(saveError).foregroundStyle(.red)
+                }
             }
             .formStyle(.grouped)
             .navigationTitle("\(draft.kind.label) Selection")
@@ -245,7 +244,11 @@ private struct NotesSelectionEditor: View {
                     confirmTitle: "Save Selection",
                     canConfirm: canSave,
                     onCancel: onCancel,
-                    onConfirm: { onSave(draft) }
+                    onConfirm: {
+                        if !onSave(draft) {
+                            saveError = "The selection could not be saved. Your edits are still here. Try again."
+                        }
+                    }
                 )
             }
             .task(id: draft.folderID) {

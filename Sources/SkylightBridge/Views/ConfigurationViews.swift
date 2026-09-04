@@ -42,11 +42,9 @@ struct AccountView: View {
                     }
                 }
 
-                if store.isSkylightConnected {
-                    LabeledContent("Session") {
-                        Button("Sign Out…") { isConfirmingSignOut = true }
-                            .disabled(store.isConnecting || store.isSyncing)
-                    }
+                LabeledContent("Session") {
+                    Button("Sign Out…") { isConfirmingSignOut = true }
+                        .disabled(store.isConnecting || store.isSyncing)
                 }
             }
 

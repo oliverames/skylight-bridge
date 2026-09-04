@@ -38,9 +38,10 @@ struct PhotosSyncView: View {
                             title: mapping.name,
                             subtitle: mappingDetail(mapping),
                             caption: "JPEG, sRGB, up to \(mapping.maximumLongEdge.formatted()) px",
-                            isEnabled: savingBinding($mapping.enabled) {
-                                store.saveConfiguration(triggerSync: true)
-                            },
+                            isEnabled: Binding(
+                                get: { mapping.enabled },
+                                set: { store.setPhotoMappingEnabled(mapping.id, enabled: $0) }
+                            ),
                             onEdit: { editedMapping = mapping },
                             onDelete: { mappingToDelete = mapping }
                         )
@@ -142,6 +143,7 @@ private struct PhotoMappingEditor: View {
     @State private var namingProgress: (completed: Int, total: Int)?
     @State private var saveError: String?
     @State private var destinationSelectionChanged: Bool
+    let isNewMapping: Bool
     let collections: [ApplePhotoCollectionSnapshot]
     let skylightAlbums: [SkylightResource<SkylightAlbumAttributes>]
     let onCancel: () -> Void
@@ -159,6 +161,7 @@ private struct PhotoMappingEditor: View {
     ) {
         _draft = State(initialValue: mapping)
         _destinationSelectionChanged = State(initialValue: isNewMapping)
+        self.isNewMapping = isNewMapping
         self.collections = collections
         self.skylightAlbums = skylightAlbums
         self.onCancel = onCancel
@@ -418,7 +421,7 @@ private struct PhotoMappingEditor: View {
         return switch draft.sourceKind {
         case .album: draft.sourceCollectionID != nil
         case .favorites: true
-        case .selectedPhotos: !draft.selectedAssetIDs.isEmpty
+        case .selectedPhotos: !isNewMapping || !draft.selectedAssetIDs.isEmpty
         }
     }
 

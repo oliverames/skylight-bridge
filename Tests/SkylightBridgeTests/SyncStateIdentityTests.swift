@@ -5,6 +5,97 @@ import Testing
 
 @Suite(.serialized)
 struct SyncStateIdentityTests {
+    @Test("A new person with the same name cannot claim an existing chore list")
+    @MainActor
+    func choreSetupPreservesExistingListOwner() async throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = testConfigurationStore(rootURL: directory)
+        let reminders = ChoreSetupRemindersStore()
+        let originalList = try reminders.createList(named: "Alex Chores")
+        var configuration = AppConfiguration()
+        configuration.account.frameID = "frame-1"
+        var mapping = ChoreMapping()
+        mapping.frameID = "frame-1"
+        mapping.memberLinks = [ChoreMemberLink(memberKey: "existing-person", memberLabel: "Alex",
+                                              appleListID: originalList.id, appleListTitle: "Alex Chores")]
+        configuration.choreMappings = [mapping]
+        try persistence.saveConfiguration(configuration)
+        let client = SkylightAPIClient(accessToken: "test", transport: ChoreSetupTransport(duplicateNames: true))
+        let store = AppStore(persistence: persistence,
+                             sessionManager: StaticClientSessionManager(client: client), remindersStore: reminders)
+        await store.setupChoreListsFromSkylight()
+        let links = try #require(store.configuration.choreMappings.first).memberLinks
+        #expect(links.first { $0.memberKey == "existing-person" }?.appleListID == originalList.id)
+        #expect(links.first { $0.memberKey == "new-person" }?.appleListID != originalList.id)
+        #expect(Set(links.compactMap(\.appleListID)).count == links.count)
+    }
+
+    @Test("Portable photo intent excludes duplicate photo names and selections")
+    func pendingPortableSnapshotIsSmall() {
+        var pending = PendingSharedPhotoChanges()
+        let mapping = PhotoMapping(name: "Family", sourceKind: .selectedPhotos,
+                                   selectedAssetIDs: ["a"], selectedPhotoNames: ["a": "A photo"])
+        pending.recordPortableMapping(mapping)
+        #expect(pending.portableMappings[mapping.id]?.selectedAssetIDs.isEmpty == true)
+        #expect(pending.portableMappings[mapping.id]?.selectedPhotoNames.isEmpty == true)
+        #expect(pending.applyingPortableFields(to: mapping) == mapping)
+    }
+
+    @Test("Pending photo removals and pause intent survive restart")
+    @MainActor
+    func pendingPhotoIntentSurvivesRestart() async throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = testConfigurationStore(rootURL: directory)
+        var original = AppConfiguration()
+        original.photoMappings = [PhotoMapping(name: "Family", sourceKind: .selectedPhotos, selectedAssetIDs: ["a", "b"])]
+        try persistence.saveConfiguration(original)
+        let store = AppStore(persistence: persistence, sharedPreferencesStore: CountingPreferencesStore())
+        store.photosAuthorizationStatus = .denied
+        var edited = original.photoMappings[0]
+        edited.selectedAssetIDs = ["b"]
+        edited.name = "Updated family"
+        #expect(store.savePhotoMapping(edited, triggerSync: false))
+        #expect(store.setPhotoMappingEnabled(edited.id, enabled: false))
+        _ = await store.publishSharediCloudState()
+        let restarted = AppStore(persistence: persistence)
+        #expect(restarted.pendingSharedPhotoChanges.removals[edited.id] == ["a"])
+        #expect(restarted.pendingSharedPhotoChanges.portableMappings[edited.id]?.enabled == false)
+        #expect(restarted.pendingSharedPhotoChanges.portableMappings[edited.id]?.name == "Updated family")
+        #expect(restarted.configuration.photoMappings[0].selectedAssetIDs == ["b"])
+        #expect(!restarted.configuration.photoMappings[0].enabled)
+        await Task.yield()
+    }
+
+    @Test("Notes save and unlink preserve the prior selection after a disk failure")
+    @MainActor
+    func notesEditsRollBackOnSaveFailure() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let normal = testConfigurationStore(rootURL: directory)
+        var original = AppConfiguration()
+        original.recipeSelection.folderID = "recipes"
+        original.recipeSelection.folderTitle = "Recipes"
+        original.recipeSelection.enabled = true
+        try normal.saveConfiguration(original)
+        let failing = ConfigurationStore(
+            fileManager: FailAfterCreateDirectoryFileManager(successfulCalls: 0), rootURL: directory,
+            configurationAuthenticator: LocalFileAuthenticator(testKey: Data(repeating: 0x46, count: 32)),
+            activityAuthenticator: LocalFileAuthenticator(testKey: Data(repeating: 0x47, count: 32))
+        )
+        let store = AppStore(persistence: failing)
+        var edited = original.recipeSelection
+        edited.folderID = "other"
+        #expect(!store.saveNotesSelection(edited))
+        #expect(store.configuration.recipeSelection == original.recipeSelection)
+        store.removeNotesSelection(kind: .recipes)
+        #expect(store.configuration.recipeSelection == original.recipeSelection)
+        #expect(try normal.loadConfiguration().recipeSelection == original.recipeSelection)
+        #expect(store.statusMessage.contains("Could not save"))
+        #expect(!store.activity.contains { $0.message.hasPrefix("Unlinked") })
+    }
+
     @Test("Deferred selected-photo changes preserve the latest user intent")
     func deferredSelectedPhotoChangesUseLatestIntent() {
         let mappingID = UUID()
@@ -1434,6 +1525,7 @@ struct SyncStateIdentityTests {
 }
 
 private struct ChoreSetupTransport: SkylightTransport {
+    var duplicateNames = false
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         #expect(request.url?.path == "/api/frames/frame-1/categories")
         let response = HTTPURLResponse(
@@ -1442,7 +1534,9 @@ private struct ChoreSetupTransport: SkylightTransport {
             httpVersion: nil,
             headerFields: ["Content-Type": "application/json"]
         )!
-        let json = #"{"data":[{"id":"person-1","type":"category","attributes":{"label":"Oliver","selected_for_chore_chart":true}}]}"#
+        let json = duplicateNames
+            ? #"{"data":[{"id":"new-person","type":"category","attributes":{"label":"Alex","selected_for_chore_chart":true}},{"id":"existing-person","type":"category","attributes":{"label":"Alex","selected_for_chore_chart":true}}]}"#
+            : #"{"data":[{"id":"person-1","type":"category","attributes":{"label":"Oliver","selected_for_chore_chart":true}}]}"#
         return (Data(json.utf8), response)
     }
 }

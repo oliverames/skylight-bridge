@@ -52,7 +52,7 @@ struct SharedPreferenceMutationRecord: Sendable {
     }
 }
 
-struct PendingSharedPhotoChanges: Sendable {
+struct PendingSharedPhotoChanges: Codable, Hashable, Sendable {
     var additions: [UUID: Set<String>] = [:]
     var removals: [UUID: Set<String>] = [:]
     var portableMappings: [UUID: PhotoMapping] = [:]
@@ -88,7 +88,10 @@ struct PendingSharedPhotoChanges: Sendable {
     }
 
     mutating func recordPortableMapping(_ mapping: PhotoMapping) {
-        portableMappings[mapping.id] = mapping
+        var portable = mapping
+        portable.selectedAssetIDs = []
+        portable.selectedPhotoNames = [:]
+        portableMappings[mapping.id] = portable
     }
 
     func applyingPortableFields(to mapping: PhotoMapping) -> PhotoMapping {
@@ -217,7 +220,10 @@ final class AppStore {
     @ObservationIgnored var sharedPreferencesOperationInProgress = false
     @ObservationIgnored var sharedPreferenceMutationVersion: UInt64 = 0
     @ObservationIgnored var sharedPreferenceMutations = SharedPreferenceMutationRecord()
-    @ObservationIgnored var pendingSharedPhotoChanges = PendingSharedPhotoChanges()
+    var pendingSharedPhotoChanges: PendingSharedPhotoChanges {
+        get { configuration.pendingSharedPhotoChanges }
+        set { configuration.pendingSharedPhotoChanges = newValue }
+    }
 
     init(
         persistence: ConfigurationStore = ConfigurationStore(),
@@ -652,11 +658,18 @@ final class AppStore {
                 isEnabled: oldLinks[ChoreMemberLink.upForGrabsKey]?.isEnabled ?? true
             ))
 
+            let reservedListIDs = Set(links.compactMap { link in
+                oldLinks[link.memberKey]?.appleListID.flatMap { id in
+                    availableLists.contains(where: { $0.id == id }) ? id : nil
+                }
+            })
+            var assignedListIDs: Set<String> = []
             for index in links.indices {
                 let oldID = oldLinks[links[index].memberKey]?.appleListID
-                let foundByID = oldID.flatMap { id in availableLists.first { $0.id == id } }
+                let foundByID = oldID.flatMap { id in availableLists.first { $0.id == id && !assignedListIDs.contains($0.id) } }
                 let found = foundByID ?? availableLists.first {
-                    $0.title.localizedCaseInsensitiveCompare(links[index].appleListTitle) == .orderedSame
+                    !assignedListIDs.contains($0.id) && !reservedListIDs.contains($0.id) &&
+                        $0.title.localizedCaseInsensitiveCompare(links[index].appleListTitle) == .orderedSame
                 }
                 let list: AppleReminderListSnapshot
                 if let found {
@@ -667,6 +680,7 @@ final class AppStore {
                     createdListIDs.append(list.id)
                 }
                 links[index].appleListID = list.id
+                assignedListIDs.insert(list.id)
             }
 
             existingMapping.frameID = frameID
@@ -841,6 +855,21 @@ final class AppStore {
     /// Clears a Notes folder link so the page returns to its unconfigured
     /// state. The notes themselves are untouched; only the bridge's record of
     /// which folder to read is removed.
+    @discardableResult
+    func saveNotesSelection(_ selection: NotesSelection, triggerSync: Bool = true) -> Bool {
+        let previous = configuration
+        if selection.kind == .recipes {
+            configuration.recipeSelection = selection
+        } else {
+            configuration.mealSelection = selection
+        }
+        guard saveConfiguration(triggerSync: triggerSync) else {
+            configuration = previous
+            return false
+        }
+        return true
+    }
+
     func removeNotesSelection(kind: NotesContentKind) {
         let title = (kind == .recipes
             ? configuration.recipeSelection.folderTitle
@@ -849,12 +878,7 @@ final class AppStore {
         replacement.id = kind == .recipes
             ? configuration.recipeSelection.id
             : configuration.mealSelection.id
-        if kind == .recipes {
-            configuration.recipeSelection = replacement
-        } else {
-            configuration.mealSelection = replacement
-        }
-        saveConfiguration()
+        guard saveNotesSelection(replacement, triggerSync: false) else { return }
         statusMessage = "\(kind.label) sync is no longer linked to a Notes folder."
         appendActivity(.init(
             level: .info,
@@ -1418,14 +1442,14 @@ final class AppStore {
         // or the final save fails, the mapping remains visible and retryable,
         // but it cannot recreate content that teardown already removed.
         configuration.photoMappings[mappingIndex].enabled = false
-        guard saveConfiguration() else {
-            configuration = originalConfiguration
-            return
-        }
         if mapping.sourceKind == .selectedPhotos {
             pendingSharedPhotoChanges.recordPortableMapping(
                 configuration.photoMappings[mappingIndex]
             )
+        }
+        guard saveConfiguration() else {
+            configuration = originalConfiguration
+            return
         }
         let disabledConfiguration = configuration
         let frameID = configuration.account.frameID.trimmed
@@ -1465,11 +1489,11 @@ final class AppStore {
             configuration.photoDestinationIntentIDsByFrame.filter {
                 !FrameDestinationIdentity.belongsToMapping($0.key, mappingID: mapping.id)
             }
+        pendingSharedPhotoChanges.discard(mappingID: mapping.id)
         guard saveConfiguration() else {
             configuration = disabledConfiguration
             return
         }
-        pendingSharedPhotoChanges.discard(mappingID: mapping.id)
         await retireSharedPhotoMapping(mapping)
     }
 

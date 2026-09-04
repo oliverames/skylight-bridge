@@ -298,6 +298,15 @@ extension AppStore {
         ))
     }
 
+    @discardableResult
+    func setPhotoMappingEnabled(_ mappingID: UUID, enabled: Bool) -> Bool {
+        guard var mapping = configuration.photoMappings.first(where: { $0.id == mappingID }) else {
+            return false
+        }
+        mapping.enabled = enabled
+        return savePhotoMapping(mapping)
+    }
+
     /// Saves a photo mapping and mirrors only individual-photo changes to
     /// CloudKit. Album and Favorites mappings are intentionally device-local.
     @discardableResult
@@ -336,6 +345,16 @@ extension AppStore {
         } else {
             configuration.photoMappings.append(mapping)
         }
+        if isSharedSelectedPhotos {
+            pendingSharedPhotoChanges.recordPortableMapping(mapping)
+            pendingSharedPhotoChanges.record(
+                mappingID: mapping.id,
+                additions: mapping.selectedAssetIDs.subtracting(previous?.selectedAssetIDs ?? []),
+                removals: (previous?.selectedAssetIDs ?? []).subtracting(mapping.selectedAssetIDs)
+            )
+        } else {
+            pendingSharedPhotoChanges.discard(mappingID: mapping.id)
+        }
         guard saveConfiguration(
             triggerSync: triggerSync,
             publishSharedState: !isSharedSelectedPhotos && !wasSharedSelectedPhotos
@@ -346,19 +365,10 @@ extension AppStore {
 
         guard isSharedSelectedPhotos else {
             if wasSharedSelectedPhotos, let previous {
-                pendingSharedPhotoChanges.discard(mappingID: mapping.id)
                 Task { await retireSharedPhotoMapping(previous) }
             }
             return true
         }
-        pendingSharedPhotoChanges.recordPortableMapping(mapping)
-        let addedAssetIDs = mapping.selectedAssetIDs.subtracting(previous?.selectedAssetIDs ?? [])
-        let removedAssetIDs = (previous?.selectedAssetIDs ?? []).subtracting(mapping.selectedAssetIDs)
-        pendingSharedPhotoChanges.record(
-            mappingID: mapping.id,
-            additions: addedAssetIDs,
-            removals: removedAssetIDs
-        )
         Task {
             await publishSharediCloudState()
         }
@@ -692,7 +702,13 @@ extension AppStore {
                     acknowledged.removals[mappingID] = resolvedAssetIDs
                 }
             }
+            let beforeAcknowledgment = pendingSharedPhotoChanges
             pendingSharedPhotoChanges.acknowledge(acknowledged)
+            if pendingSharedPhotoChanges != beforeAcknowledgment,
+               !saveConfiguration(publishSharedState: false) {
+                pendingSharedPhotoChanges = beforeAcknowledgment
+                throw SharedPreferencesApplicationError.persistenceFailed
+            }
             if pendingSharedPhotoChanges.isEmpty {
                 return
             }

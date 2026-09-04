@@ -250,6 +250,7 @@ struct AppConfiguration: Codable, Sendable, Hashable {
     /// until a disabled replacement is confirmed in iCloud, so an offline
     /// deletion is retried after relaunch instead of remaining active elsewhere.
     var pendingPhotoMappingRetirements: [PhotoMapping] = []
+    var pendingSharedPhotoChanges = PendingSharedPhotoChanges()
     var reminderMappings: [ReminderListMapping] = []
     var choreMappings: [ChoreMapping] = []
     var recipeSelection = NotesSelection(kind: .recipes)
@@ -295,6 +296,9 @@ struct AppConfiguration: Codable, Sendable, Hashable {
         pendingPhotoMappingRetirements = try container.decodeIfPresent(
             [PhotoMapping].self, forKey: .pendingPhotoMappingRetirements
         ) ?? []
+        pendingSharedPhotoChanges = try container.decodeIfPresent(
+            PendingSharedPhotoChanges.self, forKey: .pendingSharedPhotoChanges
+        ) ?? PendingSharedPhotoChanges()
         reminderMappings = try container.decodeIfPresent(
             [ReminderListMapping].self, forKey: .reminderMappings
         ) ?? []
