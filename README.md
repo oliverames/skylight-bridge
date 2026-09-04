@@ -134,11 +134,24 @@ The Mac remains the Skylight authentication and synchronization engine. The iOS 
 | macOS | macOS 26 or later |
 | On-device selected-photo names | macOS 27 or later with Apple Intelligence available on the Mac. The rest of the app continues to run on macOS 26 or later. |
 | Skylight account | Required to discover frames, devices, and destinations |
-| Skylight subscription | Required only for the Skylight features your account uses |
+| Skylight subscription | Calendar Plus is required for photos and recipes. Basic lists and chores are included without Plus. See the subscription details below. |
 | Apple permissions | Photos, Reminders, and Apple Events access are requested only for the sources you configure |
 | Network access | Needed to connect to Skylight and download iCloud-only photo originals when selected |
 
 ## Questions people ask
+
+### Do I need a Skylight subscription?
+
+Skylight Bridge is free. Skylight's own subscription requirements still apply to the features you use on your Calendar.
+
+| Bridge feature | Skylight Calendar subscription requirement |
+| --- | --- |
+| Reminders linked to Skylight lists | Lists are a basic feature, included without Plus. |
+| Chores linked to Apple Reminders | Basic chores are included without Plus. Chore rewards require Plus. |
+| Apple Photos displayed on Skylight Calendar | Calendar Plus is required for the photo screensaver. |
+| Apple Notes recipes in Skylight Recipe Box | Calendar Plus is required for meal planning with recipes. |
+
+These requirements come from Skylight's [subscription guide](https://skylight.zendesk.com/hc/en-us/articles/36009559376795-Does-Skylight-Calendar-require-a-subscription) and [Calendar Plus description](https://skylight.zendesk.com/hc/en-us/articles/32171114576283-What-is-Calendar-Plus), checked on September 4, 2026. The bridge does not unlock paid Skylight features. Private API access on an account without Plus has not yet been verified, so the table describes Skylight's feature requirements rather than a guarantee of every bridge operation on that account.
 
 ### Does Skylight Bridge copy my entire photo library or every Reminders list?
 
