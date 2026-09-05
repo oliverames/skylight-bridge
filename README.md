@@ -13,8 +13,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/oliverames/skylight-bridge/releases/tag/v1.6.6">
-    <img src="https://img.shields.io/badge/macOS-v1.6.6-f5a542?style=flat-square&logo=apple&logoColor=white" alt="macOS release 1.6.6">
+  <a href="https://github.com/oliverames/skylight-bridge/releases/tag/v1.7.1">
+    <img src="https://img.shields.io/badge/macOS-v1.7.1-f5a542?style=flat-square&logo=apple&logoColor=white" alt="macOS release 1.7.1">
   </a>
   <a href="#license">
     <img src="https://img.shields.io/badge/license-all%20rights%20reserved-f5a542?style=flat-square" alt="All rights reserved">
@@ -48,10 +48,10 @@ This is a practical Mac utility, not a second household database. Every mapping 
 3. Open Skylight Bridge from Applications. The app is Developer ID-signed, notarized, and stapled for Gatekeeper.
 4. The app checks for signed updates, and **Skylight Bridge > Check for Updates…** is always available when you want to check manually.
 
-Version 1.6.6 makes sync failures identify the request method and adds safe HTTP status details to authorization failures. It retains the selected-photo previews and startup, authentication, persistence, and sync fixes from 1.6.5. The [September 4 bug review](docs/BUG_REVIEW_2026-09-04.md) and [GitHub issue review](docs/GITHUB_ISSUE_RESOLUTION_2026-09-04.md) record the findings and verification. If you want to verify the download, compare the output below with the checksum file beside the DMG on the release page.
+Version 1.7.1 keeps a sync run going when one mapping points at a Reminders list or Photos album that no longer exists. That mapping is skipped with a warning in Activity that names it, and every other mapping and domain still syncs. It retains the automatic iCloud recovery, durable offline edits, and sharing status from 1.7.0. The [cloud reliability record](docs/CLOUD_RELIABILITY_IMPLEMENTATION_2026-09-05.md) and [September 4 bug review](docs/BUG_REVIEW_2026-09-04.md) record the findings and verification. If you want to verify the download, compare the output below with the checksum file beside the DMG on the release page.
 
 ```bash
-shasum -a 256 ~/Downloads/Skylight.Bridge-1.6.6.dmg
+shasum -a 256 ~/Downloads/Skylight.Bridge-1.7.1.dmg
 ```
 
 <p align="center">
