@@ -1,3 +1,15 @@
+## 2026-09-05 - GitHub issue review and 1.6.6 released
+
+Reviewed all four GitHub issues and replied with verified findings. The subscription documentation now explains which features require Calendar Plus, and issue 3 is closed. Issues 1, 2, and 4 remain open for reporter confirmation or updated error details. The CloudKit mitigation already shipped in 1.5.13, and one login reporter confirmed the latest release works on September 5.
+
+Version 1.6.6 (build 31) identifies the method on failed API requests and preserves the HTTP status and a fixed reason when OAuth authorization fails. It excludes response bodies and callback contents from those new login diagnostics. The request-method change was preserved by sync commit `875a431`, and the login diagnostics are in `2b074a5`. A preexisting test fixture opened live sync state and waited for Keychain access. Commit `eb85d18` gives it temporary state and a test key.
+
+All 258 tests in 26 suites pass, the optimized build passes with warnings treated as errors, and GitHub CI passed for release commit `cfe639255fc92ee323817fd38a3dbefdd950e44f`. Apple notarized the universal app and DMG, and both passed stapling and Gatekeeper checks. The public DMG matches the local artifact at 6,856,419 bytes and SHA-256 `25ae02c2ede6d1ef93b7377897e69974a94587954860bfda25b2a3b45e7f6f45`. The live signed Sparkle feed advertises 1.6.6 build 31 at gh-pages commit `9bf73ba`, and both feed and downloaded archive signatures verify.
+
+The notarized app restored its saved account and rendered photo previews correctly. Fresh login with the saved credentials instead returned `loginRejected`, and live chore reads could not complete because of Keychain access. These checks do not establish that the remaining reported failures are fixed. No user mappings or CloudKit schema were changed. See the [issue resolution report](docs/GITHUB_ISSUE_RESOLUTION_2026-09-04.md) for evidence and follow-up links.
+
+---
+
 ## 2026-09-04 - Startup correction and 1.6.5 released
 
 Version 1.6.5 (build 30) supersedes 1.6.4 and completes the review with sixteen fixes plus selected-photo previews. Startup and all scenes now use one process-lifetime AppStore. This removes the uninstalled SwiftUI State access that left the optimized app disconnected.

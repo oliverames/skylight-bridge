@@ -7,7 +7,7 @@ Author: Oliver Ames
 - [x] Investigate issue 4 through fresh authentication and improve confirmed diagnostic defects. The missing-code failure remains unconfirmed locally.
 - [x] Investigate the HTTP 422 in issue 2 and preserve the request method in errors. The reporter's underlying rejection remains unconfirmed.
 - [x] Document subscription requirements for issue 3 and verify the shipped CloudKit mitigation for issue 1.
-- [ ] In progress: complete release verification, publish 1.6.6, and finish replies to all four issues.
+- [x] Complete release verification, publish 1.6.6, and finish replies to all four issues. Remaining reporter confirmations are tracked in their open issues.
 
 ## Scope and evidence
 
@@ -30,4 +30,16 @@ The full suite passes: 258 tests in 26 suites, including five authorization-resp
 
 The fresh-login check used credentials privately from Keychain and retained no secrets or raw response output. Its result was a credential rejection, not the reported missing authorization code. The optional chore inventory read timed out and is not counted as successful verification.
 
-Version 1.6.6 (build 31) delivers diagnostic improvements. It does not claim that the remaining reporters' failures are resolved. Release artifact and Sparkle verification will be recorded after publication.
+Version 1.6.6 (build 31) delivers diagnostic improvements. It does not claim that the remaining reporters' failures are resolved.
+
+## Published release and follow-up
+
+[Release 1.6.6](https://github.com/oliverames/skylight-bridge/releases/tag/v1.6.6) was built from clean, pushed commit `cfe639255fc92ee323817fd38a3dbefdd950e44f`. The optimized compiler check passed with warnings treated as errors, and [GitHub CI passed for the release commit](https://github.com/oliverames/skylight-bridge/actions/runs/33966548987).
+
+Apple accepted notarization for the app archive (`d6074eed-3f23-470c-9268-acfa9309c238`) and DMG (`a6643e3f-fc23-4318-bbc5-49ba78ba8d4b`). The universal app and DMG passed signing, stapling, and Gatekeeper verification. The public DMG and checksum match the local files byte for byte. The DMG is 6,856,419 bytes and its SHA-256 is `25ae02c2ede6d1ef93b7377897e69974a94587954860bfda25b2a3b45e7f6f45`.
+
+The signed Sparkle feed was pushed to gh-pages commit `9bf73ba`. A fresh download of the public feed matches the repository copy, advertises 1.6.6 build 31, and passes Sparkle's complete-feed signature verification. The downloaded public DMG also passes enclosure signature verification. The bundled updater configuration requires both checks. Existing Keychain signing profiles were used, and no private signing key was exported.
+
+The notarized app launched as 1.6.6 (31), restored its saved account, and displayed actual thumbnails in the selected-photo editor. The editor was closed without changing its mapping. Saved-session restoration does not replace the unsuccessful fresh-login check described above. A separate attempt to read the access token for a read-only chore probe also timed out at Keychain access.
+
+All four issues received evidence-based replies: [CloudKit mitigation](https://github.com/oliverames/skylight-bridge/issues/1#issuecomment-5551823680), [chore diagnostics](https://github.com/oliverames/skylight-bridge/issues/2#issuecomment-5551905201), [subscription answer](https://github.com/oliverames/skylight-bridge/issues/3#issuecomment-5551810023), and [login follow-up](https://github.com/oliverames/skylight-bridge/issues/4#issuecomment-5551905252). Issue 3 is closed. Issues 1, 2, and 4 remain open for the requested reporter evidence. No production CloudKit schema or user mappings were changed to investigate these reports.

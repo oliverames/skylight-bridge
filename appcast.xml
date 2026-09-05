@@ -6,16 +6,16 @@
     <description>Signed updates for Skylight Bridge.</description>
     <language>en</language>
     <item>
-      <title>Version 1.6.5</title>
-      <sparkle:version>30</sparkle:version>
-      <sparkle:shortVersionString>1.6.5</sparkle:shortVersionString>
-      <description><![CDATA[<p>Fixes automatic account restoration at startup and adds selected-photo previews, with fixes for authentication, saved photo edits, recurring chores, reminder adoption, Notes saves, and cleanup retries.</p>]]></description>
-      <pubDate>Fri, 04 Sep 2026 21:05:42 +0000</pubDate>
-      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.6.5/Skylight.Bridge-1.6.5.dmg" sparkle:edSignature="f8yultZ1ikYV4iJe8Ke+JI6OPT4FrVLF4+Gh5LV88bdFUOo+/3qC1vDdjj6Lc4ZRghF3APXgPzc5xNHkGcBvCg==" length="6857444" type="application/octet-stream" />
+      <title>Version 1.6.6</title>
+      <sparkle:version>31</sparkle:version>
+      <sparkle:shortVersionString>1.6.6</sparkle:shortVersionString>
+      <description><![CDATA[<p>This update identifies failed sync request methods and adds safe HTTP status details to sign-in failures. It retains the photo previews and fixes from 1.6.5.</p>]]></description>
+      <pubDate>Sat, 05 Sep 2026 12:42:10 +0000</pubDate>
+      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.6.6/Skylight.Bridge-1.6.6.dmg" sparkle:edSignature="1ohJ9e5dO8pg9A/+y3Lxu+Y3Uv3AbFeRbs8bry4qpFT+7PvKPEAeP8UcSrF1I0XNdmCf0b/Owf5vPuEeyZA9BA==" length="6856419" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: /n2MhucYR2gN+NfxJA5kOn+vLEQk83X8Sv/8cIgMbGQYMVLLw9CO1bMzXXeKYmjPQEXe5WLDNC/bELYCIqzKAw==
-length: 1161
+edSignature: fmspBiO6dKSCNxcpL7YJzdGCPnqGeB9wvYxC1NFHA3NGxm7dUw6lzDQajPjBV6Mn5lNHhg9HELwzyzJ86oGrCw==
+length: 1117
 -->
