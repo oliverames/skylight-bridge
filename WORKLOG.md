@@ -1,3 +1,17 @@
+## 2026-09-05 - Codex session review, 1.7.0 closeout, and 1.7.1 released
+
+**What changed**: Reviewed Codex session `01a06e0e` against its rollout and live state. Its four releases (1.6.4 through 1.7.0), issue replies, and the iOS CI fix were confirmed real. Three leftovers were closed: the 1.7.0 `appcast.xml` that the release run left uncommitted on `main`, the implementation record that still read "in progress", and a TestFlight group so the uploaded iPhone build is installable. The activity log then showed every scheduled sync since 2026-08-17 aborting on `Apple Reminders list 97E590DC… was not found` (the recreated "Personal" list behind "Dad's To-dos"). Commit `18f0ee3` turns a missing Reminders list or Photos collection into a per-mapping warning that names the mapping, and the run continues. Released 1.7.1 build 33 (`a2a8b15`): notarized, Gatekeeper-accepted, GitHub release `v1.7.1` with checksum `7ebb1bf3…a260`, signed appcast on `gh-pages` `facb18b`. Posted the issue #4 follow-up asking the reporter to re-attach the screenshot GitHub dropped from their email reply.
+
+**Decisions made**: Oliver keeps the iPhone companion as a private TestFlight build (internal group only, no external group or review). Missing source containers are per-mapping warnings, not run failures. The `Money` and `To Sell` mappings are to be removed and `Personal` relinked, both through the app UI because the configuration is sealed.
+
+**Left off at**: All commits pushed, CI green on `02c1ed8`. Resolved this session: uncommitted 1.7.0 appcast, TestFlight group, README badge stuck at 1.6.6. Still open from the prior entry: distribution verification is now recorded in the implementation doc.
+
+**Open questions**: NEW: relink "Personal" to list `0ED8B4BF-E526-4CE6-8A76-5011587DF6C1` and remove "Money" and "To Sell" in Settings; desktop control could not be granted in this scheduled run. Still open: issues #1, #2, #4 await reporter evidence. Still open: the live chore-read and fresh-login probes need the Keychain key, which prompts and cannot run headless.
+
+**Verification**: 266 tests in 27 suites via `script/run_tests.sh`; `swift build -c release -Xswiftc -warnings-as-errors` clean; `spctl` reports Notarized Developer ID for the 1.7.1 DMG; downloaded `.sha256` diffs clean; the live appcast serves build 33 with enclosure length 7,080,676 matching the DMG and diffs clean against the repo copy.
+
+---
+
 ## 2026-09-05 - Cloud reliability and 1.7.0 preparation
 
 Completed all implementation items from the cloud reliability review across Mac and iPhone. Outgoing edits now persist before publication with their original timestamps. Both clients recover automatically, honor server retry delays across restarts, retain healthy partial results, and protect newer foreground edits. Account ownership prevents a different iCloud account from receiving the previous account's cached edits. The Overview screen reports last successful sharing, pending changes, and retry timing.
