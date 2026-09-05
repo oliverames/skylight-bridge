@@ -135,10 +135,16 @@ actor SkylightOAuthAuthenticator: SkylightOAuthTokenProvider {
 
         let (_, response) = try await transport.data(for: browserRequest(url: url, method: "GET"))
         guard (300..<400).contains(response.statusCode) else {
-            throw SkylightOAuthError.missingRedirectLocation
+            throw SkylightOAuthError.authorizationFailed(
+                statusCode: response.statusCode,
+                reason: .expectedRedirect
+            )
         }
         guard let location = response.value(forHTTPHeaderField: "Location") else {
-            throw SkylightOAuthError.missingRedirectLocation
+            throw SkylightOAuthError.authorizationFailed(
+                statusCode: response.statusCode,
+                reason: .missingLocation
+            )
         }
         do {
             return try Self.validatedAuthorizationCode(from: location)
@@ -146,7 +152,10 @@ actor SkylightOAuthAuthenticator: SkylightOAuthTokenProvider {
             if location.contains("/auth/session/new") {
                 throw SkylightOAuthError.loginRejected
             }
-            throw SkylightOAuthError.missingAuthorizationCode
+            throw SkylightOAuthError.authorizationFailed(
+                statusCode: response.statusCode,
+                reason: .invalidCallback
+            )
         }
     }
 

@@ -89,8 +89,14 @@ enum SkylightOAuthError: Error, Equatable, Sendable {
     case missingCSRFToken
     case loginRejected
     case missingAuthorizationCode
-    case missingRedirectLocation
+    case authorizationFailed(statusCode: Int, reason: AuthorizationFailureReason)
     case invalidFormResponse(statusCode: Int, body: String)
+
+    enum AuthorizationFailureReason: String, Sendable {
+        case expectedRedirect = "expected a redirect"
+        case missingLocation = "redirect destination missing"
+        case invalidCallback = "redirect contained no accepted authorization code"
+    }
 }
 
 extension SkylightAPIError: LocalizedError {
@@ -194,8 +200,10 @@ extension SkylightOAuthError: LocalizedError {
             "Could not start the Skylight sign-in session."
         case .loginRejected:
             "Skylight rejected the email or password."
-        case .missingAuthorizationCode, .missingRedirectLocation:
+        case .missingAuthorizationCode:
             "Skylight sign-in did not return an authorization code."
+        case let .authorizationFailed(statusCode, reason):
+            "Skylight sign-in did not return an authorization code (HTTP \(statusCode), \(reason.rawValue))."
         case let .invalidFormResponse(statusCode, _):
             "Skylight sign-in returned HTTP \(statusCode)."
         }

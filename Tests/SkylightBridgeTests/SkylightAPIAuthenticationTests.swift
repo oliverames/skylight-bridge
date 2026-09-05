@@ -3,6 +3,36 @@ import Testing
 @testable import SkylightBridge
 
 struct SkylightAPIAuthenticationTests {
+    @Test("Authorization failures retain status without exposing response or redirect secrets", arguments: [200, 403, 503, 302, 307])
+    func describesAuthorizationFailure(statusCode: Int) async throws {
+        let headers = statusCode == 307
+            ? ["Location": "https://untrusted.example/welcome?code=private-code&email=private-email"]
+            : [:]
+        let transport = SkylightSequenceTransport(responses: [
+            .init(statusCode: 200, body: #"<input name="authenticity_token" value="private-csrf">"#),
+            .init(statusCode: 302, headers: ["Location": "https://app.ourskylight.com/home"]),
+            .init(statusCode: statusCode, headers: headers, body: "private-response")
+        ])
+        let authenticator = SkylightOAuthAuthenticator(deviceFingerprint: "private-device", transport: transport)
+
+        do {
+            _ = try await authenticator.login(email: "private-email", password: "private-password")
+            Issue.record("Expected authorization failure")
+        } catch let error as SkylightOAuthError {
+            let reason: SkylightOAuthError.AuthorizationFailureReason = switch statusCode {
+            case 302: .missingLocation
+            case 307: .invalidCallback
+            default: .expectedRedirect
+            }
+            #expect(error == .authorizationFailed(statusCode: statusCode, reason: reason))
+            #expect(error.localizedDescription.contains("HTTP \(statusCode)"))
+            #expect(error.localizedDescription.contains(reason.rawValue))
+            #expect(!error.localizedDescription.contains("private-"))
+            #expect(!error.localizedDescription.contains("untrusted.example"))
+        }
+        #expect(await transport.requests.count == 3)
+    }
+
     @Test("Runtime API base URL is restricted to the canonical HTTPS host")
     func validatesRuntimeAPIBaseURL() throws {
         let accepted = try SkylightSessionManager.validatedBaseURL("https://app.ourskylight.com/api/")
