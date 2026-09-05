@@ -56,3 +56,10 @@ Sources: [CKDatabaseSubscription](https://developer.apple.com/documentation/Clou
 - The iPhone repository's CI failed on `6dd0727` and `5ad8304` because the macOS 26 runner's SDK lacks `PHCloudIdentifier.archivalStringValue`. Commit `00d95ed` guards the spelling by compiler version, and CI passed on it at 2026-09-05 17:12 UTC. The exported iPhone archive was produced after that source change and includes it.
 - App Store Connect holds iPhone build 0.1.9 (1) for app `6809008416`, uploaded 2026-09-05 17:17 UTC, processing state `VALID`, encryption exemption declared, internal build state `READY_FOR_BETA_TESTING`. The release run left no TestFlight group, so an internal group named "Internal Testers" with access to all builds was created at 2026-09-05 19:48 UTC, and Oliver was added as its internal tester. No external group or beta review submission exists.
 - The shared package pin in `Package.resolved` resolves 0.1.9 at `6dd0727`, which matches the remote tag.
+
+## Follow-up release 1.7.1, September 5, 2026
+
+- The Activity log on this Mac showed every scheduled sync since 2026-08-17 failing with `Apple Reminders list 97E590DC… was not found`, the "Personal" list behind the "Dad's To-dos" mapping. One missing list aborted the entire run, so photos, recipes, and the other lists had not synced for three weeks. The "Money" and "To Sell" lists are also gone from Reminders.
+- Commit `18f0ee3` makes a missing Reminders list or Photos collection a per-mapping warning that names the mapping, and the run continues. Two regressions cover reminders and photos; 266 tests pass.
+- Release 1.7.1 (build 33): commit `a2a8b15`, notarized and Gatekeeper-accepted app and disk image, GitHub release `v1.7.1` with checksum `7ebb1bf35aaec99a2c420793d27e79367dc371948dc392938aba2d34ab9ca260`, signed appcast on `gh-pages` commit `facb18b`.
+- Still needed by hand in the app: relink the "Personal" mapping to the recreated Personal list (identifier `0ED8B4BF-E526-4CE6-8A76-5011587DF6C1`) and remove the "Money" and "To Sell" mappings. The configuration file is sealed, so this must go through Settings.

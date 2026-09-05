@@ -6,16 +6,16 @@
     <description>Signed updates for Skylight Bridge.</description>
     <language>en</language>
     <item>
-      <title>Version 1.7.0</title>
-      <sparkle:version>32</sparkle:version>
-      <sparkle:shortVersionString>1.7.0</sparkle:shortVersionString>
-      <description><![CDATA[<p>Automatic iCloud recovery, durable offline edits, safer conflict handling, and clearer sharing status.</p>]]></description>
-      <pubDate>Sat, 05 Sep 2026 17:11:23 +0000</pubDate>
-      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.7.0/Skylight.Bridge-1.7.0.dmg" sparkle:edSignature="q/1cos7toddpFaMF1/bqHS99R78N8jIcknCvDmdkBigOIl7aI2hb1KjnTBMDR38mUFqldeuuLIYRnis9u+/2BA==" length="7056611" type="application/octet-stream" />
+      <title>Version 1.7.1</title>
+      <sparkle:version>33</sparkle:version>
+      <sparkle:shortVersionString>1.7.1</sparkle:shortVersionString>
+      <description><![CDATA[<p>This release includes improvements and fixes.</p>]]></description>
+      <pubDate>Sat, 05 Sep 2026 20:15:15 +0000</pubDate>
+      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.7.1/Skylight.Bridge-1.7.1.dmg" sparkle:edSignature="ykPYMDQzFT3Otc4A/AUy93uvBAUIJ4Y7+wz9UouQSHHasYApD2T+C22H6BHqEvoqYizQdu7XjsC+JlTM/MIOAA==" length="7080676" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: to74koB0Gp91HCVs6MjcaW9pNF1ww+ojQo3RIC7qOT4qeI4y0xQgzueC8PA4QtZz7BEu052+yjUvio2Rp6IYBw==
-length: 1062
+edSignature: gxQa51syixJDyi7CPRpiLXQOHVYwt1xhwL2gjwr10SZ+mo7XOBMoB2bl/p+qsOJ9tWJHUevE+04x0BGbU8bdCg==
+length: 1005
 -->
