@@ -1097,6 +1097,10 @@ struct SyncStateIdentityTests {
         let store = AppStore(
             persistence: persistence,
             sessionManager: StaticClientSessionManager(client: client),
+            syncStateStore: SyncStateStore(
+                rootURL: directory,
+                authenticator: LocalFileAuthenticator(testKey: Data(repeating: 0x76, count: 32))
+            ),
             remindersStore: ChoreSetupRemindersStore()
         )
         store.skylightFrames = [
