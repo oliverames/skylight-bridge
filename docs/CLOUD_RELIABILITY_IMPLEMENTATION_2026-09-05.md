@@ -9,7 +9,7 @@ Author: Oliver Ames
 - [x] Integrate automatic recovery, durable publication, and accurate status on Mac and iPhone.
 - [x] Complete the transport evaluation and production schema release checks.
 - [x] Run fault-injection regressions, full suites, builds, independent review, and rendered UI verification.
-- [ ] In progress: publish the shared package and client updates, verify Sparkle and release artifacts, and record final evidence.
+- [x] Publish the shared package and client updates, verify Sparkle and release artifacts, and record final evidence.
 
 ## Scope and decisions
 
@@ -46,4 +46,13 @@ Sources: [CKDatabaseSubscription](https://developer.apple.com/documentation/Clou
 - Final independent review found no remaining actionable defects in the corrected retry, retirement, and schema paths. The final suites passed 264 Mac tests, 22 shared tests, and four mobile integration tests. Both optimized builds passed with warnings treated as errors.
 - The signed Mac development bundle completed a real production iCloud refresh and rendered “Up to date with iCloud” on September 5, 2026 at approximately 17:03 UTC. No synthetic cloud records were created. The new Overview screen was captured in `cloud-reliability-overview.png` in the session visualization folder.
 - Shared package 0.1.9 was published at immutable commit `6dd0727`. The Mac dependency now resolves the published release rather than an editable checkout.
-- App Store Connect app `6809008416` was created with the configured bundle ID and limited access. Automatic approval review rejected Full Access, so the safer limited-access setting was used. The signed iPhone archive succeeded. TestFlight export and upload verification are in progress.
+- App Store Connect app `6809008416` was created with the configured bundle ID and limited access. Automatic approval review rejected Full Access, so the safer limited-access setting was used. The signed iPhone archive succeeded. TestFlight export and upload verification are recorded below.
+
+## Release evidence, verified September 5, 2026
+
+- Mac 1.7.0 (build 32) is published at the GitHub release `v1.7.0`, created 2026-09-05 17:10:14 UTC. The downloaded disk image matches the published checksum `e5710b73c2decaff2e7b4f5a3ba297c58ac92114a54d665442f3ff4363135a88`, is 7,056,611 bytes as advertised in the appcast enclosure, and `spctl` reports it accepted as Notarized Developer ID.
+- The live Sparkle feed on `gh-pages` (commit `2dd3fc8`) serves 1.7.0, build 32. The `main` copy of `appcast.xml` was left uncommitted by the release run and is committed alongside this record, matching the 1.6.4 through 1.6.6 convention.
+- Mac CI passed on the release commit `503b19b`.
+- The iPhone repository's CI failed on `6dd0727` and `5ad8304` because the macOS 26 runner's SDK lacks `PHCloudIdentifier.archivalStringValue`. Commit `00d95ed` guards the spelling by compiler version, and CI passed on it at 2026-09-05 17:12 UTC. The exported iPhone archive was produced after that source change and includes it.
+- App Store Connect holds iPhone build 0.1.9 (1) for app `6809008416`, uploaded 2026-09-05 17:17 UTC, processing state `VALID`, encryption exemption declared, internal build state `READY_FOR_BETA_TESTING`. The release run left no TestFlight group, so an internal group named "Internal Testers" with access to all builds was created at 2026-09-05 19:48 UTC, and Oliver was added as its internal tester. No external group or beta review submission exists.
+- The shared package pin in `Package.resolved` resolves 0.1.9 at `6dd0727`, which matches the remote tag.

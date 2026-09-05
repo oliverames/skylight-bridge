@@ -6,16 +6,16 @@
     <description>Signed updates for Skylight Bridge.</description>
     <language>en</language>
     <item>
-      <title>Version 1.6.6</title>
-      <sparkle:version>31</sparkle:version>
-      <sparkle:shortVersionString>1.6.6</sparkle:shortVersionString>
-      <description><![CDATA[<p>This update identifies failed sync request methods and adds safe HTTP status details to sign-in failures. It retains the photo previews and fixes from 1.6.5.</p>]]></description>
-      <pubDate>Sat, 05 Sep 2026 12:42:10 +0000</pubDate>
-      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.6.6/Skylight.Bridge-1.6.6.dmg" sparkle:edSignature="1ohJ9e5dO8pg9A/+y3Lxu+Y3Uv3AbFeRbs8bry4qpFT+7PvKPEAeP8UcSrF1I0XNdmCf0b/Owf5vPuEeyZA9BA==" length="6856419" type="application/octet-stream" />
+      <title>Version 1.7.0</title>
+      <sparkle:version>32</sparkle:version>
+      <sparkle:shortVersionString>1.7.0</sparkle:shortVersionString>
+      <description><![CDATA[<p>Automatic iCloud recovery, durable offline edits, safer conflict handling, and clearer sharing status.</p>]]></description>
+      <pubDate>Sat, 05 Sep 2026 17:11:23 +0000</pubDate>
+      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.7.0/Skylight.Bridge-1.7.0.dmg" sparkle:edSignature="q/1cos7toddpFaMF1/bqHS99R78N8jIcknCvDmdkBigOIl7aI2hb1KjnTBMDR38mUFqldeuuLIYRnis9u+/2BA==" length="7056611" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: fmspBiO6dKSCNxcpL7YJzdGCPnqGeB9wvYxC1NFHA3NGxm7dUw6lzDQajPjBV6Mn5lNHhg9HELwzyzJ86oGrCw==
-length: 1117
+edSignature: to74koB0Gp91HCVs6MjcaW9pNF1ww+ojQo3RIC7qOT4qeI4y0xQgzueC8PA4QtZz7BEu052+yjUvio2Rp6IYBw==
+length: 1062
 -->
