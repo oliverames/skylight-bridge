@@ -102,6 +102,8 @@ submit_for_notarization() {
   xcrun notarytool submit "$artifact" "${NOTARYTOOL_ARGS[@]}" --wait
 }
 
+: "${CLOUDKIT_SCHEMA_FILE:?Set CLOUDKIT_SCHEMA_FILE to a fresh production CloudKit schema export}"
+python3 "$ROOT_DIR/script/validate_cloudkit_schema.py" "$CLOUDKIT_SCHEMA_FILE"
 require_notary_credentials
 require_developer_id_profile
 

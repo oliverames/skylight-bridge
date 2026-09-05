@@ -13,7 +13,7 @@ let package = Package(
     dependencies: [
        .package(
            url: "https://github.com/oliverames/skylight-bridge-ios.git",
-            from: "0.1.8"
+            from: "0.1.9"
         ),
         .package(
             url: "https://github.com/sparkle-project/Sparkle",

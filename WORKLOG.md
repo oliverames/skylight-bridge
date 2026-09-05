@@ -1,3 +1,15 @@
+## 2026-09-05 - Cloud reliability and 1.7.0 preparation
+
+Completed all implementation items from the cloud reliability review across Mac and iPhone. Outgoing edits now persist before publication with their original timestamps. Both clients recover automatically, honor server retry delays across restarts, retain healthy partial results, and protect newer foreground edits. Account ownership prevents a different iCloud account from receiving the previous account's cached edits. The Overview screen reports last successful sharing, pending changes, and retry timing.
+
+The shared package is published as immutable version 0.1.9 at `6dd0727`. All 264 Mac tests, 22 shared tests, and four mobile integration tests pass. Both optimized builds pass with warnings treated as errors. Independent review found no remaining defects in the final corrected paths. The iPhone simulator build launched and its Overview was visually checked. The signed Mac build completed a production iCloud refresh and displayed the successful status.
+
+The live production schema export contains all active types and indexes. A release gate checks that export and enforces the disabled multi-Mac boundary. Seven schema tests and the Sparkle helper tests pass. The transport evaluation is complete: retain default-zone compatibility and scheduled reconciliation. See [implementation evidence](docs/CLOUD_RELIABILITY_IMPLEMENTATION_2026-09-05.md).
+
+Version 1.7.0 build 32 is prepared for signed Mac release. The iPhone 0.1.9 build 1 archive succeeded, and its first App Store Connect record is `6809008416`. Distribution verification will be recorded after publication.
+
+---
+
 ## 2026-09-05 - GitHub issue review and 1.6.6 released
 
 Reviewed all four GitHub issues and replied with verified findings. The subscription documentation now explains which features require Calendar Plus, and issue 3 is closed. Issues 1, 2, and 4 remain open for reporter confirmation or updated error details. The CloudKit mitigation already shipped in 1.5.13, and one login reporter confirmed the latest release works on September 5.

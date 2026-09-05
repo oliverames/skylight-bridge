@@ -30,6 +30,14 @@ protocol AppRemindersStoring {
 
 extension AppleRemindersStore: AppRemindersStoring {}
 
+@MainActor
+protocol SharedPhotoIdentifierProviding {
+    func cloudAssetIdentifiers(for localIdentifiers: [String]) throws -> [String: String]
+    func localAssetIdentifiers(for cloudIdentifiers: [String]) throws -> [String: String]
+}
+
+extension ApplePhotoLibrary: SharedPhotoIdentifierProviding {}
+
 struct SharedPreferenceFields: OptionSet, Sendable {
     let rawValue: UInt8
 
@@ -56,6 +64,12 @@ struct PendingSharedPhotoChanges: Codable, Hashable, Sendable {
     var additions: [UUID: Set<String>] = [:]
     var removals: [UUID: Set<String>] = [:]
     var portableMappings: [UUID: PhotoMapping] = [:]
+    var operationDates: [String: Date]?
+    var mappingDates: [UUID: Date]?
+
+    func operationDate(mappingID: UUID, assetID: String, removing: Bool) -> Date? {
+        operationDates?["\(mappingID)|\(removing ? "remove" : "add")|\(assetID)"]
+    }
 
     var isEmpty: Bool {
         additions.values.allSatisfy(\.isEmpty)
@@ -74,10 +88,32 @@ struct PendingSharedPhotoChanges: Codable, Hashable, Sendable {
         additions addedAssetIDs: Set<String>,
         removals removedAssetIDs: Set<String>
     ) {
+        operationDates = operationDates ?? [:]
+        for asset in addedAssetIDs { operationDates?["\(mappingID)|add|\(asset)"] = .now }
+        for asset in removedAssetIDs { operationDates?["\(mappingID)|remove|\(asset)"] = .now }
         additions[mappingID, default: []].formUnion(addedAssetIDs)
         additions[mappingID]?.subtract(removedAssetIDs)
         removals[mappingID, default: []].formUnion(removedAssetIDs)
         removals[mappingID]?.subtract(addedAssetIDs)
+        removeEmptyEntries()
+    }
+
+    mutating func materializeOperationDates(at date: Date = .now) {
+        operationDates = operationDates ?? [:]
+        for (id, assets) in additions {
+            for asset in assets {
+                let key = "\(id)|add|\(asset)"
+                if operationDates?[key] == nil { operationDates?[key] = date }
+            }
+        }
+        for (id, assets) in removals {
+            for asset in assets {
+                let key = "\(id)|remove|\(asset)"
+                if operationDates?[key] == nil { operationDates?[key] = date }
+            }
+        }
+        mappingDates = mappingDates ?? [:]
+        for id in portableMappings.keys where mappingDates?[id] == nil { mappingDates?[id] = date }
         removeEmptyEntries()
     }
 
@@ -92,6 +128,8 @@ struct PendingSharedPhotoChanges: Codable, Hashable, Sendable {
         portable.selectedAssetIDs = []
         portable.selectedPhotoNames = [:]
         portableMappings[mapping.id] = portable
+        mappingDates = mappingDates ?? [:]
+        mappingDates?[mapping.id] = .now
     }
 
     func applyingPortableFields(to mapping: PhotoMapping) -> PhotoMapping {
@@ -108,13 +146,22 @@ struct PendingSharedPhotoChanges: Codable, Hashable, Sendable {
 
     mutating func acknowledge(_ published: PendingSharedPhotoChanges) {
         for (mappingID, assetIDs) in published.additions {
-            additions[mappingID]?.subtract(assetIDs)
+            let accepted = assetIDs.filter { asset in
+                published.operationDate(mappingID: mappingID, assetID: asset, removing: false) ==
+                    operationDate(mappingID: mappingID, assetID: asset, removing: false)
+            }
+            additions[mappingID]?.subtract(accepted)
         }
         for (mappingID, assetIDs) in published.removals {
-            removals[mappingID]?.subtract(assetIDs)
+            let accepted = assetIDs.filter { asset in
+                published.operationDate(mappingID: mappingID, assetID: asset, removing: true) ==
+                    operationDate(mappingID: mappingID, assetID: asset, removing: true)
+            }
+            removals[mappingID]?.subtract(accepted)
         }
         for (mappingID, mapping) in published.portableMappings
-        where portableMappings[mappingID] == mapping {
+        where portableMappings[mappingID] == mapping &&
+            mappingDates?[mappingID] == published.mappingDates?[mappingID] {
             portableMappings.removeValue(forKey: mappingID)
         }
         removeEmptyEntries()
@@ -129,6 +176,12 @@ struct PendingSharedPhotoChanges: Codable, Hashable, Sendable {
     private mutating func removeEmptyEntries() {
         additions = additions.filter { !$0.value.isEmpty }
         removals = removals.filter { !$0.value.isEmpty }
+        let keys = Set(additions.flatMap { id, assets in assets.map { "\(id)|add|\($0)" } } +
+                       removals.flatMap { id, assets in assets.map { "\(id)|remove|\($0)" } })
+        operationDates = operationDates?.filter { keys.contains($0.key) }
+        mappingDates = mappingDates?.filter { portableMappings[$0.key] != nil }
+        if operationDates?.isEmpty == true { operationDates = nil }
+        if mappingDates?.isEmpty == true { mappingDates = nil }
     }
 }
 
@@ -210,12 +263,15 @@ final class AppStore {
     private let persistence: ConfigurationStore
     @ObservationIgnored private let scheduler = BackgroundSyncScheduler()
     @ObservationIgnored let photoLibrary = ApplePhotoLibrary()
+    @ObservationIgnored private let injectedPhotoIdentifiers: (any SharedPhotoIdentifierProviding)?
+    var sharedPhotoIdentifiers: any SharedPhotoIdentifierProviding { injectedPhotoIdentifiers ?? photoLibrary }
     @ObservationIgnored private let remindersStore: any AppRemindersStoring
     @ObservationIgnored private let notesStore = AppleNotesStore()
     @ObservationIgnored private let sessionManager: any SkylightSessionManaging
     @ObservationIgnored private let syncStateStore: SyncStateStore
     @ObservationIgnored let sharedPreferencesStore: any SharedPreferencesCloudStoring
     @ObservationIgnored let sharedPhotoMappingStore: any SharedPhotoMappingCloudStoring
+    @ObservationIgnored var sharedCloudDriver: CloudSyncDriver?
     @ObservationIgnored var sharedCloudOperationInProgress = false
     @ObservationIgnored var sharedPreferencesOperationInProgress = false
     @ObservationIgnored var sharedPreferenceMutationVersion: UInt64 = 0
@@ -231,8 +287,10 @@ final class AppStore {
         syncStateStore: SyncStateStore = SyncStateStore(),
         remindersStore: any AppRemindersStoring = AppleRemindersStore(),
         sharedPreferencesStore: any SharedPreferencesCloudStoring = CloudPreferencesStore(),
-        sharedPhotoMappingStore: any SharedPhotoMappingCloudStoring = CloudPhotoMappingStore()
+        sharedPhotoMappingStore: any SharedPhotoMappingCloudStoring = CloudPhotoMappingStore(),
+        photoIdentifiers: (any SharedPhotoIdentifierProviding)? = nil
     ) {
+        self.injectedPhotoIdentifiers = photoIdentifiers
         self.persistence = persistence
         self.sessionManager = sessionManager
         self.syncStateStore = syncStateStore
@@ -312,6 +370,7 @@ final class AppStore {
         async let sources: Void = refreshSources()
         async let account: Void = restoreAccountConnection()
         _ = await (sources, account)
+        cloudSync.start()
         await refreshSharediCloudState()
     }
 
@@ -330,9 +389,18 @@ final class AppStore {
                 configuration.photoMappings[index].selectedPhotoNames = pruned
             }
         }
+        let oldPreferences = configuration.sharedPreferences
+        let oldPending = configuration.sharedPreferencesPending
+        let oldMutations = sharedPreferenceMutations
+        let oldVersion = sharedPreferenceMutationVersion
+        if !sharedPreferenceFields.isEmpty { recordSharedPreferenceMutation(sharedPreferenceFields) }
         do {
             try persistConfiguration()
         } catch {
+            configuration.sharedPreferences = oldPreferences
+            configuration.sharedPreferencesPending = oldPending
+            sharedPreferenceMutations = oldMutations
+            sharedPreferenceMutationVersion = oldVersion
             statusMessage = "Could not save configuration: \(error.localizedDescription)"
             appendActivity(.init(
                 level: .error,
@@ -343,9 +411,6 @@ final class AppStore {
         }
         if configurationLoadError == nil {
             configureScheduler()
-        }
-        if !sharedPreferenceFields.isEmpty {
-            recordSharedPreferenceMutation(sharedPreferenceFields)
         }
         do {
             try applyLaunchAtLoginPreference()
@@ -359,8 +424,8 @@ final class AppStore {
             ))
         }
         applyDockIconPreference()
-        if publishSharedState, hasLoadedSharediCloudState {
-            Task { await publishSharediCloudState() }
+        if publishSharedState {
+            cloudSync.request()
         }
         if triggerSync {
             autoSync()
@@ -371,8 +436,11 @@ final class AppStore {
     private func recordSharedPreferenceMutation(_ fields: SharedPreferenceFields) {
         sharedPreferenceMutationVersion &+= 1
         let version = sharedPreferenceMutationVersion
-        let modifiedAt = Date.now
+        var preferences = loadSharedPreferences()
+        let latest = [preferences.selectedFrameIDModifiedAt, preferences.dryRunModifiedAt, preferences.preferredSyncIntervalModifiedAt].max() ?? .distantPast
+        let modifiedAt = max(Date.now, latest.addingTimeInterval(0.002))
         if fields.contains(.selectedFrame) {
+            preferences.setSelectedFrameID(configuration.account.frameID, at: modifiedAt, by: cloudInstallationID)
             sharedPreferenceMutations.selectedFrame = (
                 version,
                 configuration.account.frameID,
@@ -380,6 +448,7 @@ final class AppStore {
             )
         }
         if fields.contains(.dryRun) {
+            preferences.setDryRun(configuration.dryRun, at: modifiedAt, by: cloudInstallationID)
             sharedPreferenceMutations.dryRun = (
                 version,
                 configuration.dryRun,
@@ -387,23 +456,24 @@ final class AppStore {
             )
         }
         if fields.contains(.syncInterval) {
+            preferences.setPreferredSyncInterval(configuration.syncIntervalMinutes, at: modifiedAt, by: cloudInstallationID)
             sharedPreferenceMutations.syncInterval = (
                 version,
                 configuration.syncIntervalMinutes,
                 modifiedAt
             )
         }
+        configuration.sharedPreferences = preferences
+        configuration.sharedPreferencesPending = true
     }
 
     private func recordPersistedFrameChangeIfNeeded(from previousFrameID: String) {
         guard previousFrameID.trimmed != configuration.account.frameID.trimmed else { return }
-        recordSharedPreferenceMutation([.selectedFrame])
-        if hasLoadedSharediCloudState {
-            Task { await publishSharediCloudState() }
-        }
+        guard saveConfiguration(sharedPreferenceFields: [.selectedFrame], publishSharedState: false) else { return }
+        cloudSync.request()
     }
 
-    private func persistConfiguration() throws {
+    func persistConfiguration() throws {
         if let configurationLoadError {
             throw AppStorePersistenceError.configurationRecoveryRequired(
                 configurationLoadError
@@ -1478,6 +1548,8 @@ final class AppStore {
         if mapping.sourceKind == .selectedPhotos {
             configuration.pendingPhotoMappingRetirements.removeAll { $0.id == mapping.id }
             configuration.pendingPhotoMappingRetirements.append(mapping)
+            configuration.photoRetirementDates = configuration.photoRetirementDates ?? [:]
+            configuration.photoRetirementDates?[mapping.id] = .now
         }
         configuration.photoMappings.removeAll { $0.id == mapping.id }
         configuration.retiredPhotoMappingIDs.insert(mapping.id)

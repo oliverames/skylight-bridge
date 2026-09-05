@@ -1,13 +1,13 @@
 {
-  "originHash" : "cb014fc51bed28af4504b639ef7dbfc6af0f3ad0dbd6263b8a425d47190063b5",
+  "originHash" : "eb59074ae2625617724420128f6a729f3ee66bec2cf0c157e0eef33c8c314efd",
   "pins" : [
     {
       "identity" : "skylight-bridge-ios",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/oliverames/skylight-bridge-ios.git",
       "state" : {
-        "revision" : "448ee088fdf06247439246ee6ec33dafccb7b607",
-        "version" : "0.1.8"
+        "revision" : "6dd072778953da649f68af59b836ed8cadb1e3c3",
+        "version" : "0.1.9"
       }
     },
     {

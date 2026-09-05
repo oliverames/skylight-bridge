@@ -122,6 +122,7 @@ struct SyncStateIdentityTests {
 
         var partiallyAcknowledged = PendingSharedPhotoChanges()
         partiallyAcknowledged.additions[mappingID] = ["asset-added"]
+        partiallyAcknowledged.operationDates = pending.operationDates
         pending.acknowledge(partiallyAcknowledged)
         #expect(pending.additions[mappingID] == ["asset-removed"])
         #expect(pending.removals[mappingID] == ["asset-toggled"])

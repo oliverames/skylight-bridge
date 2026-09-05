@@ -6,6 +6,7 @@ SPARKLE_FRAMEWORK="$ROOT_DIR/.build/artifacts/sparkle/Sparkle/Sparkle.xcframewor
 
 cd "$ROOT_DIR"
 bash script/test_appcast_helpers.sh
+PYTHONDONTWRITEBYTECODE=1 python3 script/test_cloudkit_schema.py
 swift build --build-tests
 
 if [[ ! -d "$SPARKLE_FRAMEWORK" ]]; then

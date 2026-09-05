@@ -36,6 +36,24 @@ struct OverviewView: View {
             }
 
             Section {
+                Text(store.cloudStatusMessage)
+                    .foregroundStyle(.secondary)
+                if let date = store.cloudSync.lastSuccessAt {
+                    LabeledContent("Last iCloud sync", value: date.formatted(.relative(presentation: .named)))
+                }
+                if store.pendingCloudChangeCount > 0 {
+                    LabeledContent("Waiting to share", value: "\(store.pendingCloudChangeCount) changes")
+                }
+                if let retry = store.cloudSync.nextAttemptAt, store.cloudSync.errorMessage != nil {
+                    LabeledContent("Next retry", value: retry.formatted(.relative(presentation: .named)))
+                }
+                Button("Refresh iCloud") { Task { await store.refreshSharediCloudState() } }
+                    .disabled(store.cloudSync.isSyncing || store.configurationLoadError != nil)
+            } header: {
+                Text("iCloud sharing")
+            }
+
+            Section {
                 sourceRow(
                     title: "Photos",
                     systemImage: "photo.on.rectangle.angled",

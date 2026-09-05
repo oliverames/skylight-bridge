@@ -1,4 +1,5 @@
 import Foundation
+import SkylightBridgeShared
 
 enum SourceSelectionMode: String, Codable, CaseIterable, Sendable {
     case everything
@@ -251,6 +252,11 @@ struct AppConfiguration: Codable, Sendable, Hashable {
     /// deletion is retried after relaunch instead of remaining active elsewhere.
     var pendingPhotoMappingRetirements: [PhotoMapping] = []
     var pendingSharedPhotoChanges = PendingSharedPhotoChanges()
+    var sharedPreferences: SharedPreferences?
+    var sharedPreferencesPending = false
+    var lastCloudSyncAt: Date?
+    var cloudRetryNotBefore: Date?
+    var photoRetirementDates: [UUID: Date]?
     var reminderMappings: [ReminderListMapping] = []
     var choreMappings: [ChoreMapping] = []
     var recipeSelection = NotesSelection(kind: .recipes)
@@ -299,6 +305,11 @@ struct AppConfiguration: Codable, Sendable, Hashable {
         pendingSharedPhotoChanges = try container.decodeIfPresent(
             PendingSharedPhotoChanges.self, forKey: .pendingSharedPhotoChanges
         ) ?? PendingSharedPhotoChanges()
+        sharedPreferences = try container.decodeIfPresent(SharedPreferences.self, forKey: .sharedPreferences)
+        sharedPreferencesPending = try container.decodeIfPresent(Bool.self, forKey: .sharedPreferencesPending) ?? false
+        lastCloudSyncAt = try container.decodeIfPresent(Date.self, forKey: .lastCloudSyncAt)
+        cloudRetryNotBefore = try container.decodeIfPresent(Date.self, forKey: .cloudRetryNotBefore)
+        photoRetirementDates = try container.decodeIfPresent([UUID: Date].self, forKey: .photoRetirementDates)
         reminderMappings = try container.decodeIfPresent(
             [ReminderListMapping].self, forKey: .reminderMappings
         ) ?? []
