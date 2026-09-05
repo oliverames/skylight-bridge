@@ -398,6 +398,79 @@ struct SyncCoordinatorTests {
         #expect(await api.createdAlbumTitles == ["Family"])
     }
 
+    @Test("A missing Reminders list skips only its mapping and warns")
+    func missingReminderListSkipsOnlyThatMapping() async throws {
+        let api = CoordinatorAPIStub()
+        await api.configureLists([], items: [])
+        let reminderSource = CoordinatorReminderSource(
+            reminders: [],
+            missingListIDs: ["deleted-list"]
+        )
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            reminderSource: reminderSource
+        )
+        let missing = ReminderListMapping(
+            sourceListID: "deleted-list",
+            sourceListTitle: "Personal",
+            destinationListTitle: "Dad's To-dos",
+            destinationKind: .toDo,
+            direction: .twoWay,
+            enabled: true
+        )
+        let healthy = ReminderListMapping(
+            sourceListID: "apple-list",
+            sourceListTitle: "Groceries",
+            destinationListTitle: "Grocery List",
+            destinationKind: .shopping,
+            direction: .twoWay,
+            enabled: true
+        )
+        var configuration = AppConfiguration.empty
+        configuration.account.frameID = "frame-1"
+        configuration.dryRun = false
+        configuration.reminderMappings = [missing, healthy]
+
+        let summary = try await coordinator.sync(configuration: configuration)
+
+        #expect(summary.reminders.warnings.count == 1)
+        #expect(summary.reminders.warnings.first?.contains("Personal \u{2192} Dad's To-dos") == true)
+        #expect(summary.reminders.warnings.first?.contains("deleted-list was not found") == true)
+        #expect(await api.snapshot().createdLists == 1)
+    }
+
+    @Test("A missing Photos collection skips only its mapping and warns")
+    func missingPhotoCollectionSkipsOnlyThatMapping() async throws {
+        let api = CoordinatorAPIStub()
+        await api.configureLists([], items: [])
+        let photoSource = CoordinatorPhotoSource(
+            collections: ["album-ok": []],
+            missingCollectionIDs: ["album-gone"]
+        )
+        let coordinator = makeCoordinator(
+            api: api,
+            reminders: [],
+            photoSource: photoSource
+        )
+        var gone = PhotoMapping()
+        gone.name = "Vacation"
+        gone.sourceCollectionID = "album-gone"
+        var healthy = PhotoMapping()
+        healthy.name = "Kids"
+        healthy.sourceCollectionID = "album-ok"
+        var configuration = AppConfiguration.empty
+        configuration.account.frameID = "frame-1"
+        configuration.dryRun = false
+        configuration.photoMappings = [gone, healthy]
+
+        let summary = try await coordinator.sync(configuration: configuration)
+
+        #expect(summary.photos.warnings.count == 1)
+        #expect(summary.photos.warnings.first?.contains("Vacation") == true)
+        #expect(summary.photos.warnings.first?.contains("album-gone was not found") == true)
+    }
+
     @Test("Returning to a frame reuses its recorded reminder list after a rename")
     func reminderDestinationUsesFrameScopedState() async throws {
         let mappingID = UUID()
@@ -3718,19 +3791,25 @@ private enum CoordinatorStubError: Error {
 private final class CoordinatorPhotoSource: PhotoSyncSource {
     let assets: [ApplePhotoAssetSnapshot]
     let collections: [String: [ApplePhotoAssetSnapshot]]
+    let missingCollectionIDs: Set<String>
     private(set) var renderCount = 0
 
     init(
         assets: [ApplePhotoAssetSnapshot] = [],
-        collections: [String: [ApplePhotoAssetSnapshot]] = [:]
+        collections: [String: [ApplePhotoAssetSnapshot]] = [:],
+        missingCollectionIDs: Set<String> = []
     ) {
         self.assets = assets
         self.collections = collections
+        self.missingCollectionIDs = missingCollectionIDs
     }
 
     func syncPhotoCollections() async throws -> [ApplePhotoCollectionSnapshot] { [] }
     func syncPhotoAssets(in collectionID: String) async throws -> [ApplePhotoAssetSnapshot] {
-        collections[collectionID] ?? assets
+        if missingCollectionIDs.contains(collectionID) {
+            throw ApplePhotoLibraryError.collectionNotFound(collectionID)
+        }
+        return collections[collectionID] ?? assets
     }
     func syncPhotoAssets(withIDs assetIDs: [String]) async throws -> [ApplePhotoAssetSnapshot] { [] }
     func syncRenderedPhoto(withID assetID: String, maximumLongEdge: Int) async throws -> AppleRenderedPhoto {
@@ -3764,6 +3843,7 @@ private final class CoordinatorReminderSource: ReminderSyncSource {
     private let removalError: (any Error)?
     private let allowsCreation: Bool
     private let allowsUpdate: Bool
+    private let missingListIDs: Set<String>
     private var nextCreatedReminderNumber = 1
 
     init(
@@ -3772,7 +3852,8 @@ private final class CoordinatorReminderSource: ReminderSyncSource {
         listColorHex: String? = "#2178AF",
         removalError: (any Error)? = nil,
         allowsCreation: Bool = false,
-        allowsUpdate: Bool = false
+        allowsUpdate: Bool = false,
+        missingListIDs: Set<String> = []
     ) {
         self.reminders = reminders
         self.listTitle = listTitle
@@ -3780,10 +3861,14 @@ private final class CoordinatorReminderSource: ReminderSyncSource {
         self.removalError = removalError
         self.allowsCreation = allowsCreation
         self.allowsUpdate = allowsUpdate
+        self.missingListIDs = missingListIDs
     }
 
     func syncReminderList(withID listID: String) throws -> AppleReminderListSnapshot {
-        AppleReminderListSnapshot(
+        if missingListIDs.contains(listID) {
+            throw AppleRemindersStoreError.listNotFound(listID)
+        }
+        return AppleReminderListSnapshot(
             id: listID,
             title: listTitle,
             colorHex: listColorHex,
@@ -3807,7 +3892,12 @@ private final class CoordinatorReminderSource: ReminderSyncSource {
         return try syncReminderList(withID: listID)
     }
 
-    func syncReminders(in listID: String) async throws -> [AppleReminderSnapshot] { reminders }
+    func syncReminders(in listID: String) async throws -> [AppleReminderSnapshot] {
+        if missingListIDs.contains(listID) {
+            throw AppleRemindersStoreError.listNotFound(listID)
+        }
+        return reminders
+    }
     func syncCreateReminder(in listID: String, draft: AppleReminderDraft) async throws -> AppleReminderSnapshot {
         guard allowsCreation else { throw CoordinatorStubError.unexpectedCall }
         let reminder = AppleReminderSnapshot(

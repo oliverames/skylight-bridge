@@ -822,6 +822,21 @@ actor SyncCoordinator {
     /// True when a removal failed because the remote object no longer exists,
     /// which means the cleanup goal is already met. Any other error (transport,
     /// auth, server) must surface to the caller so the record survives.
+    /// A source container (Reminders list or Photos collection) that no longer
+    /// exists is a configuration problem for one mapping, not a transient
+    /// failure of the run. Callers skip that mapping with a warning.
+    private static func isMissingSource(_ error: any Error) -> Bool {
+        if let reminderError = error as? AppleRemindersStoreError,
+           case .listNotFound = reminderError {
+            return true
+        }
+        if let photoError = error as? ApplePhotoLibraryError,
+           case .collectionNotFound = photoError {
+            return true
+        }
+        return false
+    }
+
     private static func isAlreadyAbsent(_ error: any Error) -> Bool {
         if case let .httpStatus(code, _, _, _) = error as? SkylightAPIError {
             return code == 404 || code == 410
@@ -961,8 +976,16 @@ actor SyncCoordinator {
         }
 
         for mapping in mappings {
-            let sourceAssets = try await photoAssets(for: mapping)
-                .filter { $0.mediaKind == .image || $0.mediaKind == .livePhoto }
+            let sourceAssets: [ApplePhotoAssetSnapshot]
+            do {
+                sourceAssets = try await photoAssets(for: mapping)
+                    .filter { $0.mediaKind == .image || $0.mediaKind == .livePhoto }
+            } catch where Self.isMissingSource(error) {
+                summary.warnings.append(
+                    "Skipped the photo mapping \u{201C}\(mapping.name)\u{201D}: \(error.localizedDescription) Relink or remove it in Photos settings."
+                )
+                continue
+            }
             guard sourceAssets.count <= maximumAssetsPerMapping else {
                 throw SyncCoordinatorError.photoCollectionTooLarge(
                     count: sourceAssets.count,
@@ -1693,8 +1716,20 @@ actor SyncCoordinator {
         var summary = SyncDomainSummary()
 
         for mapping in mappings {
-            let appleList = try await reminderSource.syncReminderList(withID: mapping.sourceListID)
-            let allApple = try await reminderSource.syncReminders(in: mapping.sourceListID)
+            let appleList: AppleReminderListSnapshot
+            let allApple: [AppleReminderSnapshot]
+            do {
+                appleList = try await reminderSource.syncReminderList(withID: mapping.sourceListID)
+                allApple = try await reminderSource.syncReminders(in: mapping.sourceListID)
+            } catch where Self.isMissingSource(error) {
+                // A list the user deleted or recreated must not stall every
+                // other mapping and domain. Report it against this mapping
+                // and keep its records so relinking resumes where it left off.
+                summary.warnings.append(
+                    "Skipped the Reminders mapping \u{201C}\(mapping.sourceListTitle) \u{2192} \(mapping.destinationListTitle)\u{201D}: \(error.localizedDescription) Relink or remove it in Reminders settings."
+                )
+                continue
+            }
             if mapping.selectionMode == .selectedItems {
                 for index in state.reminders.indices where
                     state.reminders[index].mappingID == mapping.id &&
