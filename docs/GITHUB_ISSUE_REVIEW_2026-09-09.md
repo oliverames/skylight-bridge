@@ -9,7 +9,9 @@ Author: Oliver Ames
 - [x] Investigate the HTTP 400 authorization failure in #4 and record remaining evidence needed.
 - [x] Remove the inactive Mac heartbeat and warning UI for #5, retaining the disabled shared-sync-state boundary.
 - [x] Align the unused creation and search helpers in #6, authorized during this review.
-- [ ] Run repository checks, review changes, commit, push, and update issue status.
+- [x] Run repository checks, review changes, commit, push, and update issue status.
+
+Implementation commit `e762ec8685dd3ba76f0aae1bbdbad0ba240b05f1` is pushed to main. Issues #1, #5, and #6 are closed. Issues #2 and #4 remain open with updated evidence and next steps.
 
 ## Initial evidence
 
