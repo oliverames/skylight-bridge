@@ -13,7 +13,7 @@ extension SkylightAPIClient {
             after: after,
             includeLate: includeLate,
             filter: filter
-        )
+        ) + [URLQueryItem(name: "include_up_for_grabs", value: "true")]
         let response: SkylightCollectionResponse<SkylightChoreAttributes> = try await send(
             method: "GET",
             path: ["frames", frameID, "chores"],
@@ -25,7 +25,8 @@ extension SkylightAPIClient {
     func listAllChores(frameID: String) async throws -> [SkylightResource<SkylightChoreAttributes>] {
         let response: SkylightAllChoresResponse = try await send(
             method: "GET",
-            path: ["frames", frameID, "chores", "all"]
+            path: ["frames", frameID, "chores", "all"],
+            query: [URLQueryItem(name: "include_up_for_grabs", value: "true")]
         )
         return response.data
     }
@@ -37,7 +38,10 @@ extension SkylightAPIClient {
         let response: SkylightCollectionResponse<SkylightChoreAttributes> = try await send(
             method: "GET",
             path: ["frames", frameID, "chores", "search"],
-            query: [URLQueryItem(name: "query", value: searchText)]
+            query: [
+                URLQueryItem(name: "search_query", value: searchText),
+                URLQueryItem(name: "include_up_for_grabs", value: "true")
+            ]
         )
         return response.data
     }
@@ -46,6 +50,16 @@ extension SkylightAPIClient {
         frameID: String,
         request: SkylightChoreRequest
     ) async throws -> SkylightResource<SkylightChoreAttributes> {
+        if request.upForGrabs == true {
+            // The web client creates unassigned chores through create_multiple
+            // with a flat object, not a chores array. Issue #2 reports HTTP 422
+            // for an unassigned chore sent to the legacy single-create route.
+            let chores = try await createChores(frameID: frameID, request: request)
+            guard chores.count == 1, let chore = chores.first else {
+                throw SkylightAPIError.invalidResponse
+            }
+            return chore
+        }
         let response: SkylightSingleResponse<SkylightChoreAttributes> = try await sendJSON(
             method: "POST",
             path: ["frames", frameID, "chores"],
@@ -54,14 +68,16 @@ extension SkylightAPIClient {
         return response.data
     }
 
+    /// Creates one chore definition for its selected profiles, or one unassigned
+    /// chore. The endpoint does not take a batch of unrelated chore definitions.
     func createChores(
         frameID: String,
-        requests: [SkylightChoreRequest]
+        request: SkylightChoreRequest
     ) async throws -> [SkylightResource<SkylightChoreAttributes>] {
         let response: SkylightCollectionResponse<SkylightChoreAttributes> = try await sendJSON(
             method: "POST",
             path: ["frames", frameID, "chores", "create_multiple"],
-            body: SkylightChoreBatchRequest(chores: requests)
+            body: request
         )
         return response.data
     }

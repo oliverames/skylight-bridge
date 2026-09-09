@@ -1,3 +1,15 @@
+## 2026-09-09 - GitHub issue review and chore API compatibility
+
+Reviewed all open issues and comments. Closed #1 after the remaining reporters confirmed success. Corrected unassigned chore creation and inventory requests for #2 using Skylight's current web-client contract. Updated the unused multi-profile creation and search helpers tracked in #6. Removed the inactive Mac heartbeat and warning UI for #5 while retaining the disabled shared-sync-state boundary.
+
+Verification: 272 tests in 27 suites, seven schema checks, appcast helper checks, and the optimized build with warnings treated as errors pass. Changes are source-only and have not been packaged or installed.
+
+Remaining work: #2 needs release and reporter confirmation. #4 remains open with matching HTTP 400 screenshots and needs a sanitized authenticated trace from an affected account. Test credentials are not configured. The existing Personal-list relink and Money/To Sell mapping cleanup from the prior entry remain outside this issue-review scope.
+
+See [the dated review](docs/GITHUB_ISSUE_REVIEW_2026-09-09.md) for evidence and issue status.
+
+---
+
 ## 2026-09-05 - Codex session review, 1.7.0 closeout, and 1.7.1 released
 
 **What changed**: Reviewed Codex session `01a06e0e` against its rollout and live state. Its four releases (1.6.4 through 1.7.0), issue replies, and the iOS CI fix were confirmed real. Three leftovers were closed: the 1.7.0 `appcast.xml` that the release run left uncommitted on `main`, the implementation record that still read "in progress", and a TestFlight group so the uploaded iPhone build is installable. The activity log then showed every scheduled sync since 2026-08-17 aborting on `Apple Reminders list 97E590DC… was not found` (the recreated "Personal" list behind "Dad's To-dos"). Commit `18f0ee3` turns a missing Reminders list or Photos collection into a per-mapping warning that names the mapping, and the run continues. Released 1.7.1 build 33 (`a2a8b15`): notarized, Gatekeeper-accepted, GitHub release `v1.7.1` with checksum `7ebb1bf3…a260`, signed appcast on `gh-pages` `facb18b`. Posted the issue #4 follow-up asking the reporter to re-attach the screenshot GitHub dropped from their email reply.

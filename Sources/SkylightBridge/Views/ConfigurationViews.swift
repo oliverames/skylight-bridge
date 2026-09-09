@@ -76,12 +76,6 @@ struct AccountView: View {
                         .foregroundStyle(.red)
                        .accessibilityIdentifier("account.connectionError")
                }
-                if let multiClientWarning = store.multiClientWarning {
-                    Label(multiClientWarning, systemImage: "exclamationmark.bubble.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                        .accessibilityIdentifier("account.multiClientWarning")
-                }
             } header: {
                 SectionHeader(
                     title: "Sign in to Skylight",

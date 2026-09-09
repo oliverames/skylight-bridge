@@ -3,6 +3,116 @@ import Testing
 @testable import SkylightBridge
 
 struct SkylightAPIClientTests {
+    @Test("Multi-profile creation sends one definition and preserves every returned chore")
+    func createsChoresForSelectedProfiles() async throws {
+        let transport = SkylightTestTransport { request in
+            #expect(request.httpMethod == "POST")
+            #expect(request.url?.path == "/api/frames/frame-1/chores/create_multiple")
+            let body = try #require(request.httpBody)
+            let fields = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            #expect(fields["summary"] as? String == "Water plants")
+            #expect(fields["category_ids"] as? [String] == ["profile-1", "profile-2"])
+            #expect(fields["chores"] == nil)
+            return SkylightTestTransport.response(for: request, json:
+                #"{"data":[{"id":"chore-1","type":"chore","attributes":{"summary":"Water plants"}},{"id":"chore-2","type":"chore","attributes":{"summary":"Water plants"}}]}"#)
+        }
+        let client = SkylightAPIClient(accessToken: "fixture", transport: transport)
+        let chores = try await client.createChores(frameID: "frame-1", request:
+            SkylightChoreRequest(summary: "Water plants", categoryIDs: ["profile-1", "profile-2"]))
+        #expect(chores.map(\.id) == ["chore-1", "chore-2"])
+    }
+
+    @Test("Chore search sends the current search parameter and includes unassigned results")
+    func searchesChoresWithCurrentContract() async throws {
+        let search = "Plants & herbs + café"
+        let transport = SkylightTestTransport { request in
+            #expect(request.httpMethod == "GET")
+            #expect(request.url?.path == "/api/frames/frame-1/chores/search")
+            let url = try #require(request.url)
+            let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            #expect(query.contains(URLQueryItem(name: "search_query", value: search)))
+            #expect(query.contains(URLQueryItem(name: "include_up_for_grabs", value: "true")))
+            #expect(!query.contains { $0.name == "query" })
+            return SkylightTestTransport.response(for: request, json:
+                #"{"data":[{"id":"unassigned-1","type":"chore","attributes":{"summary":"Plants","up_for_grabs":true}}]}"#)
+        }
+        let client = SkylightAPIClient(accessToken: "fixture", transport: transport)
+        let chores = try await client.searchChores(frameID: "frame-1", query: search)
+        #expect(chores.map(\.id) == ["unassigned-1"])
+    }
+
+    @Test("Up for Grabs creation uses the web client's flat request and collection response")
+    func createsUnassignedChore() async throws {
+        let transport = SkylightTestTransport { request in
+            #expect(request.httpMethod == "POST")
+            #expect(request.url?.path == "/api/frames/frame-1/chores/create_multiple")
+            let body = try #require(request.httpBody)
+            let fields = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            #expect(fields["up_for_grabs"] as? Bool == true)
+            #expect(fields["summary"] as? String == "Test task")
+            #expect(fields["category_id"] == nil)
+            #expect(fields["category_ids"] as? [String] == [])
+            #expect(fields["chores"] == nil)
+            return SkylightTestTransport.response(for: request, json:
+                #"{"data":[{"id":"unassigned-1","type":"chore","attributes":{"summary":"Test task","up_for_grabs":true,"recurring":false}}]}"#)
+        }
+        let client = SkylightAPIClient(accessToken: "fixture", transport: transport)
+        let chore = try await client.createChore(frameID: "frame-1", request:
+            SkylightChoreRequest(summary: "Test task", categoryIDs: [], recurring: false, upForGrabs: true))
+        #expect(chore.id == "unassigned-1")
+        #expect(chore.attributes.upForGrabs == true)
+    }
+
+    @Test("Unassigned creation rejects an empty or ambiguous collection without another write", arguments: [0, 2])
+    func rejectsUnexpectedUnassignedCreationCount(count: Int) async throws {
+        let recorder = SkylightRequestRecorder()
+        let transport = SkylightTestTransport { request in
+            await recorder.append(request)
+            return SkylightTestTransport.response(for: request, json: "{\"data\":[" +
+                (0..<count).map { #"{"id":"\#($0)","type":"chore","attributes":{"summary":"Test task"}}"# }.joined(separator: ",") + "]}")
+        }
+        let client = SkylightAPIClient(accessToken: "fixture", transport: transport)
+        await #expect(throws: SkylightAPIError.invalidResponse) {
+            try await client.createChore(frameID: "frame-1", request: SkylightChoreRequest(summary: "Test task", upForGrabs: true))
+        }
+        #expect(await recorder.requests.count == 1)
+    }
+
+    @Test("Assigned chore creation retains its single-resource contract")
+    func createsAssignedChore() async throws {
+        let transport = SkylightTestTransport { request in
+            #expect(request.httpMethod == "POST")
+            #expect(request.url?.path == "/api/frames/frame-1/chores")
+            return SkylightTestTransport.response(for: request, json:
+                #"{"data":{"id":"assigned-1","type":"chore","attributes":{"summary":"Test task"}}}"#)
+        }
+        let client = SkylightAPIClient(accessToken: "fixture", transport: transport)
+        let chore = try await client.createChore(frameID: "frame-1", request:
+            SkylightChoreRequest(summary: "Test task", categoryID: "profile-1", upForGrabs: false))
+        #expect(chore.id == "assigned-1")
+    }
+
+    @Test("Both chore inventories include unassigned chores for reconciliation", arguments: [true, false])
+    func includesUnassignedChoresInInventory(all: Bool) async throws {
+        let transport = SkylightTestTransport { request in
+            #expect(request.httpMethod == "GET")
+            #expect(request.url?.path == (all ? "/api/frames/frame-1/chores/all" : "/api/frames/frame-1/chores"))
+            let url = try #require(request.url)
+            let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
+            #expect(query?.contains(URLQueryItem(name: "include_up_for_grabs", value: "true")) == true)
+            let collection = #"{"data":[{"id":"unassigned-1","type":"chore","attributes":{"summary":"Test task","up_for_grabs":true}}]}"#
+            return SkylightTestTransport.response(for: request, json:
+                all ? "{\"chores\":{\"today\":" + collection + "},\"routines\":{}}" : collection)
+        }
+        let client = SkylightAPIClient(accessToken: "fixture", transport: transport)
+        let chores = if all {
+            try await client.listAllChores(frameID: "frame-1")
+        } else {
+            try await client.listChores(frameID: "frame-1")
+        }
+        #expect(chores.map(\.id) == ["unassigned-1"])
+    }
+
     @Test("HTTP failures distinguish reads from writes without exposing request values", arguments: ["GET", "POST"])
     func describesFailedRequestMethod(method: String) async throws {
         let transport = SkylightTestTransport { request in

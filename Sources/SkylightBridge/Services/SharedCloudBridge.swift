@@ -77,9 +77,6 @@ extension AppStore {
             hasLoadedSharediCloudState = true
         } catch { if CloudRetryPolicy.shouldStopBatch(error) { throw error }; errors.append(error) }
         let version = sharedPreferenceMutationVersion
-        if FeatureFlags.multiDeviceCoordinationEnabled {
-            do { try await publishAndCheckHeartbeat() } catch { if CloudRetryPolicy.shouldStopBatch(error) { throw error }; errors.append(error) }
-        } else { multiClientWarning = nil }
         do { try await importSharedPhotoMappings() } catch { if CloudRetryPolicy.shouldStopBatch(error) { throw error }; errors.append(error) }
         do { try await publishPendingSelectedPhotoChanges() } catch { if CloudRetryPolicy.shouldStopBatch(error) { throw error }; errors.append(error) }
         if sharedPreferenceMutationVersion != version {
@@ -158,26 +155,6 @@ extension AppStore {
 
     private func recordSharediCloudSuccess() {
         hasLoggedSharediCloudSchemaDeploymentFailure = false
-    }
-
-    private func publishAndCheckHeartbeat() async throws {
-        let store = ClientHeartbeatStore()
-        let heartbeat = ClientHeartbeat(
-            installationID: cloudInstallationID,
-            lastSeenAt: .now,
-            frameID: configuration.account.frameID,
-            isActivelySyncing: isSyncing
-        )
-        _ = try await store.publish(heartbeat)
-        let others = try await store.otherActiveInstallations(
-            excludingInstallationID: cloudInstallationID
-        )
-        if others.isEmpty {
-            multiClientWarning = nil
-        } else {
-            let names = others.map { String($0.installationID.prefix(8)) }.joined(separator: ", ")
-            multiClientWarning = "Another Mac (\(names)) is also syncing this Skylight frame. Running two Macs against the same frame can duplicate content."
-        }
     }
 
     private func publishSharedSyncStateFromState(_ state: SyncState) async throws {

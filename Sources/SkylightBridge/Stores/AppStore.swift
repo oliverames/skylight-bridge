@@ -202,7 +202,6 @@ final class AppStore {
     var skylightLists: [SkylightResource<SkylightListAttributes>] = []
     var skylightMealCategories: [SkylightResource<SkylightMealCategoryAttributes>] = []
    var skylightChoreCategories: [SkylightResource<SkylightCategoryAttributes>] = []
-    var multiClientWarning: String?
     var photosAuthorizationStatus: ApplePhotosAuthorizationStatus = .notDetermined
     var remindersAuthorizationStatus: AppleRemindersAuthorizationStatus = .notDetermined
     var notesAccessGranted = false
@@ -1100,7 +1099,6 @@ final class AppStore {
             deletionError = error
         }
         connectionError = deletionError?.localizedDescription
-        multiClientWarning = nil
         // A stale failure banner must not outlive the account: signed out,
         // the menu bar should point at sign-in, not at a failed sync.
         lastSyncFailed = false

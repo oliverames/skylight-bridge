@@ -226,10 +226,6 @@ struct SkylightChoreRequest: Codable, Equatable, Sendable {
     }
 }
 
-struct SkylightChoreBatchRequest: Codable, Equatable, Sendable {
-    let chores: [SkylightChoreRequest]
-}
-
 struct SkylightChoreCompletionRequest: Codable, Equatable, Sendable {
     let status: SkylightChoreStatus
     let instanceDate: String?

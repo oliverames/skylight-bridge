@@ -20,10 +20,9 @@ struct SharedCloudKitFailureTests {
         )
     }
 
-    @Test("Multi-device coordination stays off until its CloudKit schema is deployed")
+    @Test("Multi-device coordination stays off pending validated write ownership")
     func multiDeviceCoordinationDisabledByDefault() {
-        // ClientHeartbeat and SharedSyncState are not in the production schema.
-        // Enabling this would surface "needs its schema deployed" to every user.
+        // Schema deployment alone cannot make concurrent Mac writers safe.
         #expect(FeatureFlags.multiDeviceCoordinationEnabled == false)
     }
 
