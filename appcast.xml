@@ -6,16 +6,16 @@
     <description>Signed updates for Skylight Bridge.</description>
     <language>en</language>
     <item>
-      <title>Version 1.7.1</title>
-      <sparkle:version>33</sparkle:version>
-      <sparkle:shortVersionString>1.7.1</sparkle:shortVersionString>
-      <description><![CDATA[<p>This release includes improvements and fixes.</p>]]></description>
-      <pubDate>Sat, 05 Sep 2026 20:15:15 +0000</pubDate>
-      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.7.1/Skylight.Bridge-1.7.1.dmg" sparkle:edSignature="ykPYMDQzFT3Otc4A/AUy93uvBAUIJ4Y7+wz9UouQSHHasYApD2T+C22H6BHqEvoqYizQdu7XjsC+JlTM/MIOAA==" length="7080676" type="application/octet-stream" />
+      <title>Version 1.7.2</title>
+      <sparkle:version>34</sparkle:version>
+      <sparkle:shortVersionString>1.7.2</sparkle:shortVersionString>
+      <description><![CDATA[<p>Updates Up for Grabs chore creation and inventory reads, corrects chore API helpers, and removes the unused multi-Mac heartbeat. The reported sign-in issue remains under investigation.</p>]]></description>
+      <pubDate>Wed, 09 Sep 2026 13:30:49 +0000</pubDate>
+      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.7.2/Skylight.Bridge-1.7.2.dmg" sparkle:edSignature="ZTCZlCE91b4QDRrikQSV4ZauSi/a8TWvVTz8iDp56WMCzN6cxRJlSWQLBN6/odje54LuMPu7yQSxckXYA8NiBQ==" length="7086308" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: gxQa51syixJDyi7CPRpiLXQOHVYwt1xhwL2gjwr10SZ+mo7XOBMoB2bl/p+qsOJ9tWJHUevE+04x0BGbU8bdCg==
-length: 1005
+edSignature: ihrwa2W/Ei23rBb7yDTi7M3IHJU6dS+fu4wfY3rTJkIzYLbvSNpyYkog9+j0cKGZFRCCXaFtI/eZcyPZAvQbAA==
+length: 1144
 -->

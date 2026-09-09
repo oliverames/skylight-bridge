@@ -39,10 +39,19 @@ The optimized build passes with warnings treated as errors. The final source dif
 
 ## Remaining work
 
-[Issue #2](https://github.com/oliverames/skylight-bridge/issues/2) remains open pending a packaged release and confirmation on the reporter's account. The request mismatch is corrected and fixture-tested, but the underlying HTTP 422 was not independently reproduced with that account.
+[Issue #2](https://github.com/oliverames/skylight-bridge/issues/2) remains open pending confirmation on the reporter's account with [release 1.7.2](https://github.com/oliverames/skylight-bridge/releases/tag/v1.7.2). The request mismatch is corrected and fixture-tested, but the underlying HTTP 422 was not independently reproduced with that account.
 
 [Issue #4](https://github.com/oliverames/skylight-bridge/issues/4) remains unresolved. The screenshots now confirm the same HTTP 400 authorization failure for both affected reporters on 1.7.1. No raw response or OAuth error code is available. An unauthenticated request using the app's authorization parameters and User-Agent returned the expected HTTP 302 login redirect on September 9, 2026. This does not test the failing authenticated step. An initial Python-default User-Agent probe was blocked with HTTP 403, Cloudflare error 1010, so it was repeated with the app's actual User-Agent.
 
 The next diagnostic step is a sanitized authenticated trace from an affected account, retaining HTTP statuses and a recognized OAuth error classification without passwords, cookies, tokens, authorization codes, or raw response bodies. No authentication changes were made without that evidence. Existing live OAuth tests require explicitly configured test credentials, which are absent in this session.
 
-This work changes source only. It does not install an app or publish a signed release.
+## Release follow-up
+
+- [x] Prepare and push version 1.7.2, build 34.
+- [x] Rerun the 272-test suite and verify release-commit CI.
+- [x] Export and validate the fresh CloudKit production schema after Apple sign-in.
+- [x] Build universal binaries, sign, notarize, staple, and verify the app and disk image.
+- [x] Publish the GitHub release and signed Sparkle feed.
+- [x] Download the published artifacts and verify checksums, signatures, version, build, and byte length.
+
+Release tag `v1.7.2` identifies `a383e5e513c29395af263377408d527d9d61e0f7`. The update feed was published at `978bdf6` on gh-pages. See WORKLOG.md for the artifact checksum and verification record. The installed app was not replaced. No new reusable tokens were needed.

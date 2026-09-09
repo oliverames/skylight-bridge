@@ -1,10 +1,22 @@
+## 2026-09-09 - Skylight Bridge 1.7.2 released
+
+Published [1.7.2, build 34](https://github.com/oliverames/skylight-bridge/releases/tag/v1.7.2) from `a383e5e513c29395af263377408d527d9d61e0f7`. The release includes the chore contract corrections and inactive-heartbeat removal described below. Both Intel and Apple silicon binaries retain a macOS 26 minimum.
+
+All 272 tests, schema and appcast helper checks, and release-commit CI pass. A fresh production schema export from CloudKit Console passed the release gate. Apple notarized and stapled the app and disk image. Gatekeeper accepts the disk image and its mounted app. The public download matches SHA-256 `cf0ff59a62c27948dc05546eee75966dede4fa07263c4d0ac799b6de84bcdb35`.
+
+The signed feed is published on gh-pages at `978bdf6`. The fetched public feed matches the repository copy, advertises version 1.7.2/build 34, and identifies the 7,086,308-byte download. Both its embedded signature and the downloaded archive signature verify using the existing key, whose public key matches the app. Existing notarization credentials were used without exporting private key material. No new tokens were created or retrieved for storage in 1Password.
+
+Remaining: #2 awaits reporter confirmation on this release. #4's login failure remains under investigation. The installed app was not replaced during publication.
+
+---
+
 ## 2026-09-09 - GitHub issue review and chore API compatibility
 
 Reviewed all open issues and comments. Closed #1 after the remaining reporters confirmed success. Corrected unassigned chore creation and inventory requests for #2 using Skylight's current web-client contract. Updated the unused multi-profile creation and search helpers tracked in #6. Removed the inactive Mac heartbeat and warning UI for #5 while retaining the disabled shared-sync-state boundary.
 
-Verification: 272 tests in 27 suites, seven schema checks, appcast helper checks, and the optimized build with warnings treated as errors pass. Changes are source-only and have not been packaged or installed.
+Verification: 272 tests in 27 suites, seven schema checks, appcast helper checks, and the optimized build with warnings treated as errors pass. These changes were subsequently published in 1.7.2 as recorded above.
 
-Remaining work: #2 needs release and reporter confirmation. #4 remains open with matching HTTP 400 screenshots and needs a sanitized authenticated trace from an affected account. Test credentials are not configured. The existing Personal-list relink and Money/To Sell mapping cleanup from the prior entry remain outside this issue-review scope.
+Remaining work: #2 needs reporter confirmation. #4 remains open with matching HTTP 400 screenshots and needs a sanitized authenticated trace from an affected account. Test credentials are not configured. The existing Personal-list relink and Money/To Sell mapping cleanup from the prior entry remain outside this issue-review scope.
 
 See [the dated review](docs/GITHUB_ISSUE_REVIEW_2026-09-09.md) for evidence and issue status.
 
