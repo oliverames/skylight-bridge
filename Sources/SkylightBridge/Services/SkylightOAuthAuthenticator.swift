@@ -1,4 +1,6 @@
+import CryptoKit
 import Foundation
+import Security
 
 protocol SkylightOAuthTokenProvider: Sendable {
     func refresh(refreshToken: String) async throws -> SkylightOAuthToken
@@ -44,8 +46,9 @@ actor SkylightOAuthAuthenticator: SkylightOAuthTokenProvider {
     func login(email: String, password: String) async throws -> SkylightOAuthToken {
         let csrfToken = try await fetchCSRFToken()
         try await createSession(email: email, password: password, csrfToken: csrfToken)
-        let code = try await fetchAuthorizationCode()
-        return try await exchangeAuthorizationCode(code)
+        let pkce = try PKCEChallenge()
+        let code = try await fetchAuthorizationCode(pkce: pkce)
+        return try await exchangeAuthorizationCode(code, pkce: pkce)
     }
 
     func refresh(refreshToken: String) async throws -> SkylightOAuthToken {
@@ -117,13 +120,15 @@ actor SkylightOAuthAuthenticator: SkylightOAuthTokenProvider {
         }
     }
 
-    private func fetchAuthorizationCode() async throws -> String {
+    private func fetchAuthorizationCode(pkce: PKCEChallenge) async throws -> String {
         var components = URLComponents(url: authorizeURL, resolvingAgainstBaseURL: false)
         components?.queryItems = [
             URLQueryItem(name: "client_id", value: "skylight-mobile"),
             URLQueryItem(name: "response_type", value: "code"),
             URLQueryItem(name: "redirect_uri", value: "https://ourskylight.com/welcome"),
             URLQueryItem(name: "scope", value: "everything"),
+            URLQueryItem(name: "code_challenge", value: pkce.challenge),
+            URLQueryItem(name: "code_challenge_method", value: "S256"),
             URLQueryItem(
                 name: "skylight_api_client_device_fingerprint",
                 value: deviceFingerprint
@@ -177,10 +182,11 @@ actor SkylightOAuthAuthenticator: SkylightOAuthTokenProvider {
         return code
     }
 
-    private func exchangeAuthorizationCode(_ code: String) async throws -> SkylightOAuthToken {
+    private func exchangeAuthorizationCode(_ code: String, pkce: PKCEChallenge) async throws -> SkylightOAuthToken {
         try await postTokenForm([
             "grant_type": "authorization_code",
             "code": code,
+            "code_verifier": pkce.verifier,
             "client_id": "skylight-mobile",
             "redirect_uri": "https://ourskylight.com/welcome",
             "scope": "everything",
@@ -268,6 +274,30 @@ actor SkylightOAuthAuthenticator: SkylightOAuthTokenProvider {
             delegateQueue: nil
         )
         return SkylightURLSessionTransport(session: session)
+    }
+}
+
+private struct PKCEChallenge {
+    let verifier: String
+    let challenge: String
+
+    init() throws {
+        var bytes = Data(count: 32)
+        let status = bytes.withUnsafeMutableBytes { buffer in
+            SecRandomCopyBytes(kSecRandomDefault, buffer.count, buffer.baseAddress!)
+        }
+        guard status == errSecSuccess else {
+            throw LocalFileIntegrityError.randomGenerationFailed(status)
+        }
+        verifier = Self.base64URLEncoded(bytes)
+        challenge = Self.base64URLEncoded(Data(SHA256.hash(data: Data(verifier.utf8))))
+    }
+
+    private static func base64URLEncoded(_ data: Data) -> String {
+        data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
     }
 }
 

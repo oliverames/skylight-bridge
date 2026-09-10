@@ -50,10 +50,20 @@ actor KeychainCredentialStore: CredentialStoring {
         if updateStatus == errSecSuccess {
             return
         }
+        if updateStatus == -25244 {
+            try delete(for: account)
+            try add(data, query: query)
+            return
+        }
+
         guard updateStatus == errSecItemNotFound else {
             throw error(for: updateStatus)
         }
 
+        try add(data, query: query)
+    }
+
+    private func add(_ data: Data, query: [CFString: Any]) throws {
         var attributes = query
         attributes[kSecValueData] = data
         attributes[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly

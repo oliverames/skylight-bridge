@@ -103,6 +103,21 @@ struct SkylightAPIAuthenticationTests {
         ])
         #expect(requests[1].value(forHTTPHeaderField: "Cookie") == "session=first")
         #expect(requests[2].value(forHTTPHeaderField: "Cookie") == "session=second")
+        guard let authorizeURL = requests[2].url,
+              let authorizeItems = URLComponents(
+                url: authorizeURL,
+                resolvingAgainstBaseURL: false
+              )?.queryItems else {
+            Issue.record("Expected authorize request URL with query items")
+            return
+        }
+        #expect(authorizeItems.first { $0.name == "code_challenge_method" }?.value == "S256")
+        guard let codeChallenge = authorizeItems.first(where: { $0.name == "code_challenge" })?.value else {
+            Issue.record("Expected authorize request to include a PKCE code challenge")
+            return
+        }
+        #expect(!codeChallenge.isEmpty)
+        #expect(codeChallenge.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" })
 
         let loginForm = try formValues(from: requests[1])
         #expect(loginForm["authenticity_token"] == "csrf+token")
@@ -113,6 +128,12 @@ struct SkylightAPIAuthenticationTests {
         let tokenForm = try formValues(from: requests[3])
         #expect(tokenForm["grant_type"] == "authorization_code")
         #expect(tokenForm["code"] == "authorization-code")
+        guard let codeVerifier = tokenForm["code_verifier"] ?? nil else {
+            Issue.record("Expected token request to include a PKCE code verifier")
+            return
+        }
+        #expect(!codeVerifier.isEmpty)
+        #expect(codeVerifier.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" })
         #expect(tokenForm["skylight_api_client_device_fingerprint"] == "fingerprint")
     }
 
