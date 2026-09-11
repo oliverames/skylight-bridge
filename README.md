@@ -13,8 +13,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/oliverames/skylight-bridge/releases/tag/v1.7.2">
-    <img src="https://img.shields.io/badge/macOS-v1.7.2-f5a542?style=flat-square&logo=apple&logoColor=white" alt="macOS release 1.7.2">
+  <a href="https://github.com/oliverames/skylight-bridge/releases/tag/v1.7.3">
+    <img src="https://img.shields.io/badge/macOS-v1.7.3-f5a542?style=flat-square&logo=apple&logoColor=white" alt="macOS release 1.7.3">
   </a>
   <a href="#license">
     <img src="https://img.shields.io/badge/license-all%20rights%20reserved-f5a542?style=flat-square" alt="All rights reserved">
@@ -48,10 +48,10 @@ This is a practical Mac utility, not a second household database. Every mapping 
 3. Open Skylight Bridge from Applications. The app is Developer ID-signed, notarized, and stapled for Gatekeeper.
 4. The app checks for signed updates, and **Skylight Bridge > Check for Updates…** is always available when you want to check manually.
 
-Version 1.7.2 updates chore requests to match Skylight's current web client, including creation and inventory reads for Up for Grabs chores. It also corrects the search and multi-profile creation helpers and removes an unused multi-Mac heartbeat. The reported sign-in failure remains under investigation. The [September 9 issue review](docs/GITHUB_ISSUE_REVIEW_2026-09-09.md) records the changes and verification. To verify the download, compare the output below with the checksum file beside the DMG on the release page.
+Version 1.7.3 restores Skylight sign-in. Skylight's authorization endpoint now requires PKCE, and the app was requesting an authorization code without it, so sign-in failed with HTTP 400. The app now sends a code challenge and its verifier, matching Skylight's own client. Thanks to [@mcsnolte](https://github.com/mcsnolte) for diagnosing the cause and contributing the fix in [#7](https://github.com/oliverames/skylight-bridge/pull/7). This release also recovers from a first-sign-in Keychain case where an existing credential item could not be updated. The chore corrections shipped in 1.7.2 are confirmed working by their reporter.
 
 ```bash
-shasum -a 256 ~/Downloads/Skylight.Bridge-1.7.2.dmg
+shasum -a 256 ~/Downloads/Skylight.Bridge-1.7.3.dmg
 ```
 
 <p align="center">
