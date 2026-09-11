@@ -1,6 +1,6 @@
 # Skylight API Evidence and Compatibility
 
-Evidence was refreshed on July 15, 2026. Skylight still does not publish a supported public Calendar API.
+Evidence was refreshed on July 15, 2026, except for the authorization contract, which was re-verified on September 11, 2026 against web bundle `index-f9dfe465ae73809e4186af133113b8bb.js`. Skylight still does not publish a supported public Calendar API.
 
 ## Source priority
 
@@ -23,7 +23,7 @@ OAuth client: skylight-mobile
 OAuth scope: everything
 ```
 
-Current login uses a web session, OAuth authorization code exchange, access token, and rotating refresh token. The old OpenClaw Basic-auth session endpoint is stale.
+Current login uses a web session, a PKCE-protected OAuth authorization code exchange, an access token, and a rotating refresh token. The old OpenClaw Basic-auth session endpoint is stale.
 
 ## Important corrections
 
@@ -35,6 +35,7 @@ Current login uses a web session, OAuth authorization code exchange, access toke
 - Recurring chore writes require exactly one `BYHOUR` value (`6`, `14`, or `20`), occurrence completion requires `instance_date` and `instance_time` with a blank `category_id`, and recurring deletion requires `apply_to=all`. These contracts were exercised against the live account on July 15, 2026.
 - Standalone `/routines` routes are experimental and absent from the live bundle.
 - The current API header version is `2026-05-01`.
+- `/oauth/authorize` requires PKCE. A request without `code_challenge` returns HTTP 400 instead of the 302 carrying the code, which broke app sign-in until 1.7.3. Send `code_challenge` with `code_challenge_method=S256` on authorize and the matching `code_verifier` at token exchange. Verified on September 11, 2026 against web bundle `index-f9dfe465ae73809e4186af133113b8bb.js`, which builds the `skylight-mobile` request with expo-auth-session, whose `usePKCE` defaults to true (`usePKCE=e.usePKCE??!0`) and which Skylight never disables. Unauthenticated probes of `/oauth/authorize` do not test this: they return 302 to `/auth/session/new` with or without a challenge, because they stop short of the authenticated step.
 
 ## Confidence grades
 
