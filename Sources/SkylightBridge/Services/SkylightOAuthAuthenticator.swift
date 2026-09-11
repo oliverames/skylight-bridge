@@ -287,7 +287,7 @@ private struct PKCEChallenge {
             SecRandomCopyBytes(kSecRandomDefault, buffer.count, buffer.baseAddress!)
         }
         guard status == errSecSuccess else {
-            throw LocalFileIntegrityError.randomGenerationFailed(status)
+            throw SkylightOAuthError.pkceGenerationFailed(status)
         }
         verifier = Self.base64URLEncoded(bytes)
         challenge = Self.base64URLEncoded(Data(SHA256.hash(data: Data(verifier.utf8))))

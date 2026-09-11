@@ -50,7 +50,7 @@ actor KeychainCredentialStore: CredentialStoring {
         if updateStatus == errSecSuccess {
             return
         }
-        if updateStatus == -25244 {
+        if updateStatus == errSecInvalidOwnerEdit {
             try delete(for: account)
             try add(data, query: query)
             return

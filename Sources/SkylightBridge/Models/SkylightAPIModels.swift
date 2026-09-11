@@ -91,6 +91,7 @@ enum SkylightOAuthError: Error, Equatable, Sendable {
     case missingAuthorizationCode
     case authorizationFailed(statusCode: Int, reason: AuthorizationFailureReason)
     case invalidFormResponse(statusCode: Int, body: String)
+    case pkceGenerationFailed(OSStatus)
 
     enum AuthorizationFailureReason: String, Sendable {
         case expectedRedirect = "expected a redirect"
@@ -206,6 +207,8 @@ extension SkylightOAuthError: LocalizedError {
             "Skylight sign-in did not return an authorization code (HTTP \(statusCode), \(reason.rawValue))."
         case let .invalidFormResponse(statusCode, _):
             "Skylight sign-in returned HTTP \(statusCode)."
+        case let .pkceGenerationFailed(status):
+            "Could not generate the secure values Skylight sign-in requires (status \(status))."
         }
     }
 }
