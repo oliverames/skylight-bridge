@@ -1,3 +1,21 @@
+## 2026-09-11 - Skylight sign-in restored and 1.7.3 released
+
+Skylight's authorization endpoint now requires PKCE. The app requested an authorization code without a code challenge, so Skylight returned HTTP 400 instead of the redirect carrying the code. This is the failure reported in [#4](https://github.com/oliverames/skylight-bridge/issues/4) since early September. Steve Nolte diagnosed it and contributed [PR #7](https://github.com/oliverames/skylight-bridge/pull/7), which generates a verifier and S256 challenge per sign-in, sends the challenge on the authorize request, and sends the verifier at token exchange. It also replaces a Keychain credential item when an update returns `errSecInvalidOwnerEdit`, which affected first sign-in.
+
+The contributed commit `31f0519` was applied unchanged. Follow-up commit `19a7583` corrects two defects in it: the PKCE random-generation failure threw `LocalFileIntegrityError.randomGenerationFailed`, which would have shown an unrelated file-integrity message during sign-in, so it now throws a dedicated `SkylightOAuthError.pkceGenerationFailed` with a sign-in message; and the Keychain branch compared against the raw value `-25244` rather than `errSecInvalidOwnerEdit`.
+
+Independent corroboration of the cause: Skylight's current first-party web bundle `index-f9dfe465ae73809e4186af133113b8bb.js` builds its `skylight-mobile` authorization request with expo-auth-session, whose `usePKCE` defaults to true (`usePKCE=e.usePKCE??!0`), and Skylight never disables it. The app was the only client not sending PKCE. Unauthenticated probes of `/oauth/authorize` on September 11 returned HTTP 302 to sign-in both with and without a code challenge, so they do not distinguish the two; they do not exercise the authenticated step that fails. The reporter confirmed a successful live sign-in with this change on their own affected account. No live sign-in was run here, because no Skylight account credential exists in 1Password and the live OAuth tests need `SKYLIGHT_EMAIL` and `SKYLIGHT_PASSWORD`.
+
+Released [1.7.3, build 35](https://github.com/oliverames/skylight-bridge/releases/tag/v1.7.3) from clean, pushed commit `88295bf08d06c82759e8861415be09a8f720d1e1`. All 272 tests in 27 suites pass, including the PKCE authorize and token-parameter assertions added by the PR. The optimized build passes with warnings treated as errors, and GitHub CI passed on the release commit. The universal app and disk image were notarized and stapled, and Gatekeeper reports Notarized Developer ID for both.
+
+The CloudKit release gate ran against the existing `docs/cloudkit-production-2026-09-05.ckdb` export, which passes. That export is from September 5, not fresh. This release changes no CloudKit record types, fields, indexes, or permissions, so the gate's subject is unchanged; a fresh export still needs a CloudKit Console sign-in before the next schema-affecting release.
+
+Distribution verified: the public download is 7,089,380 bytes and matches SHA-256 `0dd11037537a39ea5406d30e802098b94561f2d9a9b2265ca25728c54da2b5cb`. The live feed on gh-pages `ffc04d2` matches the repository copy byte for byte, advertises 1.7.3 build 35, and names that same length. The downloaded archive's EdDSA signature verifies, and the signing account's public key `dHpRax28kl47J+NOJLYyLwZ/Xtqg64gC1Zl/PRPzB3U=` matches the shipped app's `SUPublicEDKey`. The mounted app reports 1.7.3 build 35, carries both `x86_64` and `arm64`, and points at the production feed. No private key material was exported.
+
+Issue [#2](https://github.com/oliverames/skylight-bridge/issues/2) is closed: its reporter confirmed the 1.7.2 chore corrections fixed the Up for Grabs HTTP 422. Issue #4 is closed by this release, with reporters asked to confirm. The installed app was not replaced.
+
+---
+
 ## 2026-09-09 - Skylight Bridge 1.7.2 released
 
 Published [1.7.2, build 34](https://github.com/oliverames/skylight-bridge/releases/tag/v1.7.2) from `a383e5e513c29395af263377408d527d9d61e0f7`. The release includes the chore contract corrections and inactive-heartbeat removal described below. Both Intel and Apple silicon binaries retain a macOS 26 minimum.
