@@ -6,16 +6,16 @@
     <description>Signed updates for Skylight Bridge.</description>
     <language>en</language>
     <item>
-      <title>Version 1.7.2</title>
-      <sparkle:version>34</sparkle:version>
-      <sparkle:shortVersionString>1.7.2</sparkle:shortVersionString>
-      <description><![CDATA[<p>Updates Up for Grabs chore creation and inventory reads, corrects chore API helpers, and removes the unused multi-Mac heartbeat. The reported sign-in issue remains under investigation.</p>]]></description>
-      <pubDate>Wed, 09 Sep 2026 13:30:49 +0000</pubDate>
-      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.7.2/Skylight.Bridge-1.7.2.dmg" sparkle:edSignature="ZTCZlCE91b4QDRrikQSV4ZauSi/a8TWvVTz8iDp56WMCzN6cxRJlSWQLBN6/odje54LuMPu7yQSxckXYA8NiBQ==" length="7086308" type="application/octet-stream" />
+      <title>Version 1.7.3</title>
+      <sparkle:version>35</sparkle:version>
+      <sparkle:shortVersionString>1.7.3</sparkle:shortVersionString>
+      <description><![CDATA[<p>Restores Skylight sign-in. Skylight's authorization endpoint now requires PKCE, and the app was requesting an authorization code without it, so sign-in failed with HTTP 400. Also recovers from a first-sign-in Keychain case where an existing credential item could not be updated.</p>]]></description>
+      <pubDate>Fri, 11 Sep 2026 17:58:23 +0000</pubDate>
+      <enclosure url="https://github.com/oliverames/skylight-bridge/releases/download/v1.7.3/Skylight.Bridge-1.7.3.dmg" sparkle:edSignature="WwDz6WmNhcHgPLbDuCltKltaNJEyGGrW/P2izn1HgnGMTynFjCl+83xu8XeA15ZS1/IWTyxF92sfil3oDOViCg==" length="7089380" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: ihrwa2W/Ei23rBb7yDTi7M3IHJU6dS+fu4wfY3rTJkIzYLbvSNpyYkog9+j0cKGZFRCCXaFtI/eZcyPZAvQbAA==
-length: 1144
+edSignature: 46ZMLpqSgAL3A6hN5WKjGGBSkZrAAQHKp1PWWOC07/iDnPCrUa1iZLUqTOBq/iM8UU7Idq7xYRG+4dNRTlFwCQ==
+length: 1238
 -->
