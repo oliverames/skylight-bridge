@@ -13,6 +13,10 @@ The key service, account names, key size, access policy, signed envelope version
 
 ## Remaining Gates
 
-The former developer account is accessible. Its removed-app history and an Apple-supported ownership route for the existing CloudKit container still need confirmation. Both Mac and iOS clients retain their original identifiers, signing settings and cloud container while that is unresolved.
+On October 6, 2026, the former account showed iOS record 6809008416 under Removed Apps, with a September 14 removal date. Its visible 1.0 history records Prepare for Submission on September 5. The historical draft was restored with Limited Access restricted to Oliver Ames, the sole listed account user. A refreshed App Information page confirms the record is editable and restored, but offers no Transfer App control.
+
+[Apple requires at least one released App Store version for ordinary transfer](https://developer.apple.com/help/app-store-connect/transfer-an-app/app-transfer-criteria/). The observed draft history does not establish that prerequisite. [Apple also documents CloudKit ownership and shared-container transfer consequences](https://developer.apple.com/help/app-store-connect/transfer-an-app/overview-of-app-transfer/). A support request asking for a route that preserves both clients and their private cloud data is prepared, but has not been sent.
+
+Both Mac and iOS clients retain their original identifiers, signing settings and cloud container. Restoring the record did not transfer ownership or change customer data.
 
 Cross-signature access to synthetic integrity keys, complete app packaging and Mac/iPhone cloud continuity remain unverified. Keep the current clients and data intact until those gates pass.
