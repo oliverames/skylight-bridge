@@ -5,6 +5,7 @@ import Security
 enum LocalFileIntegrityError: Error, LocalizedError, Sendable {
     case invalidEnvelope
     case integrityCheckFailed
+    case missingIntegrityKey
     case keychainFailure(OSStatus)
     case randomGenerationFailed(OSStatus)
 
@@ -14,6 +15,8 @@ enum LocalFileIntegrityError: Error, LocalizedError, Sendable {
             "The local data file is not in a supported format."
         case .integrityCheckFailed:
             "The local data file failed its integrity check and was not trusted."
+        case .missingIntegrityKey:
+            "The existing local integrity key could not be found. The file was not trusted and no replacement key was created."
         case let .keychainFailure(status):
             "The local integrity key could not be accessed (\(status))."
         case let .randomGenerationFailed(status):
@@ -25,24 +28,36 @@ enum LocalFileIntegrityError: Error, LocalizedError, Sendable {
 struct LocalFileAuthenticator: Sendable {
     private static let service = "com.oliverames.SkylightBridge.local-integrity"
 
-    private let account: String?
-    private let testKey: Data?
+    private let existingKeyProvider: @Sendable () throws -> Data?
+    private let writeKeyProvider: @Sendable () throws -> Data
 
     init(account: String) {
-        self.account = account
-        testKey = nil
+        existingKeyProvider = {
+            try Self.loadKey(query: Self.keychainQuery(account: account))
+        }
+        writeKeyProvider = {
+            try Self.loadOrCreateKey(account: account)
+        }
     }
 
     init(testKey: Data) {
-        account = nil
-        self.testKey = testKey
+        existingKeyProvider = { testKey }
+        writeKeyProvider = { testKey }
+    }
+
+    init(
+        existingKeyProvider: @escaping @Sendable () throws -> Data?,
+        writeKeyProvider: @escaping @Sendable () throws -> Data
+    ) {
+        self.existingKeyProvider = existingKeyProvider
+        self.writeKeyProvider = writeKeyProvider
     }
 
     func seal<Value: Encodable>(_ value: Value) throws -> Data {
         let payload = try Self.payloadEncoder.encode(value)
         let authenticationTag = Data(HMAC<SHA256>.authenticationCode(
             for: payload,
-            using: SymmetricKey(data: try keyData())
+            using: SymmetricKey(data: try writeKeyProvider())
         ))
         return try JSONEncoder().encode(SignedLocalFileEnvelope(
             version: 1,
@@ -62,25 +77,20 @@ struct LocalFileAuthenticator: Sendable {
             throw LocalFileIntegrityError.invalidEnvelope
         }
 
+        // Verification must never create a replacement for an existing file's key.
+        guard let key = try existingKeyProvider() else {
+            throw LocalFileIntegrityError.missingIntegrityKey
+        }
+
         let isAuthentic = HMAC<SHA256>.isValidAuthenticationCode(
             envelope.authenticationTag,
             authenticating: envelope.payload,
-            using: SymmetricKey(data: try keyData())
+            using: SymmetricKey(data: key)
         )
         guard isAuthentic else {
             throw LocalFileIntegrityError.integrityCheckFailed
         }
         return try Self.payloadDecoder.decode(type, from: envelope.payload)
-    }
-
-    private func keyData() throws -> Data {
-        if let testKey {
-            return testKey
-        }
-        guard let account else {
-            throw LocalFileIntegrityError.invalidEnvelope
-        }
-        return try Self.loadOrCreateKey(account: account)
     }
 
     private static func loadOrCreateKey(account: String) throws -> Data {
