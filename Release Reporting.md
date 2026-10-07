@@ -2,8 +2,10 @@
 
 ## Linear release reporting
 
-The scheduled Linear pipeline records verified customer delivery. Local builds,
-source-only GitHub releases, and successful uploads do not complete a release.
+[Linear Releases](https://linear.app/ames-consulting/pipeline/skylight-bridge/releases)
+records verified customer delivery for this app. Linear does not build, sign,
+notarize, upload, or publish the app. Local builds, source-only GitHub releases,
+and successful uploads do not complete a Linear release.
 The reporting command can be rerun independently after a network or Linear failure.
 It repeats receiving checks and targets the same explicit version.
 
@@ -18,6 +20,11 @@ release. Add `--check-access` to also run the official CLI's read-only API check
 A normal run syncs issues, attaches the published GitHub release notes when available,
 and completes the scheduled release only after delivery passes. `--notes-file`
 can supply reviewed notes explicitly.
+
+Include the relevant `AME-123` identifier in the commits that deliver an issue.
+The release scanner uses commit references in the scanned history to associate
+issues with a release. GitHub-to-project routing does not establish release
+membership, and an existing-delivery baseline can legitimately have zero issues.
 
 Attribution uses the release tag's exact source commit in a temporary metadata-only
 clone. It does not switch the working checkout. Full local Git history is required, and
@@ -40,3 +47,25 @@ If the local DMG has a different filename, pass `--dmg /path/to/local.dmg` and
 already delivered release. This path never launches the app or accesses Photos.
 
 Official CLI reference: https://github.com/linear/linear-release/tree/v0.18.0
+
+## Keep delivery evidence
+
+Record the built source's full SHA, version/build, artifact hashes, served feed
+URLs and channel, verification result, and returned Linear release ID. Preserve
+the original release notes and publication date. Before completing a report-only
+retry, recheck receiving delivery and then read the Linear version, source SHA,
+completed stage, and notes. Repeating the same version must retain one release.
+If a tag follows the build, use the build receipt rather than assuming current
+HEAD or the tag identifies the archived source.
+
+## Historical baseline
+
+Version 1.7.3 was published on 2026-09-11 and recorded in Linear on
+2026-10-07 from source `88295bf08d06c82759e8861415be09a8f720d1e1`. The October 7
+completion date records the backfill, not a new app publication. Its existing
+artifacts and feed were checked, and a reporting-only retry preserved the same
+release, note, and completion time. No historical issue backfill was requested.
+
+The production feed still offered 1.7.3 build 35 when verified on October 7, 2026.
+This pipeline covers the macOS app. The iOS companion and paused developer-account
+migration are separate work. Recording this baseline does not resume migration.
