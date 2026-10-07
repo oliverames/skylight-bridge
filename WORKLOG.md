@@ -1,3 +1,11 @@
+## 2026-10-07 - Preserve paused migration outside main
+
+**What changed:** At Oliver's request, preserved source at `7812080` on `migration/paused-developer-account` in `/Users/oliverames/Developer/Projects/skylight-bridge-migration-paused`. Reverted the two preparation commits, `87c4599` and `61536f1`, from `main` without rewriting shared history. This also restores the pre-preparation local-integrity-key behavior; the read-only existing-key safeguard, synthetic fixtures and review remain on the preserved branch. The later README refresh and release-reporting work remain on `main`.
+
+**Verification:** The complete reverted tree matches pre-preparation baseline `078e684` with all later unrelated changes applied, apart from the new README and worklog pause notices. Source, tests, package configuration, resources and update feed match the pre-preparation versions. App suites remain waived; no app build, launch, data access, Photos access, CloudKit operation, signing, account change or release ran. CI is skipped for this source rollback because the repository's full suite initializes application services; workflow configuration is unchanged.
+
+**Pause:** Keep the preserved branch and worktree. Further migration work requires Oliver to explicitly resume it. Existing apps, local and cloud data, Apple records and the iOS repository are unchanged by this Git operation. The preparation commits remain in history; resumption must deliberately restore the required changes after reviewing this revert. Tracking remains [issue #9](https://github.com/oliverames/skylight-bridge/issues/9).
+
 ## 2026-10-07 - GitHub Issue Review Closeout
 
 **What changed**: Reviewed the one open issue against source at `caf8fc875f6d` and their complete issue history. No issue qualified for closure.
