@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <code>macOS 26+</code> &bull; <code>opt-in mappings</code> &bull; <code>notarized updates</code>
+  <code>macOS 26+</code> &bull; <code>opt-in mappings</code> &bull; <code>Swift 6.2</code>
 </p>
 
 <p align="center">
@@ -31,9 +31,9 @@
 
 Skylight Bridge is a native macOS app for households that use a Skylight Calendar alongside Apple Photos, Apple Reminders, and Apple Notes. It mirrors only the albums, lists, folders, recipes, and individual photos you explicitly select. Photos remain one-way from Apple, while Reminders, recipes, and chores can be linked in both directions.
 
-The Mac app is Developer ID-signed, notarized, and independently maintained. It is not affiliated with Skylight, and it uses a private Skylight API that can change without notice.
+Skylight Bridge is independently maintained and uses a private Skylight API that can change without notice. The repository includes Developer ID packaging, notarization, and signed-update scripts. See the release assets for a distributable build.
 
-## Why a bridge exists
+## Why This Exists
 
 Skylight works best when it reflects the household's actual routines. The trouble is that those routines usually already live elsewhere: the family photo library, a Reminders list, a recipe folder, or the chore chart everyone checks on a phone.
 
@@ -41,18 +41,14 @@ Without a bridge, keeping a Skylight Calendar current means maintaining the same
 
 This is a practical Mac utility, not a second household database. Every mapping is opt-in, and the Activity screen gives you a clear record of what the bridge changes.
 
-## Install on macOS
+## Quick Start
 
 1. Go to the [latest macOS release](https://github.com/oliverames/skylight-bridge/releases/latest) and download the `.dmg` file.
 2. Open the downloaded disk image and drag **Skylight Bridge** into **Applications**.
-3. Open Skylight Bridge from Applications. The app is Developer ID-signed, notarized, and stapled for Gatekeeper.
+3. Open Skylight Bridge from Applications.
 4. The app checks for signed updates, and **Skylight Bridge > Check for Updates…** is always available when you want to check manually.
 
-Version 1.7.3 restores Skylight sign-in. Skylight's authorization endpoint now requires PKCE, and the app was requesting an authorization code without it, so sign-in failed with HTTP 400. The app now sends a code challenge and its verifier, matching Skylight's own client. Thanks to [@mcsnolte](https://github.com/mcsnolte) for diagnosing the cause and contributing the fix in [#7](https://github.com/oliverames/skylight-bridge/pull/7). This release also recovers from a first-sign-in Keychain case where an existing credential item could not be updated. The chore corrections shipped in 1.7.2 are confirmed working by their reporter.
-
-```bash
-shasum -a 256 ~/Downloads/Skylight.Bridge-1.7.3.dmg
-```
+The source version is 1.7.3. Its OAuth implementation uses Proof Key for Code Exchange (PKCE), passing a code challenge during authorization and its verifier during token exchange. Current release notes and downloads are on [GitHub Releases](https://github.com/oliverames/skylight-bridge/releases).
 
 <p align="center">
   <img src="docs/images/overview.png" width="820" alt="Skylight Bridge Overview on macOS, showing selected Apple Photos, Reminders, and recipes sources ready to sync">
@@ -123,9 +119,9 @@ This is a Mac-only, optional support prompt. It uses the local sync total to sho
 
 ## iOS companion
 
-An iOS companion app is in development. It will let people manage shared preferences and selected individual-photo mappings from an iPhone, with private CloudKit reconciliation between the phone and Mac.
+The [iOS companion repository](https://github.com/oliverames/skylight-bridge-ios) implements shared preferences and selected individual-photo mappings for iPhone, with private CloudKit reconciliation between the phone and Mac.
 
-The Mac remains the Skylight authentication and synchronization engine. The iOS app will not offer Apple Notes folder access because iOS does not provide a public API for that part of Apple Notes. It is not yet a public App Store or TestFlight release.
+The Mac remains the Skylight authentication and synchronization engine. The iOS app does not implement Apple Notes folder access. The companion has its own source and release process. This Mac repository does not establish its current App Store or TestFlight availability.
 
 ## Requirements
 
@@ -151,7 +147,7 @@ Skylight Bridge is free. Skylight's own subscription requirements still apply to
 | Apple Photos displayed on Skylight Calendar | Calendar Plus is required for the photo screensaver. |
 | Apple Notes recipes in Skylight Recipe Box | Calendar Plus is required for meal planning with recipes. |
 
-These requirements come from Skylight's [subscription guide](https://skylight.zendesk.com/hc/en-us/articles/36009559376795-Does-Skylight-Calendar-require-a-subscription) and [Calendar Plus description](https://skylight.zendesk.com/hc/en-us/articles/32171114576283-What-is-Calendar-Plus), checked on September 4, 2026. The bridge does not unlock paid Skylight features. Private API access on an account without Plus has not yet been verified, so the table describes Skylight's feature requirements rather than a guarantee of every bridge operation on that account.
+These requirements come from Skylight's [subscription guide](https://skylight.zendesk.com/hc/en-us/articles/36009559376795-Does-Skylight-Calendar-require-a-subscription) and [Calendar Plus description](https://skylight.zendesk.com/hc/en-us/articles/32171114576283-What-is-Calendar-Plus), checked on October 7, 2026. The bridge does not unlock paid Skylight features. Private API access on an account without Plus has not yet been verified, so the table describes Skylight's feature requirements rather than a guarantee of every bridge operation on that account.
 
 ### Does Skylight Bridge copy my entire photo library or every Reminders list?
 
@@ -171,15 +167,23 @@ No. Skylight Bridge is an independent project by Oliver Ames. Skylight does not 
 
 ### Does it work on iPhone?
 
-The native iOS companion is in development. The released Mac app is the supported client today.
+The native iOS companion has its own source and release process. Check that project for its supported iPhone version and dated distribution records.
 
 ### Can I sync Google Calendar through Skylight Bridge?
 
 No. The product intentionally does not add a calendar sync layer where Google Calendar already provides one.
 
-## Build and development
+## Build and Development
 
-The source tree requires Swift 6.4 or later, macOS 26, access to the private `skylight-bridge-ios` Swift package, and the Apple development credentials needed for a signed local app.
+The signing inputs below apply to the local build script:
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `CODESIGN_IDENTITY` | For Developer ID signing | Oliver's matching installed identity when available | Sign the app bundle |
+| `DEVELOPER_ID_PROFILE` | For Developer ID signing with CloudKit | Profile from an existing installed app when available | Authorize the CloudKit container |
+
+
+The package manifest requires Swift 6.2 or later and macOS 26. Building also requires access to the private `skylight-bridge-ios` package and credentials for a signed local app. Features compiled for newer operating systems require an SDK that provides those APIs.
 
 ```bash
 git clone https://github.com/oliverames/skylight-bridge.git
@@ -188,7 +192,7 @@ cd skylight-bridge
 ./script/build_and_run.sh --verify
 ```
 
-The test suite covers sync planning, recurrence conversion, parsers, authentication, configuration compatibility, and API request contracts. The local run script verifies the signed bundle before it launches the app.
+The test suite covers sync planning, recurrence conversion, parsers, authentication, configuration compatibility, and API request contracts. The local run script builds and verifies the bundle. Review its selected signing identity and profile before using it.
 
 For deeper technical detail, read the [product specification](docs/PRODUCT_SPEC.md) and [API evidence and compatibility notes](docs/API_EVIDENCE.md).
 
