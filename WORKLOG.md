@@ -1,3 +1,15 @@
+## 2026-10-07 - README Refresh Closeout
+
+**What changed**: Corrects Swift requirements, current release links, and companion-app status.
+
+**Decisions made**: Keep setup and status claims tied to current source or explicitly dated evidence. This entry records the multi-repository README maintenance session.
+
+**Left off at**: Resolved this session: README review and publication at `caf8fc8`. Relative links, examples and applicable counts were checked. Verification covered documentation. No fresh runtime acceptance is claimed.
+
+**Open questions**: No new question from the README refresh. Prior account-transfer and runtime acceptance gates remain outside this pass. No Photos library, app data or live sign-in was accessed.
+
+---
+
 ## Open items
 
 - Export a fresh CloudKit production schema (needs a CloudKit Console sign-in) before the next schema-affecting release; the gate still uses `docs/cloudkit-production-2026-09-05.ckdb` (since 2026-09-11)
