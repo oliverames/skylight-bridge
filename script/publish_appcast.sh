@@ -181,3 +181,9 @@ if ! git -C "$PAGES_DIR" diff --cached --quiet; then
 fi
 
 printf 'Published signed appcast: %s\n' "$APPCAST_URL"
+
+# Verify the actual public asset and consumer feed before completing Linear.
+# Failure here needs a reporting-only retry, not a rebuilt or republished app.
+python3 "$SCRIPT_DIR/report_linear_release.py" --version "$VERSION" \
+  --artifacts "$(dirname "$DMG_PATH")" --dmg "$DMG_PATH" --asset-name "$RELEASE_ASSET_NAME" \
+  --feed "$APPCAST_PATH"

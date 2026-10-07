@@ -216,3 +216,7 @@ All rights reserved. This repository is source available for evaluation and refe
     &bull; <a href="https://bsky.app/profile/oliverames.bsky.social">Bluesky</a>
   </sub>
 </p>
+
+## Linear release reporting
+
+See [Release Reporting](Release%20Reporting.md) for verified delivery gates, credentials, dry runs, and reporting-only retries.
