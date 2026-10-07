@@ -175,6 +175,8 @@ No. The product intentionally does not add a calendar sync layer where Google Ca
 
 ## Build and Development
 
+This branch preserves the paused developer-account migration preparation. Read [MIGRATION_PAUSED.md](MIGRATION_PAUSED.md) before doing any work here. Further migration implementation, account changes, packaging, merges and releases require Oliver to explicitly resume it.
+
 The signing inputs below apply to the local build script:
 
 | Variable | Required | Default | Purpose |
