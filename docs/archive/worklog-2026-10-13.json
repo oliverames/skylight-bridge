@@ -1,0 +1,35 @@
+{
+  "author": "Oliver Ames",
+  "source_revision": "edb1ff154c83fb5b8136415a6f944172e07b5d12",
+  "source_path": "WORKLOG.md",
+  "archive_path": "WORKLOG-2026-10-13.md",
+  "bytes": 46084,
+  "sha256": "7b81403639a55ecc573c65e80e6a5d4a372e20c5b8fbcc08fda8ae1848b603ce",
+  "git_blob": "e5b9d30177fe8390b07c908f8fc30ba7e2ebfc61",
+  "preservation": "Exact bytes; original root-relative link context retained.",
+  "forwarded_anchors": [
+    "2026-10-07---preserve-paused-migration-outside-main",
+    "2026-10-07---github-issue-review-closeout",
+    "2026-10-07---readme-refresh-closeout",
+    "open-items",
+    "2026-09-11---skylight-sign-in-restored-and-173-released",
+    "2026-09-09---skylight-bridge-172-released",
+    "2026-09-09---github-issue-review-and-chore-api-compatibility",
+    "2026-09-05---codex-session-review-170-closeout-and-171-released",
+    "2026-09-05---cloud-reliability-and-170-preparation",
+    "2026-09-05---github-issue-review-and-166-released",
+    "2026-09-04---startup-correction-and-165-released",
+    "2026-09-04---bug-review-photo-previews-and-164-release",
+    "2026-08-27---shared-cloud-gate-deadlock-fixed-162-and-163-released",
+    "2026-08-27---adversarial-bug-fix-rounds-recovery-reconciliation-and-cloud-race-hardening",
+    "2026-08-26---skylight-bridge-161-released-the-adversarial-review-fixes-ship",
+    "2026-08-25---adversarial-review-pass-24-confirmed-defects-fixed-no-regressions",
+    "earlier-history-before-2026-08-23"
+  ],
+  "readme_correction": {
+    "source_git_blob": "e1873632cb3c2b020096ac0da63c376d49728b6d",
+    "original_paragraph": "**The developer-account migration remains paused.** Its preparation was reverted from current `main` source in `26ca980` and is preserved on [`migration/paused-developer-account`](https://github.com/oliverames/skylight-bridge/tree/migration/paused-developer-account), with a dedicated worktree recorded in [WORKLOG.md](WORKLOG.md). The historical preparation commits remain in Git history. Oliver's explicit authorization is required before resuming migration implementation, Apple support follow-up, signing or account changes, packaging, merges of migration work, or migration releases. Repository documentation maintenance does not resume the migration. [Issue #9](https://github.com/oliverames/skylight-bridge/issues/9) tracks the deferred work.",
+    "replacement_paragraph": "**The developer-account migration is no longer being pursued.** Oliver abandoned it on October 13, 2026 and requested removal of the paused local and remote branch and its worktree. The existing shipping identity is unchanged, and preparation remains reverted from `main` in `26ca980`. The [worklog archive](WORKLOG-2026-10-13.md) preserves the earlier preparation and pause history; its former branch and checkout directions are historical.",
+    "reason": "Current owner instruction abandoned the migration and its paused checkout was removed."
+  }
+}

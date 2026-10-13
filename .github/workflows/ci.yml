@@ -15,8 +15,27 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Classify changes
+        id: changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: python3 script/validate_documentation.py classify
+
+      - name: Validate documentation
+        if: success() && steps.changes.outputs.docs_only == 'true'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: python3 script/validate_documentation.py validate
 
       - name: Configure private package access
+        if: success() && steps.changes.outputs.docs_only != 'true'
         env:
           DEPLOY_KEY: ${{ secrets.SKYLIGHT_IOS_DEPLOY_KEY }}
         run: |
@@ -31,7 +50,9 @@ jobs:
           echo "GIT_SSH_COMMAND=ssh -i ${key_path} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=${known_hosts_path}" >> "${GITHUB_ENV}"
 
       - name: Build
+        if: success() && steps.changes.outputs.docs_only != 'true'
         run: swift build
 
       - name: Test
+        if: success() && steps.changes.outputs.docs_only != 'true'
         run: ./script/run_tests.sh
