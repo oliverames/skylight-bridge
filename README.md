@@ -175,7 +175,7 @@ No. The product intentionally does not add a calendar sync layer where Google Ca
 
 ## Build and Development
 
-**The developer-account migration remains paused.** Its preparation was reverted from current `main` source in `26ca980` and is preserved on [`migration/paused-developer-account`](https://github.com/oliverames/skylight-bridge/tree/migration/paused-developer-account), with a dedicated worktree recorded in [WORKLOG.md](WORKLOG.md). The historical preparation commits remain in Git history. Oliver's explicit authorization is required before resuming migration implementation, Apple support follow-up, signing or account changes, packaging, merges of migration work, or migration releases. Repository documentation maintenance does not resume the migration. [Issue #9](https://github.com/oliverames/skylight-bridge/issues/9) tracks the deferred work.
+**The developer-account migration is no longer being pursued.** Oliver abandoned it on October 13, 2026 and requested removal of the paused local and remote branch and its worktree. The existing shipping identity is unchanged, and preparation remains reverted from `main` in `26ca980`. The [worklog archive](WORKLOG-2026-10-13.md) preserves the earlier preparation and pause history; its former branch and checkout directions are historical.
 
 The signing inputs below apply to the local build script:
 
