@@ -21,6 +21,12 @@ The archived open-item list preserves unresolved remote idempotency, Notes attac
 
 Preserved the complete previous worklog and corrected the README's obsolete migration-branch direction. Source, shipping identity and workflows are unchanged. Verification covered document preservation, links and heading compatibility. No app build or suite ran; the existing full suite initializes application services. No Apple app, private account or deployment was accessed.
 
+## October 13, 2026: documentation CI
+
+The required `build-and-test` job now validates an exact allowlist of documentation changes without configuring private package access or running native app code. The checker compares tracked Git objects, archive bytes and source blobs, retained headings, and current local links. Existing archives and preservation manifests remain immutable. Runtime, dependency, schema, resource, release and later CI changes retain the native path; invalid comparison inputs fail the job.
+
+The initial CI change is pinned to the reviewed base and exact workflow transformation. The job name, runner, triggers, permissions and branch protections are unchanged. [Issue #12](https://github.com/oliverames/skylight-bridge/issues/12) separately tracks isolation of the app fixtures from Photos and live host services. No app build, native suite or Photos access was performed for this change.
+
 ## Historical record
 
 The [complete previous worklog](WORKLOG-2026-10-13.md) is preserved byte for byte at the repository root, keeping its original relative-link context. Older line references refer to that file. The [preservation record](docs/archive/worklog-2026-10-13.json) identifies the source revision, byte count and SHA-256 digest.
