@@ -84,8 +84,13 @@ enum SystemSecurityDiagnostics {
         requirement() { codesign -d -r- "$1" 2>&1 | sed -n 's/^designated => //p'; }
         blob() { printf '%s' "$1" | csreq -r- -b "$2" && xxd -p "$2" | tr -d '\\n'; }
 
-        CHEX=$(blob "$(requirement "$APP")" /tmp/sb_client.csreq)
-        NHEX=$(blob "$(requirement /System/Applications/Notes.app)" /tmp/sb_notes.csreq)
+        # A private directory, not fixed /tmp names another account could
+        # pre-create as symlinks for csreq to write through.
+        WORK=$(mktemp -d)
+        trap 'rm -rf "$WORK"' EXIT
+
+        CHEX=$(blob "$(requirement "$APP")" "$WORK/client.csreq")
+        NHEX=$(blob "$(requirement /System/Applications/Notes.app)" "$WORK/notes.csreq")
 
         for SVC in kTCCServiceReminders kTCCServicePhotos; do
           sqlite3 "$DB" "INSERT OR REPLACE INTO access \\
@@ -99,7 +104,6 @@ enum SystemSecurityDiagnostics {
         VALUES('kTCCServiceAppleEvents','$BUNDLE_ID_SQL',0,2,2,1,X'$CHEX',\\
         0,'com.apple.Notes',X'$NHEX',0,strftime('%s','now'));"
 
-        rm -f /tmp/sb_client.csreq /tmp/sb_notes.csreq
         killall tccd
         echo "Done. Reopen Skylight Bridge and click Refresh."
         """
