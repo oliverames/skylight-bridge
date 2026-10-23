@@ -27,6 +27,12 @@ The required `build-and-test` job now validates an exact allowlist of documentat
 
 The initial CI change is pinned to the reviewed base and exact workflow transformation. The job name, runner, triggers, permissions and branch protections are unchanged. [Issue #12](https://github.com/oliverames/skylight-bridge/issues/12) separately tracks isolation of the app fixtures from Photos and live host services. No app build, native suite or Photos access was performed for this change.
 
+## October 23, 2026: security review
+
+The permission-grant script that Skylight Bridge writes for SIP-disabled Macs now keeps its two code-requirement files in a `mktemp -d` directory, which a trap removes on exit. It used to write fixed `/tmp/sb_*.csreq` names, which another local account could pre-create as symlinks. The rest of the review covered Keychain items, local-file HMAC envelopes, OAuth redirect validation, AppleScript literal escaping, the CI workflow and the signed Sparkle feed; the runbook audit verified the live `gh-pages` appcast. It found nothing else to change. The unused Skylight API client endpoints remain as documented API coverage.
+
+Verification: `swift build` succeeded. A standalone compile of `SystemSecurityDiagnostics.swift` produced a script that passed `bash -n`. Its temporary-directory section produced both requirement blobs and removed the directory on exit. The native suite did not run because it initializes app services, including Photos (#12).
+
 ## Historical record
 
 The [complete previous worklog](WORKLOG-2026-10-13.md) is preserved byte for byte at the repository root, keeping its original relative-link context. Older line references refer to that file. The [preservation record](docs/archive/worklog-2026-10-13.json) identifies the source revision, byte count and SHA-256 digest.
