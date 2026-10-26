@@ -107,12 +107,17 @@ enum DiagnosticsPrivacy {
             // Any URL, with its host, path and query. Skylight API paths carry
             // frame, list and photo identifiers.
             (#"[A-Za-z][A-Za-z0-9+.-]*://[^\s"'<>]+"#, "<url>"),
-            (#"(?i)\b(authorization|cookie|api[_-]?key|token|access[_-]?token|refresh[_-]?token|password|secret|session(?:id)?|code)\b\s*[:=]\s*\S+"#, "$1=<redacted>"),
+            // Bearer first: the header rule below would redact only the word
+            // "Bearer" in "Authorization: Bearer <token>" and keep the token.
             (#"(?i)\bbearer\s+\S+"#, "Bearer <redacted>"),
+            (#"(?i)\b(authorization|cookie|api[_-]?key|token|access[_-]?token|refresh[_-]?token|password|secret|session(?:id)?|code)\b\s*[:=]\s*\S+"#, "$1=<redacted>"),
             (#"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"#, "<email>"),
             // File system paths: home folders, containers, temporary files.
             (#"~?(?:/private)?/(?:var|Users|private|tmp|Library|Volumes|System/Volumes)/[^\s"']*"#, "<path>"),
             (#"~/[^\s"']*"#, "<path>"),
+            // File names, including the last word of a path that had a space in
+            // it: any word with a document, image, audio, video or data extension.
+            (#"(?i)[^\s"'/<>]*\.(?:pdf|docx?|xlsx?|pptx?|pages|numbers|key|txt|rtf|md|markdown|csv|tsv|json|jsonl|ya?ml|toml|xml|html?|eml|msg|vcf|ics|png|jpe?g|heic|heif|gif|tiff?|webp|psd|ai|eps|svg|raw|dng|m4a|mp3|wav|aac|caf|mov|mp4|m4v|zip|gz|tar|dmg|epub|log)\b"#, "<file>"),
             // Quoted text is usually a name: a list, album, note, photo or person.
             (#""[^"\n]*""#, "\"<text>\""),
             (#"“[^”\n]*”"#, "“<text>”"),
