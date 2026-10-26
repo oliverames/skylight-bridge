@@ -32,6 +32,10 @@ DMG_PATH="$RELEASE_DIR/$DISPLAY_NAME-$VERSION.dmg"
 CHECKSUM_PATH="$DMG_PATH.sha256"
 DMG_SOURCE="$RELEASE_DIR/dmg-source"
 DMG_MOUNT="$RELEASE_DIR/dmg-mount"
+DSYM_PATH="$RELEASE_DIR/$APP_NAME.dSYM"
+SENTRY_RELEASE="com.oliverames.SkylightBridge@$VERSION+$BUILD_NUMBER"
+SENTRY_DSN_REFERENCE="op://Development/Skylight Bridge Sentry DSN/credential"
+SENTRY_TOKEN_REFERENCE="op://Development/PingWarden Sentry API Token/credential"
 
 require_notary_credentials() {
   if [[ -n "${NOTARY_KEY_FILE:-}" || -n "${NOTARY_KEY_ID:-}" || -n "${NOTARY_ISSUER_ID:-}" ]]; then
@@ -107,6 +111,26 @@ python3 "$ROOT_DIR/script/validate_cloudkit_schema.py" "$CLOUDKIT_SCHEMA_FILE"
 require_notary_credentials
 require_developer_id_profile
 
+# Crash reporting pre-flight. Every release carries the Sentry DSN from
+# 1Password (script/configure_diagnostics.py), so a Mac without `op` access
+# cannot ship a build that silently has reporting off. Symbol upload also needs
+# sentry-cli and the organization token; SKIP_SENTRY=1 skips only the upload.
+export PATH="$HOME/.local/bin:$PATH"
+if ! op read "$SENTRY_DSN_REFERENCE" >/dev/null 2>&1; then
+  echo "Cannot read the Sentry DSN from 1Password ($SENTRY_DSN_REFERENCE)." >&2
+  exit 1
+fi
+if [[ "${SKIP_SENTRY:-0}" != "1" ]]; then
+  if ! command -v sentry-cli >/dev/null 2>&1; then
+    echo "sentry-cli is not on PATH. Install it, or set SKIP_SENTRY=1 to skip dSYM upload." >&2
+    exit 1
+  fi
+  if ! op read "$SENTRY_TOKEN_REFERENCE" >/dev/null 2>&1; then
+    echo "Cannot read the Sentry token from 1Password. Set SKIP_SENTRY=1 to skip dSYM upload." >&2
+    exit 1
+  fi
+fi
+
 rm -rf "$RELEASE_DIR"
 mkdir -p "$APP_MACOS" "$APP_RESOURCES" "$APP_FRAMEWORKS"
 
@@ -127,9 +151,18 @@ if ! otool -l "$APP_BINARY" | awk '
 '; then
   install_name_tool -add_rpath '@executable_path/../Frameworks' "$APP_BINARY"
 fi
+# Debug symbols for Sentry symbolication, from the object files the build left
+# in .build. The dSYM must carry the same UUIDs as the shipped binary.
+dsymutil "$APP_BINARY" -o "$DSYM_PATH"
+if [[ "$(dwarfdump --uuid "$APP_BINARY" | awk '{print $2}' | sort)" != \
+      "$(dwarfdump --uuid "$DSYM_PATH" | awk '{print $2}' | sort)" ]]; then
+  echo "dSYM UUIDs do not match the release binary" >&2
+  exit 1
+fi
 cp "$ROOT_DIR/Resources/Info.plist" "$INFO_PLIST"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$INFO_PLIST"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$INFO_PLIST"
+python3 "$ROOT_DIR/script/configure_diagnostics.py" --dsn-reference "$SENTRY_DSN_REFERENCE" --plist "$INFO_PLIST"
 cp "$DEVELOPER_ID_PROFILE" "$APP_CONTENTS/embedded.provisionprofile"
 "$ROOT_DIR/script/compile_app_icon.sh" "$ICON_SOURCE" "$APP_RESOURCES" "$INFO_PLIST"
 
@@ -185,6 +218,7 @@ codesign \
   "$APP_BUNDLE"
 
 codesign --verify --deep --strict --verbose=4 "$APP_BUNDLE"
+python3 "$ROOT_DIR/script/configure_diagnostics.py" --dsn-reference "$SENTRY_DSN_REFERENCE" --verify-app "$APP_BUNDLE"
 codesign -d --entitlements :- "$APP_BUNDLE" 2>/dev/null > "$RELEASE_DIR/runtime-entitlements.plist"
 if /usr/libexec/PlistBuddy -c 'Print :com.apple.security.get-task-allow' \
   "$RELEASE_DIR/runtime-entitlements.plist" 2>/dev/null | rg -Fxq true; then
@@ -242,4 +276,13 @@ rmdir "$DMG_MOUNT"
 )
 rm -rf "$DMG_SOURCE" "$APP_ZIP"
 
-printf 'Release artifacts:\n%s\n%s\n' "$DMG_PATH" "$CHECKSUM_PATH"
+# Sentry is enrichment, not a release gate: the artifacts above are complete,
+# so a failed upload warns instead of discarding a notarized build. Rerun
+# script/upload_dsyms.sh with the same arguments to retry.
+if [[ "${SKIP_SENTRY:-0}" == "1" ]]; then
+  echo "SKIP_SENTRY=1 set; dSYMs were not uploaded to Sentry." >&2
+elif ! "$ROOT_DIR/script/upload_dsyms.sh" "$SENTRY_RELEASE" "$DSYM_PATH"; then
+  echo "Warning: Sentry dSYM upload failed. Retry: script/upload_dsyms.sh '$SENTRY_RELEASE' '$DSYM_PATH'" >&2
+fi
+
+printf 'Release artifacts:\n%s\n%s\n%s\n' "$DMG_PATH" "$CHECKSUM_PATH" "$DSYM_PATH"

@@ -1,6 +1,15 @@
 {
-  "originHash" : "eb59074ae2625617724420128f6a729f3ee66bec2cf0c157e0eef33c8c314efd",
+  "originHash" : "8142aef040a86e21f1fef2a78e5e5d756a52ad9536f4464d3e6b1c5eabe507dc",
   "pins" : [
+    {
+      "identity" : "sentry-cocoa",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/getsentry/sentry-cocoa",
+      "state" : {
+        "revision" : "2f64c77f77514acd01780d1aac86ae75b7fccd04",
+        "version" : "9.31.0"
+      }
+    },
     {
       "identity" : "skylight-bridge-ios",
       "kind" : "remoteSourceControl",

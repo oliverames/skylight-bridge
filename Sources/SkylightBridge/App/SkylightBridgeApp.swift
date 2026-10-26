@@ -41,10 +41,17 @@ struct SkylightBridgeApp: App {
     // Reading an uninstalled @State creates a separate initial store, so
     // startup and the scenes must share an explicit process-lifetime owner.
     private static let sharedStore = AppStore()
-    private let store = Self.sharedStore
+    private let store: AppStore
 
     init() {
+        // First, so a crash anywhere in startup is caught, and before the
+        // store loads, so a debug delivery check never touches Apple data.
+        CrashReporting.start()
+        #if DEBUG
+        if CrashReporting.runDebugTestIfRequested() { exit(0) }
+        #endif
         let store = Self.sharedStore
+        self.store = store
         // Startup outlives window closure. AppStore.start() is idempotent even
         // when another App construction schedules it during a suspension.
         Task { await store.start() }
