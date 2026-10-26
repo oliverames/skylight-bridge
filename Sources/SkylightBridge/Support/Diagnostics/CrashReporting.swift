@@ -194,6 +194,8 @@ enum CrashReporting {
         if event.fingerprint?.first == ownEventFingerprintHead {
             event.message = event.message.map { SentryMessage(formatted: DiagnosticsPrivacy.scrub($0.formatted)) }
             event.tags = event.tags.map(DiagnosticsPrivacy.filterTags)
+            // Fingerprints are sent too; they hold the error domain and code.
+            event.fingerprint = event.fingerprint?.map { DiagnosticsPrivacy.scrub($0) }
         } else {
             event.message = nil
             event.tags = nil
