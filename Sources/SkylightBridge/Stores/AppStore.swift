@@ -1153,6 +1153,7 @@ final class AppStore {
         } catch SkylightSessionManagerError.missingCredentials {
             // First launch is expected to have no saved account.
         } catch {
+            CrashReporting.report(.account, "Account restore failed", error: error)
             recordSourceError(error, area: .account)
         }
     }
@@ -1352,7 +1353,11 @@ final class AppStore {
                 stateStore: syncStateStore,
                 timeZone: syncTimeZone
             )
+            CrashReporting.breadcrumb(.sync, "Sync started")
             let summary = try await coordinator.sync(configuration: syncConfiguration)
+            CrashReporting.breadcrumb(.sync, "Sync finished", counts: [
+                "planned": summary.totalPlanned, "applied": summary.totalApplied,
+            ])
             if try await refreshSkylightDestinations(using: client, frameID: syncFrameID) {
                 try persistConfiguration()
             }
@@ -1380,6 +1385,7 @@ final class AppStore {
             ))
         } catch let error as DecodingError {
             lastSyncFailed = true
+            CrashReporting.report(.sync, "Sync failed decoding local data", error: error)
             statusMessage = "Sync failed: could not decode local data (\(error.fieldLevelDescription))."
             appendActivity(.init(
                 level: .error,
@@ -1389,6 +1395,7 @@ final class AppStore {
             ))
         } catch {
             lastSyncFailed = true
+            CrashReporting.report(.sync, "Sync failed", error: error)
             statusMessage = "Sync failed: \(error.localizedDescription)"
             appendActivity(.init(
                 level: .error,

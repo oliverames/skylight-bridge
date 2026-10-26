@@ -57,6 +57,12 @@ if ! otool -l "$APP_BINARY" | awk '
 fi
 
 cp "$INFO_PLIST_TEMPLATE" "$INFO_PLIST"
+# Local bundles have crash reporting off. SKYLIGHT_SENTRY=1 writes the DSN from
+# 1Password; a Debug build then still reports only with -SkylightCrashReports YES
+# or -SkylightSentryTest message|error|crash.
+if [[ "${SKYLIGHT_SENTRY:-0}" == "1" ]]; then
+  python3 "$ROOT_DIR/script/configure_diagnostics.py" --plist "$INFO_PLIST"
+fi
 
 "$ROOT_DIR/script/compile_app_icon.sh" "$ICON_FILE" "$APP_RESOURCES" "$INFO_PLIST"
 

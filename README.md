@@ -107,6 +107,7 @@ Recurring chores remain recurring in Reminders. Completing or reopening a chore 
 | Notes safety | Apple Notes change only when you explicitly enable two-way recipe sync. Notes with attachments are never rewritten. |
 | Selected-photo names | On supported Macs, Apple Intelligence generates a name only after you have finished selecting the photo. The name stays with the local mapping, becomes the caption of its bridge-linked Skylight copy, and is never written to Apple Photos. |
 | Credentials | Skylight credentials and OAuth tokens stay in the macOS Keychain, not in configuration files or logs. |
+| Crash reports | Release builds send crash reports and sync error codes to the developer through Sentry, without account, household, list, note, photo, or file names. Turn it off in Sync > Privacy. See [PRIVACY.md](PRIVACY.md). |
 | iCloud | The private CloudKit database stores shared preferences and individual-photo mapping metadata. It never stores Skylight credentials or Apple Notes content. If iCloud sharing cannot save because its production schema needs deployment, the app keeps the local change and records a clear retry message in Activity. |
 
 There is deliberately no calendar sync interface. Google Calendar already covers that need well. Routines and Task Box are also outside the product interface.
@@ -193,6 +194,8 @@ cd skylight-bridge
 ./script/run_tests.sh
 ./script/build_and_run.sh --verify
 ```
+
+Local bundles have crash reporting off. `SKYLIGHT_SENTRY=1 ./script/build_and_run.sh` writes the Sentry DSN from 1Password into the bundle, and a Debug build then reports only when launched with `-SkylightCrashReports YES`. `-SkylightSentryTest message` (or `error`, `crash`) sends a fixed check and quits before loading any configuration or Apple data. `script/build_release.sh` writes and verifies the DSN in every release, extracts a dSYM, and uploads it to Sentry with `script/upload_dsyms.sh`; `SKIP_SENTRY=1` skips only the upload.
 
 The test suite covers sync planning, recurrence conversion, parsers, authentication, configuration compatibility, and API request contracts. The local run script builds and verifies the bundle. Review its selected signing identity and profile before using it.
 

@@ -18,6 +18,10 @@ let package = Package(
         .package(
             url: "https://github.com/sparkle-project/Sparkle",
             from: "2.9.4"
+        ),
+        .package(
+            url: "https://github.com/getsentry/sentry-cocoa",
+            exact: "9.31.0"
         )
     ],
     targets: [
@@ -25,7 +29,8 @@ let package = Package(
             name: "SkylightBridge",
             dependencies: [
                 .product(name: "SkylightBridgeShared", package: "skylight-bridge-ios"),
-                .product(name: "Sparkle", package: "Sparkle")
+                .product(name: "Sparkle", package: "Sparkle"),
+                .product(name: "Sentry", package: "sentry-cocoa")
             ],
             path: "Sources/SkylightBridge",
             swiftSettings: [
@@ -34,7 +39,10 @@ let package = Package(
         ),
         .testTarget(
             name: "SkylightBridgeTests",
-            dependencies: ["SkylightBridge"],
+            dependencies: [
+                "SkylightBridge",
+                .product(name: "Sentry", package: "sentry-cocoa")
+            ],
             path: "Tests/SkylightBridgeTests",
             swiftSettings: [
                 .enableUpcomingFeature("ApproachableConcurrency")

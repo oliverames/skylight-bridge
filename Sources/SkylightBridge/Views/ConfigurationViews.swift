@@ -180,6 +180,7 @@ struct AccountView: View {
 
 struct SyncSettingsView: View {
     @Bindable var store: AppStore
+    @AppStorage(CrashReporting.preferenceKey) private var shareCrashReports = true
 
     var body: some View {
         Form {
@@ -212,6 +213,16 @@ struct SyncSettingsView: View {
                 )
                 .font(.caption)
                 .foregroundStyle(store.configuration.dryRun ? Color.secondary : Color.orange)
+            }
+
+            Section("Privacy") {
+                Toggle("Share crash reports", isOn: $shareCrashReports)
+                    .onChange(of: shareCrashReports) { _, enabled in
+                        CrashReporting.setEnabled(enabled)
+                    }
+                Text("Sends crash reports and sync error codes to the developer through Sentry. Reports never include your Skylight account, household, list, note, photo, or file names.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
         }
